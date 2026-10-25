@@ -6,7 +6,7 @@ import {
   lastLogFor, addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
   parseSetTargets,
 } from '../store.js';
-import { esc, fmtNum, fmtReps, fmtClock, fmtDur, num, parseDur, parseReps, relDay } from '../util.js';
+import { esc, fmtNum, fmtReps, fmtClock, fmtDur, num, parseDur, relDay } from '../util.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { unlockAudio } from '../timer.js';
 
@@ -209,7 +209,7 @@ export function renderEntryStatic(e) {
 /* exercise form (add / edit) — shared with the routine editor         */
 /* ------------------------------------------------------------------ */
 
-const stRow = (i, t = {}) => `
+const stRow = (t = {}) => `
   <div class="strow" data-strow>
     <div class="idx"></div>
     <input data-stf="w" inputmode="decimal" placeholder="weight"
@@ -219,57 +219,54 @@ const stRow = (i, t = {}) => `
     <button type="button" class="chk" data-strow-del title="Remove this set">✕</button>
   </div>`;
 
+/**
+ * One grid row per set. An exercise saved with a single target for all sets is
+ * expanded into that many identical rows, so the grid is always the way targets
+ * are entered and there is no mode to discover.
+ */
+function planRows(e) {
+  if (e.setTargets && e.setTargets.length) return e.setTargets.map((t) => stRow(t)).join('');
+  const n = Math.min(Math.max(num(e.targetSets) ?? 3, 1), 30);
+  const t = { weight: e.weight ?? null, repsMin: e.repsMin ?? null, repsMax: e.repsMax ?? null };
+  return Array.from({ length: n }, () => stRow(t)).join('');
+}
+
 export function exerciseFormHtml(e = {}) {
   const type = e.type === 'cardio' ? 'cardio' : 'lift';
-  const perSet = !!(e.setTargets && e.setTargets.length);
-  const rows = perSet ? e.setTargets.map((t, i) => stRow(i, t)).join('') : stRow(0);
   return `
     <label class="field"><span>Exercise name</span>
       <input name="name" list="exerciseNames" autocapitalize="words" placeholder="e.g. Back Squat"
              value="${esc(e.name || '')}" required></label>
     <label class="field"><span>Type</span>
-      <select name="type">
+      <select name="type" id="exType">
         <option value="lift" ${type === 'lift' ? 'selected' : ''}>Lifting / bodyweight (sets & reps)</option>
         <option value="cardio" ${type === 'cardio' ? 'selected' : ''}>Cardio / run (distance & time)</option>
       </select></label>
 
-    <label class="field" style="margin-bottom:6px"><span>Set targets</span>
-      <select name="mode" id="exMode">
-        <option value="uniform" ${perSet ? '' : 'selected'}>Same target for every set</option>
-        <option value="perset" ${perSet ? 'selected' : ''}>Different weight / reps per set</option>
-      </select></label>
-
-    <div id="exUniform" ${perSet ? 'hidden' : ''}>
-      <p class="hint" style="margin-top:0">For ascending loads or a pyramid, switch the selector
-        above to <b>Different weight / reps per set</b>.</p>
-      <div class="grid2">
-        <label class="field"><span>Target sets</span>
-          <input name="targetSets" inputmode="numeric" value="${esc(fmtNum(e.targetSets))}"></label>
-        <label class="field"><span>Target reps (e.g. 8-12)</span>
-          <input name="reps" inputmode="text" value="${esc(fmtReps(e.repsMin ?? null, e.repsMax ?? null))}"></label>
+    <div id="exLift" ${type === 'cardio' ? 'hidden' : ''}>
+      <div class="tiny" style="margin:2px 0 7px">Sets — weight and reps for each set</div>
+      <div class="strow-hdr"><div>Set</div><div>Weight</div><div>Reps</div><div></div></div>
+      <div id="exRows">${planRows(e)}</div>
+      <div class="btn-row" style="margin:2px 0 8px">
+        <button type="button" class="btn sm" id="exAddRow">+ Add set</button>
+        <button type="button" class="btn sm ghost" id="exCopyDown" title="Copy set 1 into every set">Copy set 1 down</button>
       </div>
-      <label class="field"><span>Target weight</span>
-        <input name="weight" inputmode="decimal" value="${esc(fmtNum(e.weight))}"></label>
+      <p class="hint" style="margin-top:0">Reps can be a range such as <code>8-12</code>.
+        Leave the weight blank for bodyweight.</p>
     </div>
 
-    <div id="exPerSet" ${perSet ? '' : 'hidden'}>
-      <div class="strow-hdr"><div>Set</div><div>Weight</div><div>Reps</div><div></div></div>
-      <div id="exRows">${rows}</div>
-      <button type="button" class="btn sm" id="exAddRow" style="margin:2px 0 10px">+ Add a set</button>
-      <p class="hint" style="margin-top:0">Leave a weight blank for bodyweight. Reps can be a
-        range such as <code>8-12</code>.</p>
+    <div id="exCardio" ${type === 'lift' ? 'hidden' : ''}>
+      <div class="grid2">
+        <label class="field"><span>Target distance</span>
+          <input name="targetDistance" inputmode="decimal" value="${esc(fmtNum(e.targetDistance))}"></label>
+        <label class="field"><span>Target duration</span>
+          <input name="targetDuration" inputmode="text" placeholder="30:00"
+                 value="${e.targetDuration ? esc(fmtClock(e.targetDuration)) : ''}"></label>
+      </div>
     </div>
 
     <label class="field"><span>Rest between sets (mm:ss or 90s)</span>
       <input name="rest" inputmode="text" placeholder="2:00" value="${e.rest ? esc(fmtClock(e.rest)) : ''}"></label>
-
-    <div class="grid2">
-      <label class="field"><span>Target distance (cardio)</span>
-        <input name="targetDistance" inputmode="decimal" value="${esc(fmtNum(e.targetDistance))}"></label>
-      <label class="field"><span>Target duration (cardio)</span>
-        <input name="targetDuration" inputmode="text" placeholder="30:00"
-               value="${e.targetDuration ? esc(fmtClock(e.targetDuration)) : ''}"></label>
-    </div>
     <label class="field"><span>Superset / circuit group (optional — same letter = grouped)</span>
       <input name="group" maxlength="4" placeholder="A" value="${esc(e.group || '')}"></label>
     <label class="field"><span>Notes — warmup sets, tempo, cues, setup</span>
@@ -277,56 +274,63 @@ export function exerciseFormHtml(e = {}) {
 }
 
 /**
- * Wire the add/remove/renumber behaviour of the per-set grid, and the toggle
- * between uniform and per-set mode. Call once after opening the form.
+ * Wire the set grid (add / remove / copy-down / renumber) and the lift-vs-cardio
+ * switch. Call once after opening the form.
  */
 export function wireExerciseForm(modal) {
-  const mode = modal.querySelector('#exMode');
-  const uniform = modal.querySelector('#exUniform');
-  const perSet = modal.querySelector('#exPerSet');
   const rows = modal.querySelector('#exRows');
-  if (!mode || !rows) return;
+  const type = modal.querySelector('#exType');
+  if (!rows || !type) return;
 
   const renumber = () => {
-    [...rows.querySelectorAll('[data-strow]')].forEach((row, i) => {
-      row.querySelector('.idx').textContent = String(i + 1);
-    });
-  };
-  const applyMode = () => {
-    const per = mode.value === 'perset';
-    uniform.hidden = per;
-    perSet.hidden = !per;
+    const all = [...rows.querySelectorAll('[data-strow]')];
+    all.forEach((row, i) => { row.querySelector('.idx').textContent = String(i + 1); });
+    modal.querySelector('#exCopyDown').hidden = all.length < 2;
   };
 
-  mode.addEventListener('change', applyMode);
+  type.addEventListener('change', () => {
+    const cardio = type.value === 'cardio';
+    modal.querySelector('#exLift').hidden = cardio;
+    modal.querySelector('#exCardio').hidden = !cardio;
+  });
+
   modal.querySelector('#exAddRow').addEventListener('click', () => {
     const last = rows.querySelector('[data-strow]:last-child');
-    rows.insertAdjacentHTML('beforeend', stRow(0));
-    // carry the previous row's weight forward, which is usually what you want
+    rows.insertAdjacentHTML('beforeend', stRow());
     const fresh = rows.querySelector('[data-strow]:last-child');
     if (last) {
+      // carry the previous set forward as a starting point
       fresh.querySelector('[data-stf="w"]').value = last.querySelector('[data-stf="w"]').value;
       fresh.querySelector('[data-stf="r"]').value = last.querySelector('[data-stf="r"]').value;
     }
     renumber();
   });
+
+  modal.querySelector('#exCopyDown').addEventListener('click', () => {
+    const all = [...rows.querySelectorAll('[data-strow]')];
+    if (all.length < 2) return;
+    const w = all[0].querySelector('[data-stf="w"]').value;
+    const r = all[0].querySelector('[data-stf="r"]').value;
+    all.slice(1).forEach((row) => {
+      row.querySelector('[data-stf="w"]').value = w;
+      row.querySelector('[data-stf="r"]').value = r;
+    });
+  });
+
   rows.addEventListener('click', (ev) => {
     const btn = ev.target.closest('[data-strow-del]');
     if (!btn) return;
-    if (rows.querySelectorAll('[data-strow]').length > 1) btn.closest('[data-strow]').remove();
-    else {
-      btn.closest('[data-strow]').querySelectorAll('input').forEach((i) => { i.value = ''; });
-    }
+    const all = rows.querySelectorAll('[data-strow]');
+    if (all.length > 1) btn.closest('[data-strow]').remove();
+    else btn.closest('[data-strow]').querySelectorAll('input').forEach((i) => { i.value = ''; });
     renumber();
   });
 
   renumber();
-  applyMode();
 }
 
-/** Read the exercise form. `modal` is required to read the per-set grid. */
+/** Read the exercise form. `modal` is required to read the set grid. */
 export function readExerciseForm(v, modal = null) {
-  const reps = parseReps(v.reps);
   const base = {
     type: v.type === 'cardio' ? 'cardio' : 'lift',
     name: (v.name || '').trim(),
@@ -337,29 +341,44 @@ export function readExerciseForm(v, modal = null) {
     notes: (v.notes || '').trim(),
   };
 
-  if (v.mode === 'perset' && modal) {
-    const setTargets = [...modal.querySelectorAll('#exRows [data-strow]')]
-      .map((row) => ({
-        weight: num(row.querySelector('[data-stf="w"]').value),
-        reps: row.querySelector('[data-stf="r"]').value,
-      }))
-      .filter((t) => t.weight !== null || String(t.reps).trim() !== '');
-    const parsed = parseSetTargets(setTargets);
-    if (parsed) {
-      return {
-        ...base, setTargets: parsed, targetSets: parsed.length,
-        repsMin: null, repsMax: null, weight: null,
-      };
-    }
+  if (base.type === 'cardio' || !modal) {
+    return { ...base, setTargets: null, targetSets: null, repsMin: null, repsMax: null, weight: null };
+  }
+
+  const rowEls = [...modal.querySelectorAll('#exRows [data-strow]')];
+  const raw = rowEls.map((row) => ({
+    weight: num(row.querySelector('[data-stf="w"]').value),
+    reps: row.querySelector('[data-stf="r"]').value,
+  }));
+  const parsed = parseSetTargets(raw.filter((t) => t.weight !== null || String(t.reps).trim() !== ''));
+
+  if (!parsed) {
+    // Rows exist but nothing was filled in: keep the set count, no loads.
+    return {
+      ...base, setTargets: null, targetSets: rowEls.length || null,
+      repsMin: null, repsMax: null, weight: null,
+    };
+  }
+
+  // All sets identical? Store the simpler uniform target so the summary reads
+  // "3 × 8 @ 15 kg" instead of repeating the same row three times.
+  const first = parsed[0];
+  const allSame = parsed.every((t) => t.weight === first.weight
+    && t.repsMin === first.repsMin && t.repsMax === first.repsMax);
+  if (allSame) {
+    return {
+      ...base,
+      setTargets: null,
+      targetSets: parsed.length,
+      weight: first.weight,
+      repsMin: first.repsMin,
+      repsMax: first.repsMax,
+    };
   }
 
   return {
-    ...base,
-    setTargets: null,
-    targetSets: num(v.targetSets),
-    repsMin: reps.min,
-    repsMax: reps.max,
-    weight: num(v.weight),
+    ...base, setTargets: parsed, targetSets: parsed.length,
+    repsMin: null, repsMax: null, weight: null,
   };
 }
 

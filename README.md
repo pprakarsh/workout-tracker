@@ -169,8 +169,11 @@ prefills from the first planned entry, set 2 from the second, and so on; any set
 carries the previous set forward. The exercise card shows a **+ All N planned** button that creates
 every planned row at once.
 
-In the app, the exercise form has a *Set targets* selector — switch it to **Different weight / reps
-per set** to get an editable grid instead of the single weight/reps fields.
+In the app, every lifting exercise is entered as a grid with one row per set, each row holding its
+own weight and reps — there is no separate "same for every set" mode to find. **Copy set 1 down**
+fills the whole grid when the sets really are identical, and in that case the app stores and
+displays it as the simpler `3 × 8-12 @ 15 kg` rather than repeating the row. Editing such an
+exercise expands it back into rows, so changing just set 3 turns it into a per-set plan again.
 
 ### Notes
 

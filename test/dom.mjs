@@ -137,11 +137,14 @@ const before = store.state.active.entries.length;
 await click('[data-action="entry-add"]', '+ Add exercise');
 ok($('#modalRoot').hidden === false, 'modal opened');
 $('[name="name"]').value = 'Face Pull';
-$('[name="targetSets"]').value = '3';
-$('[name="reps"]').value = '15';
+$$('#exRows [data-strow]').forEach((row) => {
+  row.querySelector('[data-stf="w"]').value = '20';
+  row.querySelector('[data-stf="r"]').value = '15';
+});
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(80);
 ok(store.state.active.entries.length === before + 1, 'exercise added to the session');
+ok(store.state.active.entries.at(-1).targetSets === 3, 'picked up the 3 grid rows');
 ok(store.getRoutine(store.state.active.routineId).entries.length === 5, 'routine untouched');
 ok($('#modalRoot').hidden === true, 'modal closed');
 
@@ -202,18 +205,19 @@ await click('[data-action="routine-open"]', 'open routine');
 const rid = store.state.nav.routineId;
 const entriesBefore = store.getRoutine(rid).entries.length;
 await click('[data-action="rentry-add"]', '+ Add exercise');
-ok($('#exMode') !== null, 'form offers a set-target mode');
-ok($('#exPerSet').hidden === true, 'per-set grid hidden in uniform mode');
+ok($('#exRows') !== null, 'the set grid is visible immediately, with no mode to switch');
+ok($('#exMode') === null, 'no set-target mode selector any more');
+ok($('[name="targetSets"]') === null && $('[name="weight"]') === null,
+  'no single Target sets / Target weight fields');
+ok($$('#exRows [data-strow]').length === 3, `grid starts with 3 set rows (${$$('#exRows [data-strow]').length})`);
+ok($$('#exRows [data-stf="w"]').length === 3 && $$('#exRows [data-stf="r"]').length === 3,
+  'every row has its own weight and reps input');
+ok($('#exCardio').hidden === true, 'cardio fields hidden for a lifting exercise');
 $('[name="name"]').value = 'Wave Squat';
-$('#exMode').value = 'perset';
-$('#exMode').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-await sleep(30);
-ok($('#exPerSet').hidden === false, 'switching mode reveals the grid');
-ok($('#exUniform').hidden === true, 'uniform fields hidden');
-ok($$('#exRows [data-strow]').length === 1, 'grid starts with one row');
-await click('#exAddRow', '+ Add a set');
-await click('#exAddRow', '+ Add a set');
-ok($$('#exRows [data-strow]').length === 3, 'three rows after adding two');
+await click('#exAddRow', '+ Add set');
+ok($$('#exRows [data-strow]').length === 4, 'four rows after adding one');
+await click('#exRows [data-strow]:last-child [data-strow-del]', 'remove the 4th');
+ok($$('#exRows [data-strow]').length === 3, 'back to three rows');
 ok([...$$('#exRows .idx')].map((d) => d.textContent).join('') === '123', 'rows are numbered 1..3');
 const [r1, r2, r3] = $$('#exRows [data-strow]');
 r1.querySelector('[data-stf="w"]').value = '60'; r1.querySelector('[data-stf="r"]').value = '10';
@@ -226,47 +230,102 @@ await sleep(90);
 const added2 = store.getRoutine(rid).entries[entriesBefore];
 ok(store.getRoutine(rid).entries.length === entriesBefore + 1, 'exercise added to the routine');
 ok(added2.setTargets?.length === 3, `3 per-set targets saved (${added2.setTargets?.length})`);
+ok(added2.setTargets[0].weight === 60 && added2.setTargets[0].repsMin === 10, 'row 1 = 60 x 10');
 ok(added2.setTargets[1].weight === 70 && added2.setTargets[1].repsMin === 8, 'row 2 = 70 x 8');
 ok(added2.setTargets[2].repsMax === 6, 'row 3 kept the 5-6 range');
+ok(added2.rest === 150, 'rest saved');
 ok(added2.notes.split('\n').length === 2, 'multi-line notes saved');
 ok(/60×10 · 70×8 · 80×5-6/.test(view()), 'the editor lists the per-set plan');
 
-section('re-opening the form shows the existing plan');
-await click(`[data-action="rentry-edit"][data-entry="${added2.id}"]`, 'edit that exercise');
-ok($('#exMode').value === 'perset', 'opens in per-set mode');
-ok($$('#exRows [data-strow]').length === 3, 'three rows restored');
-ok($$('#exRows [data-stf="w"]')[2].value === '80', 'row 3 weight restored');
-ok($('[name="notes"]').value.includes('Tempo 3-1-1'), 'notes restored into a textarea');
-ok($('[name="notes"]').tagName === 'TEXTAREA', 'notes field is multi-line');
-await click('#exRows [data-strow]:last-child [data-strow-del]', 'delete row 3');
-ok($$('#exRows [data-strow]').length === 2, 'row removed');
+section('identical rows collapse to a tidy uniform target');
+await click('[data-action="rentry-add"]', '+ Add exercise');
+$('[name="name"]').value = 'Plain Curl';
+$$('#exRows [data-strow]').forEach((row) => {
+  row.querySelector('[data-stf="w"]').value = '15';
+  row.querySelector('[data-stf="r"]').value = '8-12';
+});
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
-ok(store.getRoutine(rid).entries[entriesBefore].setTargets.length === 2, 'plan shortened to 2 sets');
+const curl = store.getRoutine(rid).entries.find((e) => e.name === 'Plain Curl');
+ok(curl.setTargets === null, 'stored as one target rather than three identical rows');
+ok(curl.targetSets === 3 && curl.weight === 15 && curl.repsMin === 8 && curl.repsMax === 12,
+  `summarised as 3 x 8-12 @ 15 (${curl.targetSets} x ${curl.repsMin}-${curl.repsMax} @ ${curl.weight})`);
+ok(/3 × 8-12 · @ 15/.test(view()), `reads as a uniform target in the list`);
+
+section('copy set 1 down fills the whole grid');
+await click(`[data-action="rentry-edit"][data-entry="${added2.id}"]`, 'edit Wave Squat');
+ok($$('#exRows [data-strow]').length === 3, 'three rows restored from the saved plan');
+ok($$('#exRows [data-stf="w"]')[2].value === '80', 'row 3 weight restored');
+ok($$('#exRows [data-stf="r"]')[2].value === '5-6', 'row 3 rep range restored');
+ok($('[name="notes"]').value.includes('Tempo 3-1-1'), 'notes restored into a textarea');
+ok($('[name="notes"]').tagName === 'TEXTAREA', 'notes field is multi-line');
+await click('#exCopyDown', 'Copy set 1 down');
+ok($$('#exRows [data-stf="w"]').every((i) => i.value === '60'), 'every row now reads 60');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+const collapsed = store.getRoutine(rid).entries.find((e) => e.id === added2.id);
+ok(collapsed.setTargets === null && collapsed.weight === 60 && collapsed.targetSets === 3,
+  'copy-down then save collapses to 3 x 10 @ 60');
+
+section('a uniform exercise expands back into editable rows');
+await click(`[data-action="rentry-edit"][data-entry="${collapsed.id}"]`, 'edit it again');
+ok($$('#exRows [data-strow]').length === 3, 'uniform target expanded into 3 rows');
+ok($$('#exRows [data-stf="w"]').every((i) => i.value === '60'), 'each row pre-filled with 60');
+$$('#exRows [data-stf="w"]')[2].value = '80';
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+const reSplit = store.getRoutine(rid).entries.find((e) => e.id === collapsed.id);
+ok(reSplit.setTargets?.length === 3 && reSplit.setTargets[2].weight === 80,
+  'changing one row turns it back into a per-set plan');
+
+section('switching type hides the set grid');
+await click('[data-action="rentry-add"]', '+ Add exercise');
+$('[name="name"]').value = 'Easy Run';
+$('#exType').value = 'cardio';
+$('#exType').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+await sleep(30);
+ok($('#exLift').hidden === true, 'set grid hidden for cardio');
+ok($('#exCardio').hidden === false, 'cardio fields shown');
+$('[name="targetDistance"]').value = '5';
+$('[name="targetDuration"]').value = '27:00';
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+const run = store.getRoutine(rid).entries.find((e) => e.name === 'Easy Run');
+ok(run.type === 'cardio' && run.targetDistance === 5 && run.targetDuration === 1620, 'cardio entry saved');
+ok(run.setTargets === null && run.targetSets === null, 'no set targets on a cardio entry');
 
 section('logging a per-set plan shows planned values as placeholders');
+await xi.importFromText(JSON.stringify({
+  name: 'Plan Test',
+  entries: [{
+    name: 'Ladder Press', rest: '1:00',
+    sets: [{ weight: 40, reps: 10 }, { weight: 45, reps: 8 }, { weight: 50, reps: '5-6' }],
+  }],
+}));
+await sleep(60);
 await click('#tabBar .tab[data-tab="now"]');
-await click(`[data-action="routine-start"][data-id="${rid}"]`, 'Start');
-const planIdx = store.state.active.entries.findIndex((e) => e.name === 'Wave Squat');
-ok(planIdx >= 0, `Wave Squat is in the session at index ${planIdx}`);
-await store.setCurrent(planIdx);
-await click('#tabBar .tab[data-tab="now"]');
-ok(/Wave Squat/.test(view()), 'Now shows Wave Squat');
-ok($$('.card[data-entry]').length === 1, 'a single ungrouped exercise is on screen');
-ok(/60×10 · 70×8/.test(view()), 'the card shows the per-set plan');
+const planRoutine = store.state.routines.find((r) => r.name === 'Plan Test');
+await click(`[data-action="routine-start"][data-id="${planRoutine.id}"]`, 'Start Plan Test');
+ok(store.state.active?.routineName === 'Plan Test', 'plan-test workout started');
+ok(/Ladder Press/.test(view()), 'Now shows the planned exercise');
+ok(/40×10 · 45×8 · 50×5-6/.test(view()), 'the card shows the per-set plan');
 await click('[data-action="set-add"]', '+ Add set');
-ok($('.set-row input[data-f="weight"]').value === '60', 'set 1 prefilled with the first planned weight');
+ok($('.set-row input[data-f="weight"]').value === '40', 'set 1 prefilled with the first planned weight');
 await click('[data-action="set-add"]', '+ Add set');
-ok($$('.set-row input[data-f="weight"]')[1].value === '70', 'set 2 prefilled with the second planned weight');
+ok($$('.set-row input[data-f="weight"]')[1].value === '45', 'set 2 prefilled with the second planned weight');
 ok($$('.set-row input[data-f="reps"]')[1].value === '8', 'set 2 prefilled with the second planned reps');
+await click('[data-action="set-add"]', '+ Add set');
+ok($$('.set-row input[data-f="weight"]')[2].value === '50'
+  && $$('.set-row input[data-f="reps"]')[2].value === '5', 'set 3 prefilled 50 x 5 from the range');
+await click('[data-action="set-del-last"]', '- Remove last');
 await click('[data-action="set-del-last"]', '- Remove last');
 await click('[data-action="set-del-last"]', '- Remove last');
 ok($$('.set-row').length === 0, 'cleared the rows');
 ok($('[data-action="set-fill"]') !== null, 'offers to add the whole plan at once');
 await click('[data-action="set-fill"]', '+ All planned');
-ok($$('.set-row').length === 2, `the plan filled 2 rows (${$$('.set-row').length})`);
-ok($$('.set-row input[data-f="weight"]')[0].value === '60'
-  && $$('.set-row input[data-f="weight"]')[1].value === '70', 'filled rows carry the planned weights');
+ok($$('.set-row').length === 3, `the plan filled 3 rows (${$$('.set-row').length})`);
+ok($$('.set-row input[data-f="weight"]').map((i) => i.value).join(',') === '40,45,50',
+  `filled rows carry the planned weights (${$$('.set-row input[data-f="weight"]').map((i) => i.value).join(',')})`);
 await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard this workout');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
