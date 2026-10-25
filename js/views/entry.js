@@ -240,6 +240,8 @@ export function exerciseFormHtml(e = {}) {
       </select></label>
 
     <div id="exUniform" ${perSet ? 'hidden' : ''}>
+      <p class="hint" style="margin-top:0">For ascending loads or a pyramid, switch the selector
+        above to <b>Different weight / reps per set</b>.</p>
       <div class="grid2">
         <label class="field"><span>Target sets</span>
           <input name="targetSets" inputmode="numeric" value="${esc(fmtNum(e.targetSets))}"></label>

@@ -1,5 +1,11 @@
-// Offline shell cache. Bump CACHE when you change any file below.
-const CACHE = 'workout-v3';
+// Offline support.
+//
+// Network-first for everything on this origin, with the cache as a fallback.
+// Cache-first was a trap during development: the previously-installed worker
+// kept serving the old JS/CSS for one more load after an update, so a change
+// appeared not to have happened until you reloaded twice. Network-first costs a
+// round trip when online and still works fully offline.
+const CACHE = 'workout-v4';
 
 const ASSETS = [
   '.',
@@ -42,24 +48,23 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
 
-  // Navigations: network first so a deployed update is picked up, cache as fallback.
-  if (req.mode === 'navigate') {
-    e.respondWith(
-      fetch(req)
-        .then((res) => {
-          caches.open(CACHE).then((c) => c.put(req, res.clone()));
-          return res;
-        })
-        .catch(() => caches.match(req).then((r) => r || caches.match('index.html'))),
-    );
-    return;
-  }
-
-  // Everything else: cache first, then network (and cache what comes back).
   e.respondWith(
-    caches.match(req).then((hit) => hit || fetch(req).then((res) => {
-      if (res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
-      return res;
-    })),
+    fetch(req)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(async () => {
+        const hit = await caches.match(req);
+        if (hit) return hit;
+        if (req.mode === 'navigate') {
+          const shell = await caches.match('index.html');
+          if (shell) return shell;
+        }
+        return new Response('Offline and not cached', { status: 504, statusText: 'Offline' });
+      }),
   );
 });

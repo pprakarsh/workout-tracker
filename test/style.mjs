@@ -42,5 +42,21 @@ const openBraces = (css.match(/\{/g) || []).length;
 const closeBraces = (css.match(/\}/g) || []).length;
 ok(openBraces === closeBraces, `braces balanced (${openBraces} open / ${closeBraces} close)`);
 
+console.log('\n== offline manifest covers every shipped file');
+const sw = readFileSync(`${APP}/sw.js`, 'utf8');
+const listed = new Set([...sw.matchAll(/^\s*'([^']+)',/gm)].map((m) => m[1]));
+const { readdirSync, statSync } = await import('node:fs');
+const walk = (dir, prefix = '') => readdirSync(dir).flatMap((n) => {
+  const full = `${dir}/${n}`;
+  const rel = prefix ? `${prefix}/${n}` : n;
+  if (statSync(full).isDirectory()) return n === 'test' || n === 'node_modules' || n.startsWith('.') ? [] : walk(full, rel);
+  return /\.(js|css|html|webmanifest|png)$/.test(n) ? [rel] : [];
+});
+const shipped = walk(APP).filter((f) => f !== 'sw.js');
+const missing = shipped.filter((f) => !listed.has(f));
+ok(missing.length === 0, `every file is in the service worker list${missing.length ? ` — missing: ${missing.join(', ')}` : ` (${shipped.length} files)`}`);
+ok(/network-first|fetch\(req\)\s*$|fetch\(req\)\n/.test(sw) || sw.includes('fetch(req)'), 'service worker goes to the network before the cache');
+ok(/const CACHE = 'workout-v\d+'/.test(sw), 'cache name is versioned');
+
 console.log(`\n${failures === 0 ? 'ALL STYLE CHECKS PASSED' : `${failures} STYLE CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

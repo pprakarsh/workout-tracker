@@ -4,7 +4,7 @@ import {
   normalizeEntry, lastSessionForRoutine, updateSettings, dataFingerprint,
 } from '../store.js';
 import { dbPut } from '../db.js';
-import { esc, fmtDate, fmtClock, relDay, parseDur } from '../util.js';
+import { esc, fmtDate, fmtClock, relDay, parseDur, APP_VERSION } from '../util.js';
 import { targetLine, exerciseFormHtml, readExerciseForm, wireExerciseForm } from './entry.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';
@@ -127,7 +127,8 @@ export function render() {
       <pre class="code">${esc(SAMPLE)}</pre>
       <button type="button" class="btn sm ghost" data-action="sample-copy">Copy sample</button>
     </div>
-    <p class="hint center" style="margin-top:18px">All data is stored on this device only.</p>`;
+    <p class="hint center" style="margin-top:18px">All data is stored on this device only.<br>
+      <span class="dim">build ${esc(APP_VERSION)}</span></p>`;
 }
 
 export const SAMPLE = `{
