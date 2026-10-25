@@ -8,6 +8,7 @@
 set -euo pipefail
 
 REPO_NAME="${REPO_NAME:-workout-tracker}"
+EXPECTED_OWNER="${EXPECTED_OWNER:-pprakarsh}"
 BRANCH="$(git symbolic-ref --short HEAD 2>/dev/null || echo main)"
 
 cd "$(dirname "$0")"
@@ -16,10 +17,29 @@ command -v gh >/dev/null || { echo "gh is not installed: brew install gh"; exit 
 gh auth status >/dev/null 2>&1 || { echo "Not logged in yet. Run: gh auth login"; exit 1; }
 
 USER_LOGIN="$(gh api user --jq .login)"
+
+# This machine also has a work git identity, so make sure gh is pointed at the
+# intended account before creating anything.
+if [ -n "$EXPECTED_OWNER" ] && [ "$USER_LOGIN" != "$EXPECTED_OWNER" ]; then
+  echo "gh is authenticated as '$USER_LOGIN', not '$EXPECTED_OWNER'."
+  echo "Switch with:  gh auth switch --user $EXPECTED_OWNER"
+  echo "Or override:  EXPECTED_OWNER=$USER_LOGIN ./deploy.sh"
+  exit 1
+fi
+
+COMMIT_EMAIL="$(git log -1 --format=%ae)"
 echo "GitHub user : $USER_LOGIN"
 echo "Repo        : $USER_LOGIN/$REPO_NAME"
 echo "Branch      : $BRANCH"
+echo "Commits as  : $(git log -1 --format='%an <%ae>')"
 echo
+
+case "$COMMIT_EMAIL" in
+  *amazon.com) echo "Refusing to publish: the latest commit is authored with $COMMIT_EMAIL."
+               echo "Set the personal identity first:"
+               echo "  git config user.email you@personal.example"
+               exit 1 ;;
+esac
 
 # GitHub Pages on the free plan serves from a public repository.
 if gh repo view "$USER_LOGIN/$REPO_NAME" >/dev/null 2>&1; then
