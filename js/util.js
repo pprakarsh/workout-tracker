@@ -44,12 +44,16 @@ export function fmtDur(sec) {
 
 /**
  * Permissive duration parser. Accepts:
- *   "20:00" "1:20:00" "20m" "1h5m" "90s" "20" (bare = minutes) "1200s"
- * Returns seconds, or null.
+ *   "20:00" "1:20:00" "20m" "1h5m" "90s" "1200s"
+ * A value with no unit is ambiguous, so the caller says what it means:
+ *   parseDur(90)                      -> 90 seconds
+ *   parseDur(20, {bare:'minutes'})    -> 1200 seconds
+ * Numbers and numeric strings behave identically. Returns seconds, or null.
  */
-export function parseDur(v) {
+export function parseDur(v, { bare = 'seconds' } = {}) {
   if (v === '' || v === null || v === undefined) return null;
-  if (typeof v === 'number') return Number.isFinite(v) ? Math.round(v) : null;
+  const scale = (n) => Math.round(bare === 'minutes' ? n * 60 : n);
+  if (typeof v === 'number') return Number.isFinite(v) ? scale(v) : null;
   const s = String(v).trim().toLowerCase();
   if (!s) return null;
   if (s.includes(':')) {
@@ -63,8 +67,8 @@ export function parseDur(v) {
   if (m && (m[1] || m[2] || m[3])) {
     return Math.round((Number(m[1] || 0) * 3600) + (Number(m[2] || 0) * 60) + Number(m[3] || 0));
   }
-  const bare = num(s);
-  return bare === null ? null : Math.round(bare * 60); // bare number = minutes
+  const n = num(s);
+  return n === null ? null : scale(n);
 }
 
 /** "8-12" | 10 | {min,max} -> {min,max} with nulls allowed */
@@ -127,7 +131,7 @@ export function download(filename, text, mime = 'text/plain') {
 export const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** Shown in the Routines tab so you can tell which build is actually loaded. */
-export const APP_VERSION = '9';
+export const APP_VERSION = '10';
 
 /** CSV field quoting. */
 export function csvCell(v) {

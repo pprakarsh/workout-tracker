@@ -147,8 +147,8 @@ on each exercise.
 | `reps` | lift | `"5"`, `"6-8"`, or a number. Ranges are kept as a range. Ignored when `sets` is a per-set plan. |
 | `weight` | lift | Target load, in your configured unit. Ignored when `sets` is a per-set plan. |
 | `distance`, `distanceUnit` | cardio | `km` or `mi`. |
-| `duration` | cardio | `"18:00"`, `"1:05:00"`, `"20m"`, `"90s"`. A bare number means minutes. |
-| `rest` | all | Rest target between sets, and between cardio efforts. Same formats as `duration`. |
+| `duration` | cardio | `"18:00"`, `"1:05:00"`, `"20m"`, `"90s"`. A bare number means **minutes**. |
+| `rest` | all | Rest target between sets, and between cardio efforts. Same formats, but a bare number means **seconds**. |
 | `group` | all | Superset / circuit label — see below. |
 | `notes` | all | Warmup sets, tempo, cues, setup. A string, or a **list of lines** for multi-line notes. |
 
@@ -283,6 +283,29 @@ still offered, defined from that session.
 The library needs no setup and nothing to maintain: it is derived from your data on the fly, so
 renaming or deleting routines is reflected immediately. The name field also keeps its free-text
 autocomplete, so you can still just type.
+
+## Generating a routine with an AI tool
+
+The Routines tab has a **Generate a routine with an AI tool** card with a *Copy the AI prompt*
+button. The prompt is self-contained — it specifies every field, both set-target shapes, what
+`group` does, how to express intervals, which cardio metrics are targetable, and the duration
+formats — and embeds both worked examples below. Paste it into any AI chat tool, fill in the
+`WHAT I WANT` block at the top, and paste the JSON it returns into *Import*.
+
+```
+Routine name:     <e.g. "Squat day with Push Movements" or "Run with Upper Body">
+Goal:             <e.g. get stronger on squat/bench; also run a 10k in under 50 min>
+Session length:   <e.g. 60-75 minutes>
+Days per week:    <e.g. 4 - and which of those days this routine is>
+Experience:       <e.g. 3 years lifting; squat 1RM 140 kg, bench 1RM 95 kg>
+Equipment:        <e.g. full commercial gym, treadmill, no specialty bars>
+Units:            <kg and km   OR   lb and mi>
+Constraints:      <injuries, movements to avoid, anything to work around>
+```
+
+The prompt is built from the same sample constants the app documents, so it cannot drift from the
+importer, and a test suite asserts it names every supported field and that every format it
+advertises actually parses.
 
 ## Exporting
 

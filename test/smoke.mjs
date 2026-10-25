@@ -38,6 +38,8 @@ const historyView = await import(`${APP}/js/views/history.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
 const entry = await import(`${APP}/js/views/entry.js`);
 const { state } = store;
+const util = await import(`${APP}/js/util.js`);
+const parseDurCheck = (v, bare) => (bare ? util.parseDur(v, { bare }) : util.parseDur(v));
 
 const renderAll = (label) => {
   for (const [name, v] of Object.entries({ now: nowView, session: sessionView, history: historyView, routines: routinesView })) {
@@ -507,6 +509,88 @@ ok(JSON.stringify(run2.entries.map((e) => [e.type, e.name, e.group, e.rest, e.ta
   'every targeted field round-trips identically');
 await store.deleteRoutine(run2.id);
 await store.deleteRoutine(run.id);
+
+section('the AI prompt is self-contained and consistent with the importer');
+const P = routinesView.AI_PROMPT;
+ok(P.length > 3000, `prompt is substantial (${P.length} chars, ${P.split('\n').length} lines)`);
+ok(!P.includes('${'), 'no unsubstituted template placeholders');
+ok(P.includes(routinesView.SAMPLE_RUN), 'embeds the running example verbatim');
+ok(P.includes(routinesView.SAMPLE), 'embeds the lifting example verbatim');
+
+for (const field of ['"name"', '"description"', '"entries"', '"type"', '"rest"', '"group"',
+  '"notes"', '"sets"', '"reps"', '"weight"', '"distance"', '"distanceUnit"', '"duration"']) {
+  ok(P.includes(field), `documents ${field}`);
+}
+for (const [label, needle] of [
+  ['that group means superset/circuit', 'superset / circuit label'],
+  ['that group members must be consecutive', 'CONSECUTIVE'],
+  ['that non-adjacent labels split', 'SEPARATE blocks'],
+  ['that a group does not share rest', 'does NOT share one rest'],
+  ['the two set-target shapes', 'A DIFFERENT target per set'],
+  ['the bodyweight shorthand', '"x8"'],
+  ['that one cardio entry is one effort', 'one cardio entry is ONE effort'],
+  ['that intervals are one entry per rep', 'one entry PER REPETITION'],
+  ['that pace and HR are not targetable', 'NO target fields for pace'],
+  ['that a bare duration means minutes', 'means MINUTES here'],
+  ['that // keys are ignored', 'starting with "//" is ignored'],
+  ['output must be JSON only', 'Output ONLY the JSON'],
+  ['the fill-in block', 'WHAT I WANT'],
+  ['a final checklist', 'CHECKLIST BEFORE YOU ANSWER'],
+]) {
+  ok(P.includes(needle), `states ${label}`);
+}
+
+// Every format the prompt advertises must actually parse.
+const advertised = {
+  name: 'Prompt Claims Check',
+  entries: [
+    { name: 'A', sets: 4, reps: '6-8', weight: 70, rest: '2:30' },
+    { name: 'B', sets: [{ weight: 60, reps: 10 }, { weight: 70, reps: 8 }, { weight: 80, reps: '5-6' }], rest: '3:00' },
+    { name: 'C', sets: ['60x10', '70x8', '80x5-6'] },
+    { name: 'D', sets: '60x10, 70x8, 80x5-6' },
+    { name: 'E', sets: ['x8'] },
+    { name: 'F', sets: [{ reps: 8 }] },
+    { name: 'G', rest: '90s' },
+    { name: 'H', rest: '2m' },
+    { name: 'I', rest: 2 },
+    { name: 'J', rest: '1:05:00' },
+    { type: 'cardio', name: 'K', distance: 5, distanceUnit: 'mi', duration: 20 },
+    { name: 'L', notes: ['one', 'two'] },
+  ],
+};
+await xi.importFromText(JSON.stringify(advertised));
+const claims = state.routines.find((x) => x.name === 'Prompt Claims Check');
+const byName = (n) => claims.entries.find((e) => e.name === n);
+ok(byName('A').targetSets === 4 && byName('A').repsMin === 6 && byName('A').repsMax === 8 && byName('A').weight === 70,
+  'shape A parses as advertised');
+ok(byName('B').setTargets.length === 3 && byName('B').setTargets[2].repsMax === 6, 'shape B object form parses');
+ok(byName('C').setTargets.length === 3 && byName('C').setTargets[1].weight === 70, 'shape B array-of-strings parses');
+ok(byName('D').setTargets.length === 3 && byName('D').setTargets[2].repsMin === 5, 'shape B single-string parses');
+ok(byName('E').setTargets[0].weight === null && byName('E').setTargets[0].repsMin === 8, '"x8" parses as bodyweight');
+ok(byName('F').setTargets[0].weight === null && byName('F').setTargets[0].repsMin === 8, '{reps:8} parses as bodyweight');
+ok(byName('G').rest === 90, '"90s" -> 90s');
+ok(byName('H').rest === 120, '"2m" -> 120s');
+ok(byName('I').rest === 2, 'bare 2 -> 2s (a bare rest value is seconds)');
+ok(byName('J').rest === 3900, '"1:05:00" -> 3900s');
+ok(byName('K').targetDistance === 5 && byName('K').distanceUnit === 'mi' && byName('K').targetDuration === 1200,
+  'cardio with mi and a bare duration of 20 minutes');
+ok(byName('L').notes === 'one\ntwo', 'notes array joins to lines');
+await store.deleteRoutine(claims.id);
+
+section('bare numbers are unambiguous per field');
+ok(parseDurCheck('90') === 90 && parseDurCheck(90) === 90, 'a bare rest value is seconds, string or number');
+ok(parseDurCheck('20', 'minutes') === 1200 && parseDurCheck(20, 'minutes') === 1200,
+  'a bare cardio duration is minutes, string or number');
+ok(parseDurCheck('2:30') === 150 && parseDurCheck('90s') === 90 && parseDurCheck('2m') === 120,
+  'explicit forms are unaffected by the bare-number rule');
+const restTyped = await xi.importFromText(JSON.stringify({
+  name: 'Bare Rest Check', entries: [{ name: 'X', rest: 90 }, { name: 'Y', rest: '90' }],
+}));
+ok(restTyped.routines === 1, 'imported');
+const bare = state.routines.find((x) => x.name === 'Bare Rest Check');
+ok(bare.entries[0].rest === 90 && bare.entries[1].rest === 90,
+  `"rest": 90 and "rest": "90" both mean 90 seconds (${bare.entries[0].rest}, ${bare.entries[1].rest})`);
+await store.deleteRoutine(bare.id);
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

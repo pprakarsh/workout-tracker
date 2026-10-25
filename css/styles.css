@@ -248,3 +248,11 @@ pre.code{
   padding:10px;overflow-x:auto;font-size:11.5px;line-height:1.45;
   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg2);
 }
+details summary{
+  cursor:pointer;font-size:13px;font-weight:600;color:var(--accent);
+  padding:6px 0;list-style:none;
+}
+details summary::-webkit-details-marker{display:none}
+details summary::before{content:'▸ ';font-size:11px}
+details[open] summary::before{content:'▾ '}
+details pre.code{max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch}

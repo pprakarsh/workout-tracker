@@ -126,7 +126,8 @@ export function normalizeEntry(raw = {}) {
     // cardio targets
     targetDistance: num(raw.distance ?? raw.targetDistance),
     distanceUnit: raw.distanceUnit || null,
-    targetDuration: parseDur(raw.duration ?? raw.targetDuration),
+    // a bare cardio duration is read as minutes; a bare rest value as seconds
+    targetDuration: parseDur(raw.duration ?? raw.targetDuration, { bare: 'minutes' }),
     // shared
     rest: parseDur(raw.rest ?? raw.restSeconds ?? raw.restTime),
     // notes may be a string or a list of lines (handy in hand-written JSON)

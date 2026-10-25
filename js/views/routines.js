@@ -165,6 +165,21 @@ export function render() {
       <button type="button" class="btn block ghost" style="margin-top:10px" data-action="settings-open">Change settings</button>
     </div>
 
+    <h2>Generate a routine with an AI tool</h2>
+    <div class="card">
+      <p class="hint" style="margin-top:0">Copy the prompt below, paste it into any AI chat tool,
+        fill in the <b>WHAT I WANT</b> block at the top, and paste the JSON it returns into
+        <b>Import</b>. The prompt carries the whole schema — every field, both set-target shapes,
+        how <code>group</code> works, how to express intervals — plus two worked examples, so the
+        tool has everything it needs without you explaining the format.</p>
+      <button type="button" class="btn block primary" data-action="sample-copy" data-which="prompt">
+        Copy the AI prompt</button>
+      <details style="margin-top:10px">
+        <summary>Show the prompt (${AI_PROMPT.split('\n').length} lines)</summary>
+        <pre class="code">${esc(AI_PROMPT)}</pre>
+      </details>
+    </div>
+
     <h2>Import format</h2>
     <div class="card">
       <p class="hint" style="margin-top:0">Paste or load JSON shaped like this. Only
@@ -261,6 +276,106 @@ export const SAMPLE_RUN = `{
       "notes": "Add weight when all three sets hit 8" }
   ]
 }`;
+
+/**
+ * A ready-to-paste prompt for an AI tool. Built from the same sample constants
+ * the app documents, so the prompt and the importer cannot drift apart.
+ */
+export const AI_PROMPT = `I use a local-first workout tracker app that imports routines as JSON.
+Write me a routine as ONE JSON object I can paste straight into its Routines -> Import box.
+
+================ WHAT I WANT (fill these in) ================
+Routine name:     <e.g. "Squat day with Push Movements" or "Run with Upper Body">
+Goal:             <e.g. get stronger on squat/bench; also run a 10k in under 50 min>
+Session length:   <e.g. 60-75 minutes>
+Days per week:    <e.g. 4 - and which of those days this routine is>
+Experience:       <e.g. 3 years lifting; squat 1RM 140 kg, bench 1RM 95 kg>
+Equipment:        <e.g. full commercial gym, treadmill, no specialty bars>
+Units:            <kg and km   OR   lb and mi>
+Constraints:      <injuries, movements to avoid, anything to work around>
+
+================ OUTPUT RULES ================
+1. Output ONLY the JSON. No markdown code fences, no explanation before or after.
+2. It must be strictly valid JSON: double quotes, no trailing commas, no JS comments.
+3. Record any assumptions you had to make in the "description" field.
+4. One JSON object = one training day. If I asked for several days, output a JSON
+   ARRAY of such objects instead.
+5. Order "entries" exactly as I should perform them, warmups and cooldowns included.
+6. Put real target numbers in, based on what I told you. Leave no placeholders.
+
+================ SCHEMA ================
+Top level:
+  "name"         string, REQUIRED. Short title for the day.
+  "description"  string, optional. Purpose, expected duration, your assumptions.
+  "entries"      array, REQUIRED. The exercises, in performance order.
+  Any key starting with "//" is ignored by the importer, so you may use "//" keys
+  for notes to me. Nothing outside this schema is read.
+
+Every entry:
+  "name"   string, REQUIRED. The exercise name as a lifter would say it.
+  "type"   "lift" (the default - omit it) or "cardio".
+  "rest"   rest target. Accepts "2:30" | "90s" | "2m" | "1:05:00". A bare number
+           with no unit means SECONDS here, so prefer an explicit form.
+  "group"  superset / circuit label. See GROUP below.
+  "notes"  string, OR an array of strings for multiple lines. Use it for warmup
+           sets, tempo prescriptions, cues, setup, pace or heart-rate instructions.
+
+LIFTING entries ("type":"lift", or omit "type") - pick ONE of two shapes:
+
+  A) The same target for every set:
+       { "name": "Bench Press", "sets": 4, "reps": "6-8", "weight": 70, "rest": "2:30" }
+     "sets"   = how many sets (a number)
+     "reps"   = a number (5) or a range string ("6-8")
+     "weight" = the load in my units
+
+  B) A DIFFERENT target per set - use this for ascending loads, pyramids, waves:
+       { "name": "Back Squat", "rest": "3:00",
+         "sets": [ {"weight":60,"reps":10}, {"weight":70,"reps":8}, {"weight":80,"reps":"5-6"} ] }
+     The number of sets comes from the length of the list.
+     Shorthands meaning the same: ["60x10","70x8","80x5-6"]  or  "60x10, 70x8, 80x5-6"
+     For bodyweight work omit the weight: {"reps":8} or "x8".
+     Prefer shape B whenever the sets genuinely differ; prefer A when they do not.
+
+CARDIO entries ("type":"cardio"):
+  "distance"      number, expressed in "distanceUnit"
+  "distanceUnit"  "km" or "mi"
+  "duration"      target time: "18:00" | "1:05:00" | "20m" | "90s". A bare number
+                  with no unit means MINUTES here.
+  "rest"          rest after this effort - use it between intervals
+  IMPORTANT: one cardio entry is ONE effort that I log once. For interval work, emit
+  one entry PER REPETITION and give them all the same "group" label. Do not try to
+  express intervals with "sets" - cardio entries have no sets.
+  There are NO target fields for pace, heart rate, elevation or perceived effort; I
+  record those while logging. Put pace or HR targets in "notes" instead.
+
+GROUP - supersets and circuits:
+  "group" is a short label (up to 4 characters) marking a superset or circuit.
+  - Give CONSECUTIVE entries the same label to make them one block.
+  - The app then shows that block's exercises together on one screen, and "Next"
+    skips past the whole block instead of stepping through its members one by one.
+  - Each exercise still keeps its OWN "rest" value. A group does NOT share one rest
+    period, so set "rest" on every member.
+  - The label is arbitrary: "A", "B", "I". Only matching your neighbour matters.
+  - Entries with the same label that are NOT adjacent form SEPARATE blocks, so keep
+    the members of a superset next to each other in the array.
+  - Omit "group" entirely for a normal standalone exercise.
+
+================ WORKED EXAMPLE 1: running + upper body ================
+${SAMPLE_RUN}
+
+================ WORKED EXAMPLE 2: lifting day, superset + per-set plan ================
+${SAMPLE}
+
+================ CHECKLIST BEFORE YOU ANSWER ================
+- Valid JSON, no code fences, nothing but the JSON.
+- Every entry has a "name".
+- Lifting entries use shape A or shape B, never both.
+- Cardio entries use distance/duration, never "sets".
+- Interval reps are separate entries sharing one "group" label, and are adjacent.
+- Every member of a group has its own "rest".
+- All loads and distances are in the units I specified.
+- Durations and rests use an explicit form such as "2:30", "90s" or "20m".
+- Assumptions recorded in "description".`;
 
 function mutateRoutineEntries(id, fn) {
   const r = getRoutine(id);
@@ -512,9 +627,11 @@ export const routineActions = {
   },
 
   'sample-copy': async ({ which }) => {
-    const text = which === 'run' ? SAMPLE_RUN : SAMPLE;
-    try { await navigator.clipboard.writeText(text); toast('Sample copied'); }
-    catch { toast('Copy not allowed — select the text instead'); }
+    const text = which === 'prompt' ? AI_PROMPT : which === 'run' ? SAMPLE_RUN : SAMPLE;
+    const label = which === 'prompt' ? 'Prompt copied — paste it into your AI tool'
+      : 'Sample copied';
+    try { await navigator.clipboard.writeText(text); toast(label, 3500); }
+    catch { toast('Copy not allowed — open the block and select the text instead', 4500); }
   },
 
   'settings-open': () => {
@@ -534,7 +651,7 @@ export const routineActions = {
               <option value="mi" ${s.distanceUnit === 'mi' ? 'selected' : ''}>mi</option>
             </select></label>
         </div>
-        <label class="field"><span>Default rest when a routine doesn't set one</span>
+        <label class="field"><span>Default rest when a routine sets none - 2:00, 90s, or seconds</span>
           <input name="defaultRest" value="${esc(fmtClock(s.defaultRest))}" inputmode="text" placeholder="2:00"></label>
         <label class="field"><span>Beep when the rest target is reached</span>
           <select name="beep">

@@ -280,7 +280,7 @@ export function exerciseFormHtml(e = {}) {
       </div>
     </div>
 
-    <label class="field"><span>Rest between sets (mm:ss or 90s)</span>
+    <label class="field"><span>Rest between sets - 2:30, 90s, or a number of seconds</span>
       <input name="rest" inputmode="text" placeholder="2:00" value="${e.rest ? esc(fmtClock(e.rest)) : ''}"></label>
     <label class="field"><span>Superset / circuit group — same label on consecutive exercises</span>
       <input name="group" maxlength="4" placeholder="e.g. A — leave blank for a normal exercise"
@@ -351,7 +351,7 @@ export function readExerciseForm(v, modal = null) {
     type: v.type === 'cardio' ? 'cardio' : 'lift',
     name: (v.name || '').trim(),
     targetDistance: num(v.targetDistance),
-    targetDuration: parseDur(v.targetDuration),
+    targetDuration: parseDur(v.targetDuration, { bare: 'minutes' }),
     rest: parseDur(v.rest),
     group: (v.group || '').trim() || null,
     notes: (v.notes || '').trim(),
@@ -616,7 +616,7 @@ export async function handleFieldInput(target) {
   if (logBox) {
     const patch = {};
     patch[field] = field === 'note' ? target.value
-      : field === 'duration' ? parseDur(target.value)
+      : field === 'duration' ? parseDur(target.value, { bare: 'minutes' })
         : num(target.value);
     await updateLog(logBox.dataset.entry, patch, { silent: true });
   }
