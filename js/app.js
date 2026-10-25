@@ -83,8 +83,8 @@ document.addEventListener('click', async (ev) => {
   const tabBtn = ev.target.closest('#tabBar .tab');
   if (tabBtn) {
     state.tab = tabBtn.dataset.tab;
-    if (state.tab === 'history') state.nav.sessionId = null;
-    if (state.tab === 'routines') state.nav.routineId = state.nav.routineId || null;
+    // tapping a tab always lands on that tab's top-level screen
+    state.nav = {};
     render();
     return;
   }
@@ -115,9 +115,15 @@ document.addEventListener('input', async (ev) => {
   return undefined;
 });
 
-// Re-render on blur so derived values (pace, volume, status pills) catch up.
+// Re-render on blur so derived values (pace, volume, status pills) catch up — but not
+// while you are moving between fields, which would destroy the focused input.
 document.addEventListener('blur', (ev) => {
-  if (ev.target?.dataset && (ev.target.dataset.f || ev.target.dataset.sf)) render();
+  if (!(ev.target?.dataset?.f || ev.target?.dataset?.sf)) return;
+  setTimeout(() => {
+    const ae = document.activeElement;
+    if (ae && ['INPUT', 'TEXTAREA', 'SELECT'].includes(ae.tagName)) return;
+    render();
+  }, 0);
 }, true);
 
 // Enter in a set field moves to the next field instead of submitting anything.

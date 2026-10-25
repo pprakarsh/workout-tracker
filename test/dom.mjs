@@ -78,6 +78,21 @@ ok(liveSet.weight === 102.5 && liveSet.reps === 5 && liveSet.rpe === 8,
   `typing persisted: ${liveSet.weight} x ${liveSet.reps} @ ${liveSet.rpe}`);
 ok($('.set-row input[data-f="weight"]') === $('.set-row input[data-f="weight"]'), 'row not re-rendered mid-typing');
 
+section('moving between fields must not destroy the keyboard');
+await click('[data-action="set-add"]', '+ Add set (second)');
+const wA = $$('.set-row input[data-f="weight"]')[1];
+const rA = $$('.set-row input[data-f="reps"]')[1];
+wA.focus();
+rA.focus();                       // fires blur on wA
+await sleep(40);
+ok(rA.isConnected, 'the newly focused input survived the blur of the previous one');
+ok(document.activeElement === rA, 'focus stayed where the user put it');
+rA.blur();                        // leaving the fields entirely may re-render
+await sleep(40);
+ok($$('.set-row').length === 2, 'both set rows still present after a full blur');
+await click('[data-action="set-del-last"]', '− Remove last');
+ok($$('.set-row').length === 1, 'removed the extra set');
+
 section('rest timer through the UI');
 ok($('#restBar').hidden, 'rest bar hidden before starting');
 await click('.set-row .rest-btn', 'Rest ⏱');
