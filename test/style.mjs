@@ -126,7 +126,7 @@ for (const map of ['entryActions', 'nowActions', 'sessionActions', 'historyActio
 }
 
 console.log('\n== documentation exists and points at real things');
-for (const doc of ['README.md', 'ARCHITECTURE.md', 'AGENTS.md']) {
+for (const doc of ['README.md', 'ARCHITECTURE.md', 'AGENTS.md', 'ROADMAP.md']) {
   const body = readFileSync(`${APP}/${doc}`, 'utf8');
   ok(body.length > 500, `${doc} is present (${Math.round(body.length / 1024)} KB)`);
   // every js/... path a doc mentions must exist

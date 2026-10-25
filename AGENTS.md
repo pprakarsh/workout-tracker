@@ -2,6 +2,8 @@
 
 Entry point for anyone — human or AI — editing this app. Read
 [ARCHITECTURE.md](ARCHITECTURE.md) for how it works; this file is the rules and the recipes.
+[ROADMAP.md](ROADMAP.md) holds the candidate feature list, with what is impossible on an iOS PWA
+and what has been deliberately rejected — check it before building something new.
 
 Plain ES modules, no framework, no build step, no runtime dependencies. Keep it that way: the whole
 point is that it deploys as static files and will still run in five years.
@@ -231,6 +233,8 @@ Honest list, with the trigger for paying it off rather than a vague "someday":
   `settings` so exports cannot contain it. Do not add analytics, telemetry or a crash reporter.
 
 ## Product decisions, so they are not re-litigated by accident
+
+These are also listed as "deliberately rejected" in [ROADMAP.md](ROADMAP.md) with reasons.
 
 - **Local-first.** No account, no server. Sync is optional and additive; the app must stay fully
   usable offline with sync switched off.

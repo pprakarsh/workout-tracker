@@ -12,6 +12,8 @@ mobile-first and centred with a max width, so on a desktop it appears as a phone
 **Working on the code?** [AGENTS.md](AGENTS.md) is the entry point for humans and AI agents — rules,
 recipes and checklists. [ARCHITECTURE.md](ARCHITECTURE.md) explains how it works: module map, data
 model, render loop, flows, and the gotchas that have already bitten once.
+[ROADMAP.md](ROADMAP.md) lists candidate features with effort and dependencies, what the platform
+won't allow, and what was deliberately rejected.
 
 ---
 
@@ -479,4 +481,5 @@ test/                   dev-only test suites
 deploy.sh               publish to GitHub Pages
 AGENTS.md               rules and recipes for editing this codebase
 ARCHITECTURE.md         how it works, and the known gotchas
+ROADMAP.md              candidate features, platform limits, rejected ideas
 ```
