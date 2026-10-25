@@ -37,6 +37,7 @@ const sessionView = await import(`${APP}/js/views/session.js`);
 const historyView = await import(`${APP}/js/views/history.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
 const entry = await import(`${APP}/js/views/entry.js`);
+const fmt = await import(`${APP}/js/format.js`);
 const { state } = store;
 const util = await import(`${APP}/js/util.js`);
 const parseDurCheck = (v, bare) => (bare ? util.parseDur(v, { bare }) : util.parseDur(v));
@@ -144,7 +145,7 @@ section('cardio logging');
 const cardio = s.entries.find((x) => x.type === 'cardio');
 await store.updateLog(cardio.id, { distance: 3.2, duration: 1020, avgHr: 152, maxHr: 171, elevation: 24, rpe: 7, note: 'easy', done: true });
 ok(store.entryStatus(cardio) === 'done', 'cardio marked done');
-ok(entry.pace(3.2, 1020, 'km') === '5:19/km', `pace computed: ${entry.pace(3.2, 1020, 'km')}`);
+ok(fmt.pace(3.2, 1020, 'km') === '5:19/km', `pace computed: ${fmt.pace(3.2, 1020, 'km')}`);
 renderAll('with-data');
 
 section('session meta + finish');
@@ -159,7 +160,7 @@ renderAll('after-finish');
 section('last-session reference (no auto-progression)');
 const hit = store.lastLogFor('Back Squat');
 ok(hit !== null, 'previous Back Squat found');
-ok(/102.5/.test(entry.logSummary(hit.entry)), `summary: ${entry.logSummary(hit.entry)}`);
+ok(/102.5/.test(fmt.logSummary(hit.entry)), `summary: ${fmt.logSummary(hit.entry)}`);
 const s2 = await store.startSession(r.id);
 ok(s2.entries[0].weight === 100, 'new session still shows the ROUTINE target, not last session');
 const freshSet = await store.addSet(s2.entries[0].id);
@@ -270,8 +271,8 @@ ok(op.setTargets.length === 3 && op.setTargets[1].weight === 45, `string form "4
 ok(cu.setTargets.length === 3 && cu.setTargets[0].weight === null && cu.setTargets[0].repsMin === 8,
   'bodyweight form "x8" -> no weight, 8 reps');
 ok(plain.setTargets === null && plain.weight === 15, 'uniform entry still works alongside');
-ok(entry.planLine(sq) === '60×10 · 70×8 · 80×5-6', `plan line: ${entry.planLine(sq)}`);
-ok(/60×10 · 70×8 · 80×5-6/.test(entry.targetLine(sq)), `target line: ${entry.targetLine(sq)}`);
+ok(fmt.planLine(sq) === '60×10 · 70×8 · 80×5-6', `plan line: ${fmt.planLine(sq)}`);
+ok(/60×10 · 70×8 · 80×5-6/.test(fmt.targetLine(sq)), `target line: ${fmt.targetLine(sq)}`);
 
 section('per-set notes carry warmup / tempo text');
 ok(sq.notes.split('\n').length === 3, `notes kept as 3 lines (${JSON.stringify(sq.notes).slice(0, 48)}…)`);
@@ -375,18 +376,18 @@ const rs = await store.startSession(restR.id);
 const re = rs.entries[0];
 const rsets = [await store.addSet(re.id), await store.addSet(re.id), await store.addSet(re.id)];
 for (const x of rsets) await store.updateSet(re.id, x.id, { done: true });
-ok(entry.restLine(re) === 'Rest: no rest logged for any set',
-  `all three unrested: "${entry.restLine(re)}"`);
+ok(fmt.restLine(re) === 'Rest: no rest logged for any set',
+  `all three unrested: "${fmt.restLine(re)}"`);
 await store.updateSet(re.id, rsets[0].id, { rest: 125 });
-ok(entry.restLine(re) === 'Rest after sets: 1) 2:05 · 2) no rest logged · 3) no rest logged',
-  `mixed: "${entry.restLine(re)}"`);
-ok(!entry.restLine(re).includes('2:00'), 'the routine target 2:00 is never shown as if it were logged');
+ok(fmt.restLine(re) === 'Rest after sets: 1) 2:05 · 2) no rest logged · 3) no rest logged',
+  `mixed: "${fmt.restLine(re)}"`);
+ok(!fmt.restLine(re).includes('2:00'), 'the routine target 2:00 is never shown as if it were logged');
 await store.updateSet(re.id, rsets[2].id, { rest: 98 });
-ok(entry.restLine(re) === 'Rest after sets: 1) 2:05 · 2) no rest logged · 3) 1:38',
-  `gap in the middle: "${entry.restLine(re)}"`);
+ok(fmt.restLine(re) === 'Rest after sets: 1) 2:05 · 2) no rest logged · 3) 1:38',
+  `gap in the middle: "${fmt.restLine(re)}"`);
 const emptyEntry = { type: 'lift', sets: [] };
-ok(entry.restLine(emptyEntry) === '', 'nothing said when no sets are logged yet');
-ok(entry.restLine({ type: 'cardio', sets: null }) === '', 'cardio entries say nothing about rest');
+ok(fmt.restLine(emptyEntry) === '', 'nothing said when no sets are logged yet');
+ok(fmt.restLine({ type: 'cardio', sets: null }) === '', 'cardio entries say nothing about rest');
 
 const restMd = xi.sessionMarkdown(rs);
 ok((restMd.match(/no rest logged/g) || []).length === 1,

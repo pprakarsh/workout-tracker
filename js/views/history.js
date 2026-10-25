@@ -7,7 +7,8 @@ import {
 import {
   esc, fmtDate, fmtTimeOfDay, fmtDur, fmtNum, relDay, isoDate,
 } from '../util.js';
-import { renderEntryStatic, renderEntry, logSummary } from './entry.js';
+import { renderEntryStatic, renderEntry } from './entry.js';
+import { logSummary } from '../format.js';
 import { exportSessionMarkdown, exportSessionJson, exportCsv } from '../exportimport.js';
 import { confirmDialog, toast, openModal } from '../ui.js';
 

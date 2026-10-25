@@ -127,6 +127,106 @@ curl -s https://pprakarsh.github.io/workout-tracker/js/util.js | grep APP_VERSIO
 | Sync overwrote something | `unsyncedLocalChanges()` and the `lastSeenRemoteMs` marker |
 | Tap does nothing | Action name typo, or the handler lives in a map that is not merged into `ACTIONS` |
 
+## Keeping it maintainable
+
+The rules above stop you breaking what exists. This section is about not letting it rot.
+
+### Conventions
+
+- **Names say what, comments say why.** The code should need no comment to explain *what* it does;
+  comments exist to record the reason, especially the non-obvious ones. Every comment in this
+  codebase that explains a workaround names the bug it prevents — keep that up, because the next
+  person's instinct will be to "simplify" it away.
+- **Functions do one thing and are readable without scrolling.** If you need a section comment
+  inside a function, it wanted to be two functions.
+- **No abbreviations in exported names.** `sessionProgress`, not `sessProg`. Local `e`/`s`/`r` for
+  entry/session/routine is established and fine.
+- **Store mutators are `async` and persist before they emit.** Never mutate and leave the write for
+  later; a mid-workout reload must find the truth on disk.
+- **Guard clauses over nesting.** `if (!s) return;` at the top.
+- **Nothing in the app may `console.log`.** `console.error` in a catch is fine. Enforced by a test.
+
+### Complexity budget
+
+| | Soft target | Hard cap (tested) | Today |
+|---|---|---|---|
+| Lines per module | 500 | 1000 | store 845, routines 756, entry 549 |
+| Runtime dependencies | 0 | 0 | 0 |
+| Build steps | 0 | 0 | 0 |
+
+`store.js` and `views/routines.js` are the two to watch. When one needs splitting, the seams are
+already visible: `store.js` → session logic vs. routine/library logic; `routines.js` → the routine
+editor vs. the data/settings/samples screen. Split on those lines rather than inventing new ones.
+
+A module over ~500 lines is a signal, not a sin. Split when it has two audiences, not when it has
+many lines.
+
+### Anti-patterns — refuse these even if asked
+
+- **A second source of truth.** The exercise library is derived from routines and sessions on every
+  read, deliberately. Never cache it into a store. Same for anything else derivable.
+- **Schema knowledge in more than one place.** Field names and formats live in `normalizeEntry`.
+  The samples, the AI prompt and the README describe it; they must not re-implement it.
+- **A framework, a bundler, or a dependency.** The whole value proposition is that this still runs
+  in five years with no toolchain.
+- **Storing derived values** (volume, e1RM, progress) on a session. Compute them.
+- **Silent failure.** Every error path either shows a toast with the real message or is commented
+  with why swallowing it is correct.
+- **Mutating `state` outside `store.js`.**
+
+### Before you commit
+
+```
+[ ] npm test — all four suites green
+[ ] every behaviour change has an assertion that fails without it
+[ ] APP_VERSION and the sw.js CACHE name bumped together
+[ ] new files added to ASSETS in sw.js
+[ ] new modules added to the ARCHITECTURE.md module map
+[ ] no console.log, no commented-out code, no dead handlers
+[ ] docs updated per the map below
+[ ] Conventional Commit message explaining what and why
+```
+
+Every bug fixed here got a test that fails without the fix. That is the single habit keeping this
+codebase honest — four real bugs were caught that way during its first week (the SW cache, the
+focus-stealing blur, the clock-skew comparison, logged sets read as targets).
+
+### When you change X, update Y
+
+| Changed | Also update |
+|---|---|
+| A field on an entry | `normalizeEntry`, the exercise form, `routineObject`, `SAMPLE`/`SAMPLE_RUN`, `AI_PROMPT`, README field table |
+| The CSV columns | README export table — the column order is a published contract someone's spreadsheet depends on |
+| Anything about `group`, units or durations | `AI_PROMPT`, the in-app *Import format* card, README |
+| A stored shape | `restoreAll`, `backupObject`, and check an old backup still imports |
+| A new module | `sw.js` ASSETS, ARCHITECTURE.md module map |
+| The render loop, state shape or event routing | ARCHITECTURE.md — this is the doc that stops the next person guessing |
+| A fixed bug whose cause was subtle | the gotchas list in ARCHITECTURE.md |
+
+### Current known debt
+
+Honest list, with the trigger for paying it off rather than a vague "someday":
+
+| Debt | Trigger to fix |
+|---|---|
+| Sync is a whole-file blob, so it cannot merge two devices | When you start logging on two devices in the same week. Needs per-record push/pull plus deletion tombstones |
+| No schema migration framework; `normalizeEntry` absorbs everything | When a field must *change meaning* rather than be added |
+| Volume and any future PR logic count warmup sets | Before adding PR detection, or it will be wrong from day one |
+| `store.js` and `routines.js` are the largest modules | When either passes ~900 lines |
+| No charts, so years of logs stay a list | When you have enough history to want a trend |
+| Exercises have no muscle-group tags | When you want weekly volume per muscle |
+| Gist files over 1 MB rely on a raw-URL fallback | Around year 3–5 of daily logging |
+
+### Baselines not to regress
+
+- **Performance.** `render()` rebuilds the whole view on every state change. That is fine at this
+  data size (a few hundred sessions, a few KB each). If a view ever gets slow, cap what it renders
+  (paginate History) before reaching for a framework.
+- **Accessibility.** Inputs stay at 16px so iOS does not zoom on focus; touch targets stay ~34px
+  minimum; set inputs carry `aria-label`s; the tab bar is real `<button>`s. Keep all of that.
+- **Privacy.** Nothing leaves the device without an explicit tap. The sync token lives outside
+  `settings` so exports cannot contain it. Do not add analytics, telemetry or a crash reporter.
+
 ## Product decisions, so they are not re-litigated by accident
 
 - **Local-first.** No account, no server. Sync is optional and additive; the app must stay fully

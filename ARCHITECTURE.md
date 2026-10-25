@@ -22,6 +22,7 @@ js/sync.js          Gist sync: push/pull, conflict guards, device pairing
 js/timer.js         rest timer bar: ticking, beep, audio unlock
 js/ui.js            modal / toast / confirm / clipboard primitives
 js/util.js          formatting + parsing helpers, APP_VERSION
+js/format.js        entry -> summary strings (targetLine, logSummary, restLine, pace)
 js/exportimport.js  JSON backup, CSV, Markdown, import/normalisation entry point
 js/views/entry.js   the exercise card and set rows, the exercise form, the library picker
 js/views/now.js     "Now" tab
@@ -32,9 +33,24 @@ test/               four dev-only Node suites (jsdom + fake-indexeddb)
 deploy.sh           publish to GitHub Pages
 ```
 
-Dependency direction is one-way: `views/* → store/ui/util/timer/sync → db/util`. Views never talk
-to `db.js` directly except `routines.js`, which uses `dbPut` for one caret-preserving write.
-`ui.js` imports `emit` from the store so closing a modal repaints the view behind it.
+Dependency direction is one-way and enforced by a test:
+
+```
+js/app.js  (composition root — may import anything)
+   ↓
+js/views/*  →  store, format, ui, util, timer, sync
+   ↓
+store, sync, exportimport, format  →  db, util
+```
+
+**Nothing outside `js/views/` may import a view**, `js/app.js` excepted. `js/format.js` exists for
+exactly this reason: the exporter needs the same wording as the screen, so the summary builders live
+in a core module that both can import. (This rule was broken once — `exportimport.js` imported
+`views/entry.js` — which is why there is now a test for it.)
+
+Views never talk to `db.js` directly except `routines.js`, which uses `dbPut` for one
+caret-preserving write. `ui.js` imports `emit` from the store so closing a modal repaints the view
+behind it.
 
 ## Rendering model
 

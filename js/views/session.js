@@ -5,7 +5,7 @@ import {
   discardSession, saveSessionBackToRoutine, updateSessionMeta, blockAt, working,
 } from '../store.js';
 import { esc, fmtDur, fmtNum, num } from '../util.js';
-import { targetLine, logSummary } from './entry.js';
+import { targetLine, logSummary } from '../format.js';
 import { confirmDialog, toast, openModal } from '../ui.js';
 import { autoPushIfEnabled } from '../sync.js';
 

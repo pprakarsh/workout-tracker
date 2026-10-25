@@ -42,17 +42,24 @@ const openBraces = (css.match(/\{/g) || []).length;
 const closeBraces = (css.match(/\}/g) || []).length;
 ok(openBraces === closeBraces, `braces balanced (${openBraces} open / ${closeBraces} close)`);
 
+const { readdirSync: _rd, statSync: _st } = await import('node:fs');
+const walk = (dir, prefix = '') => _rd(dir).flatMap((n) => {
+  const full = `${dir}/${n}`;
+  const rel = prefix ? `${prefix}/${n}` : n;
+  if (_st(full).isDirectory()) return walk(full, rel);
+  return n.endsWith('.js') ? [rel] : [];
+});
+
 console.log('\n== offline manifest covers every shipped file');
 const sw = readFileSync(`${APP}/sw.js`, 'utf8');
 const listed = new Set([...sw.matchAll(/^\s*'([^']+)',/gm)].map((m) => m[1]));
-const { readdirSync, statSync } = await import('node:fs');
-const walk = (dir, prefix = '') => readdirSync(dir).flatMap((n) => {
+const walkShipped = (dir, prefix = '') => _rd(dir).flatMap((n) => {
   const full = `${dir}/${n}`;
   const rel = prefix ? `${prefix}/${n}` : n;
-  if (statSync(full).isDirectory()) return n === 'test' || n === 'node_modules' || n.startsWith('.') ? [] : walk(full, rel);
+  if (_st(full).isDirectory()) return n === 'test' || n === 'node_modules' || n.startsWith('.') ? [] : walkShipped(full, rel);
   return /\.(js|css|html|webmanifest|png)$/.test(n) ? [rel] : [];
 });
-const shipped = walk(APP).filter((f) => f !== 'sw.js');
+const shipped = walkShipped(APP).filter((f) => f !== 'sw.js');
 const missing = shipped.filter((f) => !listed.has(f));
 ok(missing.length === 0, `every file is in the service worker list${missing.length ? ` — missing: ${missing.join(', ')}` : ` (${shipped.length} files)`}`);
 ok(/network-first|fetch\(req\)\s*$|fetch\(req\)\n/.test(sw) || sw.includes('fetch(req)'), 'service worker goes to the network before the cache');
@@ -127,6 +134,36 @@ for (const doc of ['README.md', 'ARCHITECTURE.md', 'AGENTS.md']) {
   const missing = [...new Set(referenced)].filter((p) => !existsSync(`${APP}/${p}`));
   ok(missing.length === 0, `${doc} references only real files${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`);
 }
+
+console.log('\n== maintainability invariants');
+const modules = [...walk(`${APP}/js`).map((f) => `js/${f}`)];
+ok(modules.length >= 13, `${modules.length} app modules`);
+
+// 1. one-way dependencies: nothing outside js/views may import a view.
+// js/app.js is the composition root — wiring views together is its whole job.
+const core = modules.filter((m) => !m.startsWith('js/views/') && m !== 'js/app.js');
+const upward = core.filter((m) => /from '\.(\/|\.\/)?views\//.test(readFileSync(`${APP}/${m}`, 'utf8')));
+ok(upward.length === 0,
+  `no core module imports a view${upward.length ? ` — violated by: ${upward.join(', ')}` : ''}`);
+
+// 2. the module map in ARCHITECTURE.md must list every module
+const arch = readFileSync(`${APP}/ARCHITECTURE.md`, 'utf8');
+const undocumented = modules.filter((m) => !arch.includes(m) && !arch.includes(m.replace('js/views/', '')));
+ok(undocumented.length === 0,
+  `ARCHITECTURE.md documents every module${undocumented.length ? ` — missing: ${undocumented.join(', ')}` : ''}`);
+
+// 3. no module may grow past the hard cap; split it instead
+const CAP = 1000;
+const oversized = modules
+  .map((m) => [m, readFileSync(`${APP}/${m}`, 'utf8').split('\n').length])
+  .filter(([, n]) => n > CAP);
+ok(oversized.length === 0,
+  `every module is under ${CAP} lines${oversized.length ? ` — over: ${oversized.map(([m, n]) => `${m} (${n})`).join(', ')}` : ''}`);
+
+// 4. no leftover debug logging; console.error/warn in a catch is fine
+const debugLogs = modules.filter((m) => /console\.(log|debug|info)\(/.test(readFileSync(`${APP}/${m}`, 'utf8')));
+ok(debugLogs.length === 0,
+  `no stray console.log${debugLogs.length ? ` — found in: ${debugLogs.join(', ')}` : ''}`);
 
 console.log(`\n${failures === 0 ? 'ALL STYLE CHECKS PASSED' : `${failures} STYLE CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

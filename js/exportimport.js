@@ -3,7 +3,7 @@ import { state, normalizeRoutine, saveRoutine, persistSession, sessionVolume, em
 import {
   download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, fmtReps, uid,
 } from './util.js';
-import { pace, targetLine } from './views/entry.js';
+import { pace, targetLine } from './format.js';
 
 export const SCHEMA = 'workout-tracker/v1';
 

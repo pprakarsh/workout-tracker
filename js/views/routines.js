@@ -5,8 +5,9 @@ import {
 } from '../store.js';import { dbPut } from '../db.js';
 import { esc, fmtDate, fmtClock, fmtTimeOfDay, relDay, parseDur, APP_VERSION } from '../util.js';
 import {
-  targetLine, exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker,
+  exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker,
 } from './entry.js';
+import { targetLine } from '../format.js';
 import { openModal, confirmDialog, toast, copyText } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';
 import {
