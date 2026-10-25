@@ -7,7 +7,7 @@ import { esc, fmtDate, fmtClock, fmtTimeOfDay, relDay, parseDur, APP_VERSION } f
 import {
   targetLine, exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker,
 } from './entry.js';
-import { openModal, confirmDialog, toast } from '../ui.js';
+import { openModal, confirmDialog, toast, copyText } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';
 import {
   sync, syncConfigured, configureSync, disconnectSync, pushNow, pullNow,
@@ -173,9 +173,11 @@ export function render() {
         how <code>group</code> works, how to express intervals — plus two worked examples, so the
         tool has everything it needs without you explaining the format.</p>
       <button type="button" class="btn block primary" data-action="sample-copy" data-which="prompt">
-        Copy the AI prompt</button>
+        Copy the full prompt</button>
+      <p class="hint center" style="margin:6px 0 0">Copies all ${AI_PROMPT.split('\n').length} lines:
+        the instructions, the complete schema, and both JSON examples.</p>
       <details style="margin-top:10px">
-        <summary>Show the prompt (${AI_PROMPT.split('\n').length} lines)</summary>
+        <summary>Show exactly what gets copied</summary>
         <pre class="code">${esc(AI_PROMPT)}</pre>
       </details>
     </div>
@@ -546,8 +548,8 @@ export const routineActions = {
   'sync-copy-pairing': async () => {
     const code = pairingCode();
     if (!code) { toast('Push once first so there is a gist to share'); return; }
-    try { await navigator.clipboard.writeText(code); toast('Pairing code copied — treat it like a password', 4000); }
-    catch { toast('Copy failed; open Settings on this device to read the token', 5000); }
+    if (await copyText(code)) toast('Pairing code copied - treat it like a password', 4000);
+    else toast('Copy was blocked; open Settings on this device to read the token', 5000);
   },
 
   'sync-disconnect': async () => {
@@ -620,18 +622,14 @@ export const routineActions = {
     if (sync.gistId) window.open(`https://gist.github.com/${sync.gistId}`, '_blank', 'noopener');
   },
 
-  'sync-copy-id': async () => {
-    if (!sync.gistId) return;
-    try { await navigator.clipboard.writeText(sync.gistId); toast('Gist id copied'); }
-    catch { toast(sync.gistId, 6000); }
-  },
-
   'sample-copy': async ({ which }) => {
     const text = which === 'prompt' ? AI_PROMPT : which === 'run' ? SAMPLE_RUN : SAMPLE;
-    const label = which === 'prompt' ? 'Prompt copied — paste it into your AI tool'
+    const kb = Math.round(text.length / 102.4) / 10;
+    const label = which === 'prompt'
+      ? `Full prompt copied (${text.split('\n').length} lines, ${kb} KB) — paste it into your AI tool`
       : 'Sample copied';
-    try { await navigator.clipboard.writeText(text); toast(label, 3500); }
-    catch { toast('Copy not allowed — open the block and select the text instead', 4500); }
+    if (await copyText(text)) toast(label, 3800);
+    else toast('Copy was blocked — open the block below and select the text by hand', 5000);
   },
 
   'settings-open': () => {

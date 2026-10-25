@@ -592,5 +592,38 @@ ok(bare.entries[0].rest === 90 && bare.entries[1].rest === 90,
   `"rest": 90 and "rest": "90" both mean 90 seconds (${bare.entries[0].rest}, ${bare.entries[1].rest})`);
 await store.deleteRoutine(bare.id);
 
+section('the copied prompt really contains both JSON examples, in situ');
+const promptText = routinesView.AI_PROMPT;
+const between = (startMark, endMark) => {
+  const a = promptText.indexOf(startMark);
+  const b = endMark ? promptText.indexOf(endMark) : promptText.length;
+  return promptText.slice(a + startMark.length, b === -1 ? promptText.length : b);
+};
+const ex1Raw = between('running + upper body ================', '================ WORKED EXAMPLE 2');
+const ex2Raw = between('superset + per-set plan ================', '================ CHECKLIST');
+let ex1 = null; let ex2 = null;
+try { ex1 = JSON.parse(ex1Raw.trim()); } catch (e) { /* reported below */ }
+try { ex2 = JSON.parse(ex2Raw.trim()); } catch (e) { /* reported below */ }
+ok(ex1 !== null, 'example 1 inside the prompt is parseable JSON on its own');
+ok(ex2 !== null, 'example 2 inside the prompt is parseable JSON on its own');
+ok(ex1?.name === 'Run with Upper Body' && ex1?.entries?.length === 6,
+  `example 1 is the full running routine (${ex1?.entries?.length} entries)`);
+ok(ex2?.name === 'Squat day with Push Movements' && ex2?.entries?.length === 5,
+  `example 2 is the full lifting routine (${ex2?.entries?.length} entries)`);
+ok(ex1.entries.some((e) => e.type === 'cardio' && e.rest) && ex1.entries.some((e) => e.group === 'I'),
+  'example 1 still carries cardio rest and interval grouping after being embedded');
+ok(ex2.entries.some((e) => Array.isArray(e.sets)) && ex2.entries.some((e) => Array.isArray(e.notes)),
+  'example 2 still carries a per-set plan and multi-line notes');
+
+// and both still import for real, straight out of the prompt text
+const fromPrompt1 = await xi.importFromText(JSON.stringify(ex1));
+const fromPrompt2 = await xi.importFromText(JSON.stringify(ex2));
+ok(fromPrompt1.routines === 1 && fromPrompt2.routines === 1,
+  'both examples import successfully when lifted out of the copied prompt');
+for (const nm of ['Run with Upper Body', 'Squat day with Push Movements']) {
+  const r = state.routines.filter((x) => x.name === nm).pop();
+  await store.deleteRoutine(r.id);
+}
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

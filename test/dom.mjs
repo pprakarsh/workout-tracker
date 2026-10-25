@@ -18,6 +18,12 @@ global.AudioContext = class { constructor() { this.state = 'suspended'; } resume
 dom.window.HTMLAnchorElement.prototype.click = function () {};
 dom.window.scrollTo = () => {};   // jsdom doesn't implement scrolling
 global.URL = dom.window.URL;
+// capture whatever the app puts on the clipboard
+let copied = null;
+Object.defineProperty(dom.window.navigator, 'clipboard', {
+  value: { writeText: async (t) => { copied = t; } },
+  configurable: true,
+});
 
 let failures = 0;
 const ok = (c, l) => { if (c) console.log(`  ok   ${l}`); else { failures++; console.log(`  FAIL ${l}`); } };
@@ -443,6 +449,54 @@ await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
+
+section('the copy button copies the whole prompt');
+await click('#tabBar .tab[data-tab="routines"]');
+const copyBtn = $('[data-action="sample-copy"][data-which="prompt"]');
+ok(copyBtn !== null, 'the prompt copy button is on the Routines tab');
+ok(/Copy the full prompt/.test(copyBtn.textContent), `button says what it does: "${copyBtn.textContent.trim()}"`);
+copied = null;
+await click('[data-action="sample-copy"][data-which="prompt"]', 'Copy the full prompt');
+ok(typeof copied === 'string' && copied.length > 3000, `clipboard received ${copied?.length} chars`);
+ok(copied === routinesView.AI_PROMPT, 'the clipboard got the prompt verbatim');
+ok(copied.includes('"name": "Run with Upper Body"'), 'including the running JSON example');
+ok(copied.includes('"name": "Squat day with Push Movements"'), 'including the lifting JSON example');
+ok(copied.includes('"group": "I"') && copied.includes('"distanceUnit": "km"'),
+  'with the interval grouping and cardio fields intact');
+ok(copied.includes('CONSECUTIVE') && copied.includes('Output ONLY the JSON'),
+  'and the schema rules, not just the examples');
+ok(/WHAT I WANT/.test(copied) && /CHECKLIST BEFORE YOU ANSWER/.test(copied),
+  'and the fill-in block and checklist');
+
+copied = null;
+await click('[data-action="sample-copy"][data-which="run"]', 'Copy the running sample');
+ok(copied === routinesView.SAMPLE_RUN, 'the per-sample buttons still copy just their sample');
+ok(copied.length < routinesView.AI_PROMPT.length, 'which is shorter than the full prompt');
+
+section('the prompt block can be revealed for manual selection');
+const det = [...document.querySelectorAll('#viewRoot details')];
+ok(det.length >= 1, 'the prompt sits in a collapsible block');
+ok(/Show exactly what gets copied/.test(det[0].textContent), 'labelled so you can verify it');
+ok(det[0].querySelector('pre.code').textContent === routinesView.AI_PROMPT,
+  'and the visible text is the same as what the button copies');
+
+section('copy falls back when the Clipboard API is unavailable');
+const realClipboard = dom.window.navigator.clipboard;
+Object.defineProperty(dom.window.navigator, 'clipboard', {
+  value: { writeText: async () => { throw new Error('NotAllowedError'); } },
+  configurable: true,
+});
+let legacyCopied = null;
+document.execCommand = () => {
+  const ta = document.querySelector('textarea[readonly]');
+  legacyCopied = ta ? ta.value : null;
+  return true;
+};
+await click('[data-action="sample-copy"][data-which="prompt"]', 'Copy with the API blocked');
+ok(legacyCopied === routinesView.AI_PROMPT, 'the textarea fallback copied the full prompt');
+ok(document.querySelector('textarea[readonly]') === null, 'the temporary textarea was cleaned up');
+Object.defineProperty(dom.window.navigator, 'clipboard', { value: realClipboard, configurable: true });
+delete document.execCommand;
 
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
