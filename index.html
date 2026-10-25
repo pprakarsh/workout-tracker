@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Workout">
+<meta name="theme-color" content="#0f1115">
+<title>Workout Tracker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header id="appHeader">
+    <div class="hdr-left"></div>
+    <h1 id="appTitle">Workout</h1>
+    <div class="hdr-right"></div>
+  </header>
+
+  <main id="viewRoot" aria-live="polite"></main>
+
+  <div id="restBar" hidden></div>
+
+  <nav id="tabBar">
+    <button class="tab" data-tab="now"      type="button"><span class="tab-ico">▶</span><span>Now</span></button>
+    <button class="tab" data-tab="session"  type="button"><span class="tab-ico">☰</span><span>Session</span></button>
+    <button class="tab" data-tab="history"  type="button"><span class="tab-ico">🕘</span><span>History</span></button>
+    <button class="tab" data-tab="routines" type="button"><span class="tab-ico">📋</span><span>Routines</span></button>
+  </nav>
+
+  <div id="modalRoot" hidden></div>
+  <div id="toast" hidden></div>
+  <datalist id="exerciseNames"></datalist>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

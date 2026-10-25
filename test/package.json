@@ -1,0 +1,12 @@
+{
+  "name": "workout-tracker-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node smoke.mjs && node dom.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3",
+    "fake-indexeddb": "6.0.0"
+  }
+}
