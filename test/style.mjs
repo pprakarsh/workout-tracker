@@ -2,7 +2,7 @@
 // jsdom does no layout, but it does resolve the cascade for `display`, which is
 // enough to catch overlays that ignore the `hidden` attribute.
 import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 const APP = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const html = readFileSync(`${APP}/index.html`, 'utf8');
@@ -67,6 +67,66 @@ const nonAscii = [...sh].map((c, i) => [c, i]).filter(([c]) => c.charCodeAt(0) >
 ok(nonAscii.length === 0,
   `deploy.sh is pure ASCII${nonAscii.length ? ` — found ${nonAscii.map(([c]) => JSON.stringify(c)).join(', ')}` : ''}`);
 ok(/^set -euo pipefail$/m.test(sh), 'deploy.sh fails fast on errors and unset variables');
+
+console.log('\n== release invariants');
+const utilSrc = readFileSync(`${APP}/js/util.js`, 'utf8');
+const appVersion = (utilSrc.match(/APP_VERSION = '([^']+)'/) || [])[1];
+const cacheName = (sw.match(/const CACHE = '([^']+)'/) || [])[1];
+ok(!!appVersion, `APP_VERSION is set (${appVersion})`);
+// Bumping one and not the other means users get a stale app or a pointless cache wipe.
+ok(cacheName === `workout-v${appVersion}`,
+  `sw.js CACHE matches APP_VERSION (CACHE="${cacheName}", expected "workout-v${appVersion}")`);
+
+console.log('\n== action registry integrity');
+const viewFiles = ['js/views/entry.js', 'js/views/now.js', 'js/views/session.js',
+  'js/views/history.js', 'js/views/routines.js', 'js/timer.js'];
+const sources = Object.fromEntries(viewFiles.map((f) => [f, readFileSync(`${APP}/${f}`, 'utf8')]));
+const allSource = Object.values(sources).join('\n');
+
+// handlers declared in an *Actions map, e.g.  'set-add': async (...
+const declared = new Map();
+for (const [file, src] of Object.entries(sources)) {
+  for (const m of src.matchAll(/^ {2}'([a-z][a-z0-9-]*)':/gm)) {
+    if (declared.has(m[1])) {
+      failures++;
+      console.log(`  FAIL action "${m[1]}" declared twice (${declared.get(m[1])} and ${file}) — one silently shadows the other`);
+    }
+    declared.set(m[1], file);
+  }
+}
+ok(declared.size > 40, `${declared.size} actions declared across the view modules`);
+
+// actions referenced from rendered markup
+const used = new Set([...allSource.matchAll(/data-action="([a-z][a-z0-9-]*)"/g)].map((m) => m[1]));
+// plus the ones dispatched from code rather than markup
+const dispatched = new Set([...allSource.matchAll(/entryActions\['([a-z-]+)'\]/g)].map((m) => m[1]));
+const appSrc = readFileSync(`${APP}/js/app.js`, 'utf8');
+const builtin = new Set(['tab']); // app.js handles the tab bar itself
+
+const orphanUsed = [...used].filter((a) => !declared.has(a) && !builtin.has(a));
+ok(orphanUsed.length === 0,
+  `every data-action has a handler${orphanUsed.length ? ` — missing: ${orphanUsed.join(', ')}` : ''}`);
+
+const unreachable = [...declared.keys()]
+  .filter((a) => !used.has(a) && !dispatched.has(a) && !builtin.has(a));
+ok(unreachable.length === 0,
+  `every handler is reachable from markup${unreachable.length ? ` — dead: ${unreachable.join(', ')}` : ''}`);
+
+// every actions map must actually be merged into ACTIONS in app.js
+for (const map of ['entryActions', 'nowActions', 'sessionActions', 'historyActions',
+  'routineActions', 'timerActions']) {
+  ok(appSrc.includes(map), `${map} is merged into the ACTIONS registry`);
+}
+
+console.log('\n== documentation exists and points at real things');
+for (const doc of ['README.md', 'ARCHITECTURE.md', 'AGENTS.md']) {
+  const body = readFileSync(`${APP}/${doc}`, 'utf8');
+  ok(body.length > 500, `${doc} is present (${Math.round(body.length / 1024)} KB)`);
+  // every js/... path a doc mentions must exist
+  const referenced = [...body.matchAll(/`?(js\/[\w./]+\.js)`?/g)].map((m) => m[1]);
+  const missing = [...new Set(referenced)].filter((p) => !existsSync(`${APP}/${p}`));
+  ok(missing.length === 0, `${doc} references only real files${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`);
+}
 
 console.log(`\n${failures === 0 ? 'ALL STYLE CHECKS PASSED' : `${failures} STYLE CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -7,6 +7,12 @@ stored in IndexedDB on the device you logged it on.
 Works on iOS, Android and desktop: it's a web app, so any modern browser runs it. The layout is
 mobile-first and centred with a max width, so on a desktop it appears as a phone-width column.
 
+**Live:** https://pprakarsh.github.io/workout-tracker/
+
+**Working on the code?** [AGENTS.md](AGENTS.md) is the entry point for humans and AI agents — rules,
+recipes and checklists. [ARCHITECTURE.md](ARCHITECTURE.md) explains how it works: module map, data
+model, render loop, flows, and the gotchas that have already bitten once.
+
 ---
 
 ## Run it
@@ -428,20 +434,25 @@ npm test
 
 ## Layout
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full module map, data model and flows.
+
 ```
 index.html              app shell: header, view container, rest bar, tab bar
 manifest.webmanifest    PWA metadata
-sw.js                   offline cache (bump CACHE after editing files)
+sw.js                   offline cache (bump CACHE with APP_VERSION after editing files)
 css/styles.css
 js/app.js               boot, render loop, delegated events
-js/store.js             state, persistence, session/routine logic, restore
+js/store.js             state, persistence, session/routine logic, exercise library, restore
 js/db.js                IndexedDB wrapper
-js/timer.js             rest timer bar
-js/ui.js                modal / toast / confirm
-js/util.js              formatting and parsing helpers
-js/exportimport.js      JSON backup, CSV, Markdown, import
 js/sync.js              secret-Gist sync: push/pull, conflict guards, device pairing
-js/views/entry.js       exercise card + set rows (shared by Now/Session/History)
+js/timer.js             rest timer bar
+js/ui.js                modal / toast / confirm / clipboard
+js/util.js              formatting and parsing helpers, APP_VERSION
+js/exportimport.js      JSON backup, CSV, Markdown, import
+js/views/entry.js       exercise card + set rows, exercise form, library picker
 js/views/{now,session,history,routines}.js
 test/                   dev-only test suites
+deploy.sh               publish to GitHub Pages
+AGENTS.md               rules and recipes for editing this codebase
+ARCHITECTURE.md         how it works, and the known gotchas
 ```
