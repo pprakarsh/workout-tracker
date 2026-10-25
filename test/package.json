@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node style.mjs && node smoke.mjs && node dom.mjs"
+    "test": "node style.mjs && node smoke.mjs && node sync.mjs && node dom.mjs"
   },
   "devDependencies": {
     "jsdom": "24.1.3",

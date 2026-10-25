@@ -7,6 +7,7 @@ import {
 import { esc, fmtDur, fmtNum, num } from '../util.js';
 import { targetLine, logSummary } from './entry.js';
 import { confirmDialog, toast, openModal } from '../ui.js';
+import { autoPushIfEnabled } from '../sync.js';
 
 const PILL = {
   done: '<span class="pill ok">done</span>',
@@ -115,6 +116,13 @@ export const sessionActions = {
         state.tab = 'history';
         state.nav.sessionId = fin ? fin.id : null;
         toast('Workout saved');
+        // opt-in: mirror the finished workout to the gist
+        autoPushIfEnabled().then((res) => {
+          if (!res) return;
+          if (res.error) toast(`Gist push failed: ${res.error}`, 5000);
+          else if (res.conflict) toast('Gist has newer data — push manually from Routines', 5000);
+          else toast('Pushed to gist', 2500);
+        });
         return true;
       },
     });

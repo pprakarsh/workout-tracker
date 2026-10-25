@@ -230,11 +230,70 @@ Two things to keep in mind:
 
 ---
 
+## Syncing to a secret GitHub Gist
+
+Optional. The app stays local-first — this only adds a copy in a private gist on your GitHub
+account, so a second device can load the same data and you have an off-device backup.
+
+**Set up on the first device:** Routines tab → *Set up Gist sync*. Paste a GitHub
+**fine-grained personal access token** (github.com → Settings → Developer settings → Personal
+access tokens) with the **Gists: Read and write** account permission and nothing else. Leave the
+gist id blank. Tap **Push ↑** — that creates a secret gist and uploads the backup.
+
+**Set up a second device:** on the first device, *Settings* → **Copy pairing code**. That single
+string carries both the token and the gist id. On the new device, open *Set up Gist sync* and paste
+it into the token field. Because the new device is empty, it pulls immediately — no second tap, no
+typing a token on a phone keyboard. Treat the pairing code like a password.
+
+**After that it is automatic.** Opening the app pulls a newer copy from the gist in the background,
+and *Push after finishing a workout* (off by default) uploads when you finish one. Both can be
+turned off, and both are also available as manual Push/Pull buttons.
+
+### What it will and won't do
+
+This is **blob sync**: the whole dataset is one JSON file, so a push or pull replaces everything
+rather than merging record by record. That is fine for one person moving between a phone and a
+laptop, and it is why both directions refuse to act blindly:
+
+- **Pull** stops if this device has records changed since it last synced, listing them, and only
+  overwrites if you confirm. A device holding data that has *never* synced always asks.
+- **Push** stops if the gist was written after this device last synced — e.g. by your other phone —
+  showing both record counts before you choose.
+- The comparison uses *this device's* last-sync time, never the timestamp inside the remote file, so
+  a device with a wrong clock cannot make your unpushed work look stale.
+- Every push is a gist revision, so even a forced overwrite is recoverable from the gist's history
+  on github.com.
+
+What it is **not**: real merge sync. Log on two devices in parallel without syncing in between and
+one side's session has to lose. Treat one device as the source of truth, or push before switching.
+
+Two limits worth knowing: the gist API inlines files up to 1 MB, beyond which the app falls back to
+a raw download (and tells you clearly if that fails) — at roughly 1 MB per year of training that is
+years away, and the fix then is per-record sync. And the token lives in this device's IndexedDB; it
+is deliberately kept out of `settings` so an exported backup never contains it.
+
+## Deploying to GitHub Pages
+
+```bash
+gh auth login        # once, interactive — opens a browser
+./deploy.sh          # creates the repo, pushes, enables Pages, prints the URL
+```
+
+Re-run `./deploy.sh` to ship an update. It publishes a **public** repo, which is what GitHub Pages
+serves on the free plan — the app code becomes public, your workout data does not (it never leaves
+your device except into your own private gist). Keep exported backup `.json` files outside the repo
+folder; `.gitignore` does not know about them.
+
+Set `REPO_NAME=something-else ./deploy.sh` to use a different repo name.
+
+
+
 ## Tests
 
-Three Node suites cover the store, timer, per-set targets, import/export and round-trip restore; a
-jsdom pass that drives the real UI through clicks and typing; and a style pass that resolves
-computed `display` to catch overlays that fail to hide. They are dev-only; the app itself has no
+Four Node suites cover the store, timer, per-set targets, import/export and round-trip restore;
+gist sync against a fake GitHub API (push/pull, conflict guards, clock skew, error paths); a jsdom
+pass that drives the real UI through clicks and typing; and a style pass that resolves computed
+`display` to catch overlays that fail to hide. They are dev-only; the app itself has no
 dependencies.
 
 ```bash
@@ -257,6 +316,7 @@ js/timer.js             rest timer bar
 js/ui.js                modal / toast / confirm
 js/util.js              formatting and parsing helpers
 js/exportimport.js      JSON backup, CSV, Markdown, import
+js/sync.js              secret-Gist sync: push/pull, conflict guards, device pairing
 js/views/entry.js       exercise card + set rows (shared by Now/Session/History)
 js/views/{now,session,history,routines}.js
 test/                   dev-only test suites

@@ -1,6 +1,7 @@
 // Bootstrap: load state, render the active tab, route delegated events.
 import { state, init, subscribe, exerciseNames } from './store.js';
 import { renderRestBar, timerActions, unlockAudio } from './timer.js';
+import { initSync, autoPullOnLaunch } from './sync.js';
 import { toast } from './ui.js';
 
 import * as nowView from './views/now.js';
@@ -146,9 +147,25 @@ subscribe(render);
 (async function start() {
   try {
     await init();
+    await initSync();
     // Land on the workout if one is running, otherwise on the routine library.
     state.tab = state.active ? 'now' : (state.routines.length ? 'now' : 'routines');
     render();
+
+    // Pull a newer copy from the gist in the background. Deliberately after the
+    // first render: a network hiccup must never delay or block opening the app.
+    autoPullOnLaunch().then((res) => {
+      if (!res) return;
+      if (res.error) toast(`Gist sync: ${res.error}`, 5000);
+      else if (res.conflict) toast('This device has unpushed changes — sync from Routines', 5000);
+      else if (res.ok && res.firstRun) {
+        state.tab = state.routines.length ? 'now' : 'routines';
+        render();
+        toast(`Loaded ${res.actual.sessions} sessions and ${res.actual.routines} routines from your gist`, 5000);
+      } else if (res.ok) {
+        toast(`Updated from gist: ${res.actual.sessions} sessions`, 3500);
+      }
+    });
   } catch (err) {
     console.error(err);
     document.getElementById('viewRoot').innerHTML =

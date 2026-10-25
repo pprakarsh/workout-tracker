@@ -2,12 +2,15 @@
 import {
   state, getRoutine, saveRoutine, createRoutine, deleteRoutine, duplicateRoutine,
   normalizeEntry, lastSessionForRoutine, updateSettings, dataFingerprint,
-} from '../store.js';
-import { dbPut } from '../db.js';
-import { esc, fmtDate, fmtClock, relDay, parseDur, APP_VERSION } from '../util.js';
+} from '../store.js';import { dbPut } from '../db.js';
+import { esc, fmtDate, fmtClock, fmtTimeOfDay, relDay, parseDur, APP_VERSION } from '../util.js';
 import { targetLine, exerciseFormHtml, readExerciseForm, wireExerciseForm } from './entry.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';
+import {
+  sync, syncConfigured, configureSync, disconnectSync, pushNow, pullNow,
+  pairingCode, parsePairing,
+} from '../sync.js';
 
 /* ------------------------------------------------------------------ */
 /* editor                                                             */
@@ -52,6 +55,43 @@ function editor(r) {
     <div class="btn-row" style="margin-top:8px">
       <button type="button" class="btn ghost" data-action="routine-dupe" data-id="${r.id}">Duplicate</button>
       <button type="button" class="btn danger" data-action="routine-del" data-id="${r.id}">Delete routine</button>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* gist sync card                                                     */
+/* ------------------------------------------------------------------ */
+
+const whenShort = (ts) => (ts ? `${relDay(ts)}, ${fmtTimeOfDay(ts)}` : 'never');
+
+function syncCard() {
+  if (!syncConfigured()) {
+    return `
+      <div class="card">
+        <p class="hint" style="margin-top:0">Keep a copy of everything in a private (secret) gist on
+          your GitHub account. Each push is a gist revision, so you get free version history, and
+          a second device can pull the same copy.</p>
+        <button type="button" class="btn block primary" data-action="sync-setup">Set up Gist sync</button>
+      </div>`;
+  }
+  return `
+    <div class="card">
+      <div class="kv"><span>Gist</span><span>${sync.gistId ? `${esc(sync.gistId.slice(0, 10))}…` : 'not created yet'}</span></div>
+      <div class="kv"><span>Last pushed</span><span>${esc(whenShort(sync.lastPushedAt))}</span></div>
+      <div class="kv"><span>Last pulled</span><span>${esc(whenShort(sync.lastPulledAt))}</span></div>
+      <div class="kv"><span>Push when a workout is finished</span><span>${sync.autoPush ? 'on' : 'off'}</span></div>
+      <div class="kv"><span>Pull when the app opens</span><span>${sync.autoPull ? 'on' : 'off'}</span></div>
+      <div class="btn-row" style="margin-top:10px">
+        <button type="button" class="btn primary" data-action="sync-push">Push ↑</button>
+        <button type="button" class="btn" data-action="sync-pull">Pull ↓</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button type="button" class="btn sm ghost" data-action="sync-setup">Settings</button>
+        ${sync.gistId ? '<button type="button" class="btn sm ghost" data-action="sync-open">Open on GitHub</button>' : ''}
+        <button type="button" class="btn sm ghost" data-action="sync-copy-pairing" ${sync.gistId ? '' : 'disabled'}>Pair a device</button>
+      </div>
+      <p class="hint" style="margin-bottom:0">Pull <b>replaces</b> everything on this device with the
+        gist's copy. Both directions check whether the other side moved on first.</p>
     </div>`;
 }
 
@@ -110,6 +150,9 @@ export function render() {
       <button type="button" class="btn" data-action="export-csv">Export sets (CSV)</button>
     </div>
     <button type="button" class="btn block ghost" style="margin-top:8px" data-action="import-open">Import / restore from backup</button>
+
+    <h2>Sync to a secret GitHub Gist</h2>
+    ${syncCard()}
 
     <h2>Settings</h2>
     <div class="card">
@@ -264,6 +307,160 @@ export const routineActions = {
 
   'export-backup': () => { exportBackup(); toast('Backup exported'); },
   'export-csv': () => { exportCsv(); toast('CSV exported'); },
+
+  /* ---------------- gist sync ---------------- */
+
+  'sync-setup': () => {
+    const code = pairingCode();
+    openModal({
+      title: 'Gist sync',
+      bodyHtml: `
+        <label class="field"><span>GitHub token, or a pairing code from another device</span>
+          <input type="password" name="token" autocomplete="off" spellcheck="false"
+                 placeholder="github_pat_… or pairing code" value="${esc(sync.token || '')}"></label>
+        <p class="hint" style="margin-top:-4px">Create a <b>fine-grained personal access token</b> at
+          github.com → Settings → Developer settings → Personal access tokens, with the
+          <b>Gists: Read and write</b> account permission only. It is stored on this device and is
+          never included in an exported backup.</p>
+        <label class="field"><span>Gist id (blank = create a new one on first push)</span>
+          <input name="gistId" autocomplete="off" spellcheck="false" placeholder="created on first push"
+                 value="${esc(sync.gistId || '')}"></label>
+        <div class="grid2">
+          <label class="field"><span>Push after finishing a workout</span>
+            <select name="autoPush">
+              <option value="0" ${sync.autoPush ? '' : 'selected'}>Off</option>
+              <option value="1" ${sync.autoPush ? 'selected' : ''}>On</option>
+            </select></label>
+          <label class="field"><span>Pull when the app opens</span>
+            <select name="autoPull">
+              <option value="1" ${sync.autoPull ? 'selected' : ''}>On</option>
+              <option value="0" ${sync.autoPull ? '' : 'selected'}>Off</option>
+            </select></label>
+        </div>
+        <p class="hint" style="margin-top:-4px">Opening the app pulls a newer copy only when nothing
+          here would be lost. If this device has unpushed work, it leaves it alone and says so.</p>
+        ${code ? `<div class="divider"></div>
+          <div class="tiny">Set up another device</div>
+          <p class="hint" style="margin-top:4px">Copy this one string and paste it into the token field
+            on your phone — it carries the token and the gist id, and the app will pull straight away.
+            Treat it like a password.</p>
+          <button type="button" class="btn block" data-action="sync-copy-pairing">Copy pairing code</button>` : ''}
+        ${syncConfigured() ? '<button type="button" class="btn block danger" style="margin-top:8px" data-action="sync-disconnect">Disconnect and forget the token</button>' : ''}`,
+      okText: 'Save',
+      onSubmit: async (v) => {
+        const raw = String(v.token || '').trim();
+        if (!raw) { toast('Paste a token or pairing code, or use Disconnect'); return false; }
+        const paired = parsePairing(raw);
+        await configureSync({
+          token: paired ? paired.token : raw,
+          gistId: paired && paired.gistId ? paired.gistId : v.gistId,
+          autoPush: v.autoPush === '1',
+          autoPull: v.autoPull === '1',
+        });
+        toast(paired ? 'Paired with the other device' : 'Gist sync configured');
+
+        // If we now know a gist and this device has nothing, fetch it right away
+        // so a fresh phone is populated without a second tap.
+        if (sync.gistId) {
+          const empty = state.sessions.length === 0 && state.routines.length === 0;
+          if (empty) {
+            try {
+              const pulled = await pullNow();
+              if (pulled.ok) {
+                toast(`Pulled ${pulled.actual.sessions} sessions, ${pulled.actual.routines} routines`, 4000);
+              }
+            } catch (err) {
+              toast(`Could not pull: ${err.message}`, 5000);
+            }
+          }
+        }
+        return true;
+      },
+    });
+  },
+
+  'sync-copy-pairing': async () => {
+    const code = pairingCode();
+    if (!code) { toast('Push once first so there is a gist to share'); return; }
+    try { await navigator.clipboard.writeText(code); toast('Pairing code copied — treat it like a password', 4000); }
+    catch { toast('Copy failed; open Settings on this device to read the token', 5000); }
+  },
+
+  'sync-disconnect': async () => {
+    if (await confirmDialog('Forget the GitHub token and gist id on this device? The gist itself and your local data are untouched.', { okText: 'Disconnect' })) {
+      await disconnectSync();
+      toast('Disconnected');
+    }
+  },
+
+  'sync-push': async ({ force }) => {
+    toast('Pushing…', 1200);
+    const res = await pushNow({ force: force === '1' });
+    if (res.conflict) {
+      const r = res.remote;
+      openModal({
+        title: 'The gist has newer data',
+        bodyHtml: `
+          <p class="muted" style="margin-top:0">The gist was last written
+            ${esc(whenShort(r.remotePushedAtMs))}${r.remoteDevice && r.remoteDevice !== sync.deviceId ? ' by another device' : ''},
+            which is after this device last synced.</p>
+          ${r.counts ? `<div class="card" style="margin:0 0 10px">
+            <div class="kv"><span>In the gist</span><span>${r.counts.sessions} sessions · ${r.counts.loggedSets} sets</span></div>
+            <div class="kv"><span>On this device</span><span>${dataFingerprint().sessions} sessions · ${dataFingerprint().loggedSets} sets</span></div>
+          </div>` : ''}
+          <p class="hint">Pushing replaces the gist with this device's copy. Pull first if the gist has
+            something you need — the previous content stays in the gist's revision history either way.</p>`,
+        okText: 'Push anyway',
+        danger: true,
+        onSubmit: async () => {
+          const forced = await pushNow({ force: true });
+          toast(`Pushed ${forced.counts.sessions} sessions, ${forced.counts.loggedSets} sets`, 3200);
+          return true;
+        },
+      });
+      return;
+    }
+    toast(`Pushed ${res.counts.sessions} sessions, ${res.counts.loggedSets} sets`, 3200);
+  },
+
+  'sync-pull': async () => {
+    toast('Pulling…', 1200);
+    const res = await pullNow();
+    if (res.conflict) {
+      const list = res.localNewer.slice(0, 6)
+        .map((x) => `<li>${esc(x.kind)}: ${esc(x.name)} — ${esc(whenShort(x.at))}</li>`).join('');
+      openModal({
+        title: 'This device has unpushed changes',
+        bodyHtml: `
+          <p class="muted" style="margin-top:0">${res.localNewer.length} record${res.localNewer.length === 1 ? '' : 's'}
+            here ${res.localNewer.length === 1 ? 'is' : 'are'} newer than the gist's copy.
+            Pulling replaces everything on this device and those changes are gone.</p>
+          <ul class="plain small">${list}${res.localNewer.length > 6 ? `<li>…and ${res.localNewer.length - 6} more</li>` : ''}</ul>
+          <p class="hint">Push instead if this device is the one that's ahead.</p>`,
+        okText: 'Pull and overwrite',
+        danger: true,
+        onSubmit: async () => {
+          const forced = await pullNow({ force: true });
+          toast(`Pulled ${forced.actual.sessions} sessions, ${forced.actual.loggedSets} sets`, 3200);
+          state.nav = {};
+          return true;
+        },
+      });
+      return;
+    }
+    toast(`Pulled ${res.actual.sessions} sessions, ${res.actual.loggedSets} sets`, 3200);
+    state.nav = {};
+  },
+
+  'sync-open': () => {
+    if (sync.gistId) window.open(`https://gist.github.com/${sync.gistId}`, '_blank', 'noopener');
+  },
+
+  'sync-copy-id': async () => {
+    if (!sync.gistId) return;
+    try { await navigator.clipboard.writeText(sync.gistId); toast('Gist id copied'); }
+    catch { toast(sync.gistId, 6000); }
+  },
 
   'sample-copy': async () => {
     try { await navigator.clipboard.writeText(SAMPLE); toast('Sample copied'); }
