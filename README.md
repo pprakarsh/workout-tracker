@@ -148,9 +148,83 @@ on each exercise.
 | `weight` | lift | Target load, in your configured unit. Ignored when `sets` is a per-set plan. |
 | `distance`, `distanceUnit` | cardio | `km` or `mi`. |
 | `duration` | cardio | `"18:00"`, `"1:05:00"`, `"20m"`, `"90s"`. A bare number means minutes. |
-| `rest` | all | Rest target between sets. Same formats as `duration`. |
-| `group` | all | Same letter on consecutive exercises = one superset/circuit. |
+| `rest` | all | Rest target between sets, and between cardio efforts. Same formats as `duration`. |
+| `group` | all | Superset / circuit label — see below. |
 | `notes` | all | Warmup sets, tempo, cues, setup. A string, or a **list of lines** for multi-line notes. |
+
+Keys beginning with `//` are treated as comments and ignored, so you can annotate a file.
+
+### Supersets and circuits: the `group` field
+
+`group` marks a superset or circuit. Give two or more **consecutive** exercises the same short
+label and the app treats them as one block:
+
+- Both appear **together on the Now screen**, so you can alternate between them without navigating.
+- **Next** jumps past the whole block rather than stepping through its members one at a time.
+- The label shows as a badge in the Session list and the routine editor, and as `_(superset A)_` in
+  the Markdown export and a `group` column in the CSV.
+
+Things worth knowing:
+
+- **Each exercise keeps its own rest target.** Grouping changes presentation and navigation, not
+  how rest is timed — you still start and stop the timer per set, per exercise. (An earlier draft of
+  this app was going to share one rest period per group; it does not.)
+- The label itself is arbitrary — `A`, `B`, `I`, anything up to 4 characters. It only matters that
+  neighbours match.
+- **Non-adjacent exercises sharing a label form separate blocks.** Keep the members of a superset
+  next to each other; reorder with the ↑↓ buttons if they drift apart.
+- Leave it blank for an ordinary exercise, which is then its own block.
+- Picking an exercise from the library does **not** copy its group label, since the label describes
+  the arrangement of the routine it came from.
+
+### Targets vs. what you log
+
+A routine holds **targets** only. For cardio you can target `distance`, `duration` and `rest`;
+pace, average and max heart rate, elevation and perceived effort have no target fields — you record
+those while logging. Put a pace or heart-rate instruction in `notes` if you want it on screen during
+the run.
+
+Each cardio entry logs **one** effort, so for intervals add one entry per repetition and give them
+the same `group` label to keep them together. The running sample below does exactly that.
+
+### A complete running / mixed example
+
+Every field the app understands, in one routine:
+
+```json
+{
+  "//": "Each cardio entry logs ONE effort, so intervals are one entry per rep.",
+  "name": "Run with Upper Body",
+  "description": "Zone 2 base, 2 x 400m, then pressing and pulling. ~60 min.",
+  "entries": [
+    { "type": "cardio", "name": "Warmup Jog",
+      "distance": 1.2, "distanceUnit": "km", "duration": "8:00", "rest": "1:30",
+      "notes": "Easy, nose breathing only" },
+
+    { "type": "cardio", "name": "400m Repeat", "group": "I",
+      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30",
+      "notes": ["Target 1:35", "Walk the rest, do not sit down"] },
+    { "type": "cardio", "name": "400m Repeat", "group": "I",
+      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30" },
+
+    { "type": "cardio", "name": "Cooldown Jog",
+      "distance": 1.5, "distanceUnit": "km", "duration": "11:00" },
+
+    { "name": "Incline Bench Press", "group": "B", "rest": "2:30",
+      "sets": [
+        { "weight": 50, "reps": 8 },
+        { "weight": 55, "reps": 6 },
+        { "weight": 55, "reps": "5-6" }
+      ],
+      "notes": ["Warmup: 1x10 @ 30kg", "Tempo 2-1-1"] },
+    { "name": "Chin-up", "group": "B", "sets": ["x8", "x7", "x6"], "rest": "2:30",
+      "notes": "Add weight when all three sets hit 8" }
+  ]
+}
+```
+
+Both samples are also shown in the app under Routines → *Import format*, each with a copy button,
+and both are covered by tests that assert every field in them survives an import/export round trip.
 
 ### Per-set targets
 

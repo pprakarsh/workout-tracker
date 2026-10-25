@@ -456,5 +456,57 @@ await store.deleteRoutine(dupR.id);
 await store.deleteRoutine(adhocR.id);
 await store.deleteRoutine(libR.id);
 
+section('both documented samples are valid and complete');
+for (const [label, text] of [['lifting', routinesView.SAMPLE], ['running', routinesView.SAMPLE_RUN]]) {
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch (e) { /* reported below */ }
+  ok(parsed !== null, `${label} sample is valid JSON`);
+  ok(Object.keys(parsed).some((k) => k.startsWith('//')), `${label} sample carries // notes`);
+}
+
+const runRes = await xi.importFromText(routinesView.SAMPLE_RUN);
+ok(runRes.routines === 1, 'running sample imports as one routine');
+const run = state.routines.find((x) => x.name === 'Run with Upper Body');
+ok(!!run, 'named correctly');
+ok(run.description.includes('400m'), 'description imported');
+ok(!('//' in run) && !('//2' in run), 'the // note keys were dropped, not turned into data');
+ok(run.entries.length === 6, `6 entries (${run.entries.length})`);
+
+const [warm, i1, i2, cool, inc, chin] = run.entries;
+ok(warm.type === 'cardio' && warm.targetDistance === 1.2 && warm.distanceUnit === 'km',
+  'cardio distance + unit imported');
+ok(warm.targetDuration === 480, `cardio duration "8:00" -> 480s (${warm.targetDuration})`);
+ok(warm.rest === 90, `rest works on a cardio entry too ("1:30" -> ${warm.rest}s)`);
+ok(warm.notes === 'Easy, nose breathing only', 'cardio notes imported');
+ok(warm.setTargets === null && warm.targetSets === null, 'no set targets on cardio');
+
+ok(i1.group === 'I' && i2.group === 'I', 'the two intervals share a group label');
+ok(store.blockAt(run.entries, 1).length === 2, 'and therefore form one block');
+ok(store.blockAt(run.entries, 0).length === 1, 'the warmup stays on its own');
+ok(i1.notes.split('\n').length === 2, 'cardio notes accept a list of lines');
+ok(i1.targetDuration === 95, `"1:35" -> 95s (${i1.targetDuration})`);
+ok(i1.targetDistance === 0.4, 'fractional distance kept');
+ok(cool.rest === null, 'an entry with no rest target has none — not a default');
+
+ok(inc.setTargets?.length === 3, 'per-set plan on the lifting entry');
+ok(inc.setTargets[2].repsMin === 5 && inc.setTargets[2].repsMax === 6, 'rep range inside the plan');
+ok(inc.rest === 150 && inc.group === 'B', 'rest and group on the lift');
+ok(inc.notes.split('\n').length === 2, 'notes list joined into lines');
+ok(chin.setTargets.length === 3 && chin.setTargets[0].weight === null && chin.setTargets[0].repsMin === 8,
+  'bodyweight shorthand "x8" imported with no weight');
+ok(store.blockAt(run.entries, 4).length === 2, 'the two lifts form a second block');
+
+section('the running sample survives an export/import round trip');
+const runJson = JSON.stringify(xi.routineObject(run));
+await xi.importFromText(runJson);
+const run2 = state.routines.filter((x) => x.name === 'Run with Upper Body').pop();
+ok(run2.id !== run.id, 'imported as a separate copy');
+ok(run2.entries.length === run.entries.length, 'same entry count');
+ok(JSON.stringify(run2.entries.map((e) => [e.type, e.name, e.group, e.rest, e.targetDistance, e.targetDuration, e.setTargets]))
+  === JSON.stringify(run.entries.map((e) => [e.type, e.name, e.group, e.rest, e.targetDistance, e.targetDuration, e.setTargets])),
+  'every targeted field round-trips identically');
+await store.deleteRoutine(run2.id);
+await store.deleteRoutine(run.id);
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

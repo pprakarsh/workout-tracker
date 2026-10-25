@@ -282,8 +282,9 @@ export function exerciseFormHtml(e = {}) {
 
     <label class="field"><span>Rest between sets (mm:ss or 90s)</span>
       <input name="rest" inputmode="text" placeholder="2:00" value="${e.rest ? esc(fmtClock(e.rest)) : ''}"></label>
-    <label class="field"><span>Superset / circuit group (optional — same letter = grouped)</span>
-      <input name="group" maxlength="4" placeholder="A" value="${esc(e.group || '')}"></label>
+    <label class="field"><span>Superset / circuit group — same label on consecutive exercises</span>
+      <input name="group" maxlength="4" placeholder="e.g. A — leave blank for a normal exercise"
+             value="${esc(e.group || '')}"></label>
     <label class="field"><span>Notes — warmup sets, tempo, cues, setup</span>
       <textarea name="notes" rows="4" placeholder="Warmup: 2×5 @ 50%, 1×3 @ 70%&#10;Tempo 3-1-1&#10;Belt from set 3">${esc(e.notes || '')}</textarea></label>`;
 }

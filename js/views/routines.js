@@ -167,16 +167,46 @@ export function render() {
 
     <h2>Import format</h2>
     <div class="card">
-      <p class="hint" style="margin-top:0">Paste or load JSON shaped like this (every field except
-        <code>name</code> is optional):</p>
+      <p class="hint" style="margin-top:0">Paste or load JSON shaped like this. Only
+        <code>name</code> is required on each exercise, and keys starting with <code>//</code> are
+        notes that are ignored on import.</p>
+      <div class="tiny" style="margin-bottom:5px">Lifting day</div>
       <pre class="code">${esc(SAMPLE)}</pre>
-      <button type="button" class="btn sm ghost" data-action="sample-copy">Copy sample</button>
+      <button type="button" class="btn sm ghost" data-action="sample-copy" data-which="lift">Copy this sample</button>
+
+      <div class="divider"></div>
+      <div class="tiny" style="margin-bottom:5px">Running / mixed day</div>
+      <pre class="code">${esc(SAMPLE_RUN)}</pre>
+      <button type="button" class="btn sm ghost" data-action="sample-copy" data-which="run">Copy this sample</button>
+
+      <div class="divider"></div>
+      <div class="tiny">What <code>group</code> does</div>
+      <p class="hint" style="margin-top:4px">It marks a <b>superset or circuit</b>. Give two or more
+        <b>consecutive</b> exercises the same short label and the app treats them as one block:
+        they appear together on the Now screen, and <b>Next</b> jumps past the whole block instead of
+        stepping through them one at a time. The letter also shows as a badge in the Session and
+        routine lists, and in exports.</p>
+      <p class="hint">Each exercise still keeps its <b>own</b> rest target — grouping changes how they
+        are presented and navigated, not how rest is timed. Use any short label
+        (<code>A</code>, <code>B</code>, <code>I</code>); the value itself has no meaning beyond
+        matching its neighbours. Non-adjacent exercises sharing a label form separate blocks, so keep
+        the members of a superset next to each other.</p>
+
+      <div class="divider"></div>
+      <div class="tiny">Targets vs. what you log</div>
+      <p class="hint" style="margin-top:4px">A routine holds <b>targets</b> only. For cardio you can
+        target <code>distance</code>, <code>duration</code> and <code>rest</code>; pace, average and
+        max heart rate, elevation and perceived effort have no target fields — you record them while
+        logging. Put a pace or heart-rate instruction in <code>notes</code> if you want it on screen
+        during the run.</p>
     </div>
     <p class="hint center" style="margin-top:18px">All data is stored on this device only.<br>
       <span class="dim">build ${esc(APP_VERSION)}</span></p>`;
 }
 
 export const SAMPLE = `{
+  "//": "group = superset. Same letter on CONSECUTIVE exercises makes them one block:",
+  "//2": "they share the Now screen and Next skips past both. Omit it for a normal exercise.",
   "name": "Squat day with Push Movements",
   "description": "Heavy squats, then pressing. ~75 min.",
   "entries": [
@@ -200,9 +230,37 @@ export const SAMPLE = `{
   ]
 }`;
 
-/* ------------------------------------------------------------------ */
-/* actions                                                            */
-/* ------------------------------------------------------------------ */
+export const SAMPLE_RUN = `{
+  "//": "Running / mixed day. Shows every field the app understands.",
+  "//2": "Each cardio entry logs ONE effort, so for intervals add one entry per",
+  "//3": "rep and give them the same group label to keep them as one block.",
+  "name": "Run with Upper Body",
+  "description": "Zone 2 base, 2 x 400m, then pressing and pulling. ~60 min.",
+  "entries": [
+    { "type": "cardio", "name": "Warmup Jog",
+      "distance": 1.2, "distanceUnit": "km", "duration": "8:00", "rest": "1:30",
+      "notes": "Easy, nose breathing only" },
+
+    { "type": "cardio", "name": "400m Repeat", "group": "I",
+      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30",
+      "notes": ["Target 1:35", "Walk the rest, do not sit down"] },
+    { "type": "cardio", "name": "400m Repeat", "group": "I",
+      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30" },
+
+    { "type": "cardio", "name": "Cooldown Jog",
+      "distance": 1.5, "distanceUnit": "km", "duration": "11:00" },
+
+    { "name": "Incline Bench Press", "group": "B", "rest": "2:30",
+      "sets": [
+        { "weight": 50, "reps": 8 },
+        { "weight": 55, "reps": 6 },
+        { "weight": 55, "reps": "5-6" }
+      ],
+      "notes": ["Warmup: 1x10 @ 30kg", "Tempo 2-1-1"] },
+    { "name": "Chin-up", "group": "B", "sets": ["x8", "x7", "x6"], "rest": "2:30",
+      "notes": "Add weight when all three sets hit 8" }
+  ]
+}`;
 
 function mutateRoutineEntries(id, fn) {
   const r = getRoutine(id);
@@ -453,8 +511,9 @@ export const routineActions = {
     catch { toast(sync.gistId, 6000); }
   },
 
-  'sample-copy': async () => {
-    try { await navigator.clipboard.writeText(SAMPLE); toast('Sample copied'); }
+  'sample-copy': async ({ which }) => {
+    const text = which === 'run' ? SAMPLE_RUN : SAMPLE;
+    try { await navigator.clipboard.writeText(text); toast('Sample copied'); }
     catch { toast('Copy not allowed — select the text instead'); }
   },
 
