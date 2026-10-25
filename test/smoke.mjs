@@ -365,5 +365,36 @@ await store.addSet(live2.entries[3].id);
 ok(live2.entries[3].sets.length === 1, 'the live workout is editable again');
 await store.discardSession();
 
+section('unlogged rest is named, never defaulted');
+const restR = await store.createRoutine({
+  name: 'Rest Display', entries: [{ name: 'Bench', sets: 3, reps: 5, weight: 60, rest: '2:00' }],
+});
+const rs = await store.startSession(restR.id);
+const re = rs.entries[0];
+const rsets = [await store.addSet(re.id), await store.addSet(re.id), await store.addSet(re.id)];
+for (const x of rsets) await store.updateSet(re.id, x.id, { done: true });
+ok(entry.restLine(re) === 'Rest: no rest logged for any set',
+  `all three unrested: "${entry.restLine(re)}"`);
+await store.updateSet(re.id, rsets[0].id, { rest: 125 });
+ok(entry.restLine(re) === 'Rest after sets: 1) 2:05 · 2) no rest logged · 3) no rest logged',
+  `mixed: "${entry.restLine(re)}"`);
+ok(!entry.restLine(re).includes('2:00'), 'the routine target 2:00 is never shown as if it were logged');
+await store.updateSet(re.id, rsets[2].id, { rest: 98 });
+ok(entry.restLine(re) === 'Rest after sets: 1) 2:05 · 2) no rest logged · 3) 1:38',
+  `gap in the middle: "${entry.restLine(re)}"`);
+const emptyEntry = { type: 'lift', sets: [] };
+ok(entry.restLine(emptyEntry) === '', 'nothing said when no sets are logged yet');
+ok(entry.restLine({ type: 'cardio', sets: null }) === '', 'cardio entries say nothing about rest');
+
+const restMd = xi.sessionMarkdown(rs);
+ok((restMd.match(/no rest logged/g) || []).length === 1,
+  'markdown names the one unrested set explicitly');
+ok(/\| 1 \| 60 kg \| 5 \| — \| 2:05 \| ✓ \|/.test(restMd), 'markdown shows the rest that was logged');
+const restCsv = xi.csvRows([rs]);
+const restCells = restCsv.trim().split('\n').slice(1).map((l) => l.split(',')[12]);
+ok(restCells.join('|') === '125||98',
+  `csv leaves the cell empty rather than writing prose into a numeric column (${restCells.join('|')})`);
+await store.discardSession();
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

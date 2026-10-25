@@ -220,7 +220,7 @@ export function sessionMarkdown(s) {
       L.push('| Set | Weight | Reps | RPE | Rest | Done |');
       L.push('|---:|---:|---:|---:|---:|:--:|');
       sets.forEach((x, n) => {
-        L.push(`| ${n + 1} | ${x.weight !== null ? `${fmtNum(x.weight)} ${x.unit || s.unit}` : '—'} | ${x.reps !== null ? fmtNum(x.reps) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} | ${x.rest ? fmtClock(x.rest) : '—'} | ${x.done ? '✓' : ''} |`);
+        L.push(`| ${n + 1} | ${x.weight !== null ? `${fmtNum(x.weight)} ${x.unit || s.unit}` : '—'} | ${x.reps !== null ? fmtNum(x.reps) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} | ${x.rest ? fmtClock(x.rest) : 'no rest logged'} | ${x.done ? '✓' : ''} |`);
       });
     } else {
       const l = e.log || {};

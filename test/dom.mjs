@@ -121,6 +121,13 @@ ok($('#restBar').hidden, 'rest bar hidden again');
 ok(store.state.timer === null, 'timer cleared');
 const restedSet = store.state.active.entries.find((e) => e.name === firstName).sets[0];
 ok(restedSet.rest === 95, `actual rest recorded: ${restedSet.rest}s`);
+await click('#tabBar .tab[data-tab="now"]', 'Now tab');
+ok(/Rest after sets: 1\) 1:35/.test(view()), 'the card reports the rest that was timed');
+await click('[data-action="set-add"]', '+ Add set');
+ok(/no rest logged/.test(view()), 'a set with no timed rest says so instead of showing a default');
+ok(!/Rest after sets: 1\) 2:00/.test(view()), 'the routine target is not passed off as logged rest');
+await click('[data-action="set-del-last"]', '- Remove last');
+await click('#tabBar .tab[data-tab="session"]', 'back to Session');
 
 section('nudging the target');
 await click('.sess-item [data-action="sess-jump"]', 'jump to an exercise');

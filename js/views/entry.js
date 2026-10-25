@@ -133,15 +133,28 @@ function setRow(e, s, i, allowRest) {
     </div>`;
 }
 
+/**
+ * Actual rest taken, per set, naming the gaps explicitly rather than implying a
+ * value. A set you never started the timer for reads "no rest logged" — it is
+ * not back-filled with the routine's target or any other default.
+ */
+export function restLine(e) {
+  const sets = e.sets || [];
+  const logged = sets
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => s.done || s.weight !== null || s.reps !== null);
+  if (!logged.length) return '';
+  if (!sets.some((s) => s.rest)) return 'Rest: no rest logged for any set';
+  return `Rest after sets: ${logged
+    .map(({ s, i }) => `${i + 1}) ${s.rest ? fmtClock(s.rest) : 'no rest logged'}`)
+    .join(' · ')}`;
+}
+
 function liftBody(e, allowRest) {
   const rows = (e.sets || []).map((s, i) => setRow(e, s, i, allowRest)).join('');
   const planned = e.setTargets ? e.setTargets.length : (e.targetSets ?? 0);
   const missing = Math.max(0, planned - (e.sets || []).length);
-  const restNote = (e.sets || []).some((s) => s.rest)
-    ? `<div class="small dim" style="margin-top:6px">Rest taken: ${(e.sets || [])
-      .map((s, i) => (s.rest ? `set ${i + 1}: ${fmtClock(s.rest)}` : null))
-      .filter(Boolean).join(' · ')}</div>`
-    : '';
+  const rest = restLine(e);
   return `
     <div class="sets">
       <div class="set-hdr"><div>#</div><div>Weight</div><div>Reps</div><div>RPE</div><div></div><div></div></div>
@@ -152,7 +165,7 @@ function liftBody(e, allowRest) {
       ${missing > 1 ? `<button type="button" class="btn sm" data-action="set-fill" data-entry="${e.id}">+ All ${missing} planned</button>` : ''}
       ${(e.sets || []).length ? `<button type="button" class="btn sm ghost" data-action="set-del-last" data-entry="${e.id}">− Remove last</button>` : ''}
     </div>
-    ${restNote}`;
+    ${rest ? `<div class="small dim" style="margin-top:6px">${esc(rest)}</div>` : ''}`;
 }
 
 function cardioBody(e, allowRest) {
@@ -193,13 +206,15 @@ function cardioBody(e, allowRest) {
 /** Read-only version for History. */
 export function renderEntryStatic(e) {
   const sum = logSummary(e);
+  const rest = restLine(e);
   return `
   <div class="card">
     <div class="ex-name">${esc(e.name)} ${e.group ? `<span class="pill grp">${esc(e.group)}</span>` : ''}
       ${e.skipped ? '<span class="pill skip">skipped</span>' : ''}</div>
     ${targetLine(e) ? `<div class="ex-target">target: ${esc(targetLine(e))}</div>` : ''}
     ${sum ? `<div class="loglines" style="margin-top:7px">${sum.split('  ').map((x) => `<code>${esc(x)}</code>`).join('')}</div>`
-      : '<div class="loglines dim" style="margin-top:7px">nothing logged</div>'}
+    : '<div class="loglines dim" style="margin-top:7px">nothing logged</div>'}
+    ${rest ? `<div class="small dim" style="margin-top:5px">${esc(rest)}</div>` : ''}
     ${e.notes ? `<div class="ex-notes">${esc(e.notes)}</div>` : ''}
     ${e.type === 'cardio' && e.log?.note ? `<div class="small dim" style="margin-top:5px">${esc(e.log.note)}</div>` : ''}
   </div>`;
