@@ -1,9 +1,66 @@
-// "History" — past sessions, newest first, plus a read-only detail view.
-import { state, deleteSession, getSession, sessionProgress, sessionVolume } from '../store.js';
-import { esc, fmtDate, fmtTimeOfDay, fmtDur, fmtNum, relDay } from '../util.js';
-import { renderEntryStatic, logSummary } from './entry.js';
+// "History" — past sessions, newest first, a read-only detail view, and an
+// editable mode for correcting a finished session.
+import {
+  state, deleteSession, getSession, sessionProgress, sessionVolume,
+  setEditing, updateSessionTiming,
+} from '../store.js';
+import {
+  esc, fmtDate, fmtTimeOfDay, fmtDur, fmtNum, relDay, isoDate,
+} from '../util.js';
+import { renderEntryStatic, renderEntry, logSummary } from './entry.js';
 import { exportSessionMarkdown, exportSessionJson, exportCsv } from '../exportimport.js';
-import { confirmDialog, toast } from '../ui.js';
+import { confirmDialog, toast, openModal } from '../ui.js';
+
+/* ------------------------------------------------------------------ */
+/* editable detail (correcting a finished session)                    */
+/* ------------------------------------------------------------------ */
+
+function editDetail(s) {
+  const end = s.finishedAt || s.updatedAt || Date.now();
+  const { done, total } = sessionProgress(s);
+  return `
+    <div class="card flat" style="margin-bottom:12px">
+      <div class="row">
+        <div style="flex:1;min-width:0">
+          <div class="strong" style="font-size:17px">${esc(s.routineName)}</div>
+          <div class="small dim">Editing · ${esc(fmtDate(s.startedAt))} · ${done}/${total} done</div>
+        </div>
+        <button type="button" class="btn ok" data-action="hist-edit-done">Done</button>
+      </div>
+      <p class="hint" style="margin-bottom:0">Changes save as you type. This only edits the
+        recorded session — the routine is untouched.</p>
+    </div>
+
+    <div class="btn-row">
+      <button type="button" class="btn" data-action="hist-timing" data-id="${s.id}">Change date &amp; time</button>
+      <button type="button" class="btn" data-action="entry-add">+ Add exercise</button>
+    </div>
+
+    <h2>Log</h2>
+    ${s.entries.map((e) => renderEntry(e, { showLast: false, allowRest: false })).join('')
+      || '<div class="empty">No exercises. Add one above.</div>'}
+
+    <h2>Session totals</h2>
+    <div class="card" data-sessmeta="1">
+      <div class="grid2">
+        <label class="field"><span>Overall effort (RPE 1–10)</span>
+          <input inputmode="decimal" data-sf="rpe" value="${esc(fmtNum(s.rpe))}"></label>
+        <label class="field"><span>Bodyweight (${esc(s.unit)})</span>
+          <input inputmode="decimal" data-sf="bodyweight" value="${esc(fmtNum(s.bodyweight))}"></label>
+      </div>
+      <label class="field" style="margin-bottom:0"><span>Notes</span>
+        <textarea data-sf="notes">${esc(s.notes || '')}</textarea></label>
+    </div>
+
+    <div class="divider"></div>
+    <div class="small dim center">Recorded ${esc(fmtTimeOfDay(s.startedAt))}–${esc(fmtTimeOfDay(end))}
+      · ${esc(fmtDur((end - s.startedAt) / 1000))}</div>
+    <button type="button" class="btn block ok" style="margin-top:12px" data-action="hist-edit-done">Done editing</button>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* read-only detail                                                   */
+/* ------------------------------------------------------------------ */
 
 function detail(s) {
   const end = s.finishedAt || s.updatedAt || Date.now();
@@ -12,10 +69,15 @@ function detail(s) {
   return `
     <button type="button" class="btn sm ghost" data-action="hist-back">← All sessions</button>
     <div class="card" style="margin-top:12px">
-      <div class="strong" style="font-size:18px">${esc(s.routineName)}</div>
-      <div class="small dim" style="margin-top:3px">
-        ${esc(fmtDate(s.startedAt))} · ${esc(fmtTimeOfDay(s.startedAt))}–${esc(fmtTimeOfDay(end))}
-        · ${esc(fmtDur((end - s.startedAt) / 1000))}${s.finishedAt ? '' : ' · unfinished'}
+      <div class="row">
+        <div style="flex:1;min-width:0">
+          <div class="strong" style="font-size:18px">${esc(s.routineName)}</div>
+          <div class="small dim" style="margin-top:3px">
+            ${esc(fmtDate(s.startedAt))} · ${esc(fmtTimeOfDay(s.startedAt))}–${esc(fmtTimeOfDay(end))}
+            · ${esc(fmtDur((end - s.startedAt) / 1000))}${s.finishedAt ? '' : ' · unfinished'}
+          </div>
+        </div>
+        <button type="button" class="btn sm" data-action="hist-edit" data-id="${s.id}">Edit</button>
       </div>
       <div class="divider"></div>
       <div class="kv"><span>Exercises completed</span><span>${done}/${total}</span></div>
@@ -39,8 +101,9 @@ function detail(s) {
 export function render() {
   if (state.nav.sessionId) {
     const s = getSession(state.nav.sessionId);
-    if (s) return detail(s);
+    if (s) return state.editSessionId === s.id ? editDetail(s) : detail(s);
     state.nav.sessionId = null;
+    state.editSessionId = null;
   }
 
   const list = state.sessions.filter((s) => !(state.active && s.id === state.active.id));
@@ -70,7 +133,44 @@ export function render() {
 
 export const historyActions = {
   'hist-open': ({ id }) => { state.nav.sessionId = id; },
-  'hist-back': () => { state.nav.sessionId = null; },
+  'hist-back': async () => { state.nav.sessionId = null; await setEditing(null); },
+  'hist-edit': async ({ id }) => { state.nav.sessionId = id; await setEditing(id); },
+  'hist-edit-done': async () => { await setEditing(null); toast('Changes saved'); },
+
+  'hist-timing': ({ id }) => {
+    const s = getSession(id);
+    if (!s) return;
+    const end = s.finishedAt || s.updatedAt || s.startedAt;
+    openModal({
+      title: 'Date & time',
+      bodyHtml: `
+        <label class="field"><span>Date</span>
+          <input type="date" name="date" value="${esc(isoDate(s.startedAt))}"></label>
+        <div class="grid2">
+          <label class="field"><span>Started</span>
+            <input type="time" name="start" value="${esc(fmtTimeOfDay(s.startedAt))}"></label>
+          <label class="field"><span>Finished</span>
+            <input type="time" name="end" value="${esc(fmtTimeOfDay(end))}"></label>
+        </div>
+        <p class="hint">Use this to move a workout to the day it actually happened — handy if you
+          logged it late. A finish time earlier than the start is treated as next-day.</p>`,
+      onSubmit: async (v) => {
+        const [y, mo, d] = String(v.date || '').split('-').map(Number);
+        if (!y || !mo || !d) { toast('Pick a valid date'); return false; }
+        const at = (hhmm, dayOffset = 0) => {
+          const [h, mi] = String(hhmm || '00:00').split(':').map(Number);
+          return new Date(y, mo - 1, d + dayOffset, h || 0, mi || 0).getTime();
+        };
+        const startedAt = at(v.start);
+        let finishedAt = at(v.end);
+        if (finishedAt < startedAt) finishedAt = at(v.end, 1); // crossed midnight
+        await updateSessionTiming(id, { startedAt, finishedAt });
+        toast('Date updated');
+        return true;
+      },
+    });
+  },
+
   'hist-md': ({ id }) => { const s = getSession(id); if (s) exportSessionMarkdown(s); },
   'hist-json': ({ id }) => { const s = getSession(id); if (s) exportSessionJson(s); },
   'hist-csv': () => { exportCsv(); toast('CSV exported'); },
@@ -80,6 +180,7 @@ export const historyActions = {
     if (await confirmDialog(`Delete the ${fmtDate(s.startedAt)} "${s.routineName}" session? This cannot be undone.`)) {
       await deleteSession(id);
       state.nav.sessionId = null;
+      await setEditing(null);
       toast('Session deleted');
     }
   },

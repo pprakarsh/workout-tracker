@@ -3,7 +3,7 @@ import { state, normalizeRoutine, saveRoutine, persistSession, sessionVolume, em
 import {
   download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, fmtReps, uid,
 } from './util.js';
-import { pace } from './views/entry.js';
+import { pace, targetLine } from './views/entry.js';
 
 export const SCHEMA = 'workout-tracker/v1';
 
@@ -45,10 +45,21 @@ export function routineObject(r) {
     entries: r.entries.map((e) => {
       const o = { type: e.type, name: e.name };
       if (e.group) o.group = e.group;
-      if (e.targetSets !== null) o.sets = e.targetSets;
-      const reps = fmtReps(e.repsMin, e.repsMax);
-      if (reps) o.reps = reps;
-      if (e.weight !== null) o.weight = e.weight;
+      if (e.setTargets) {
+        // per-set plan: `sets` as a list, one object per set
+        o.sets = e.setTargets.map((t) => {
+          const row = {};
+          if (t.weight !== null && t.weight !== undefined) row.weight = t.weight;
+          const reps = fmtReps(t.repsMin, t.repsMax);
+          if (reps) row.reps = reps;
+          return row;
+        });
+      } else {
+        if (e.targetSets !== null) o.sets = e.targetSets;
+        const reps = fmtReps(e.repsMin, e.repsMax);
+        if (reps) o.reps = reps;
+        if (e.weight !== null) o.weight = e.weight;
+      }
       if (e.targetDistance !== null) { o.distance = e.targetDistance; o.distanceUnit = e.distanceUnit || 'km'; }
       if (e.targetDuration) o.duration = fmtClock(e.targetDuration);
       if (e.rest) o.rest = fmtClock(e.rest);
@@ -197,19 +208,10 @@ export function sessionMarkdown(s) {
 
   s.entries.forEach((e, i) => {
     L.push('');
-    const tl = [];
-    if (e.type === 'lift') {
-      const reps = fmtReps(e.repsMin, e.repsMax);
-      if (e.targetSets || reps) tl.push(`${e.targetSets ? `${fmtNum(e.targetSets)} × ` : ''}${reps || '?'}`);
-      if (e.weight !== null && e.weight !== undefined) tl.push(`@ ${fmtNum(e.weight)} ${e.unit || s.unit}`);
-    } else {
-      if (e.targetDistance) tl.push(`${fmtNum(e.targetDistance)} ${e.distanceUnit || 'km'}`);
-      if (e.targetDuration) tl.push(fmtClock(e.targetDuration));
-    }
-    if (e.rest) tl.push(`rest ${fmtClock(e.rest)}`);
     L.push(`## ${i + 1}. ${e.name}${e.group ? ` _(superset ${e.group})_` : ''}${e.skipped ? ' — SKIPPED' : ''}`);
-    if (tl.length) L.push(`Target: ${tl.join(' · ')}`);
-    if (e.notes) L.push(`Cue: ${e.notes}`);
+    const tl = targetLine(e);
+    if (tl) L.push(`Target: ${tl}`);
+    if (e.notes) { L.push(''); L.push(e.notes.split('\n').map((line) => `> ${line}`).join('\n')); }
     L.push('');
 
     if (e.type === 'lift') {

@@ -5,7 +5,7 @@ import {
 } from '../store.js';
 import { dbPut } from '../db.js';
 import { esc, fmtDate, fmtClock, relDay, parseDur } from '../util.js';
-import { targetLine, exerciseFormHtml, readExerciseForm } from './entry.js';
+import { targetLine, exerciseFormHtml, readExerciseForm, wireExerciseForm } from './entry.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';
 
@@ -21,7 +21,7 @@ function editor(r) {
         <div class="nm">${esc(e.name)} ${e.group ? `<span class="pill grp">${esc(e.group)}</span>` : ''}
           ${e.type === 'cardio' ? '<span class="pill">cardio</span>' : ''}</div>
         ${targetLine(e) ? `<div class="sub">${esc(targetLine(e))}</div>` : ''}
-        ${e.notes ? `<div class="sub" style="color:var(--warn)">${esc(e.notes)}</div>` : ''}
+        ${e.notes ? `<div class="sub" style="color:var(--warn);white-space:pre-wrap">${esc(e.notes)}</div>` : ''}
       </div>
       <div class="acts">
         <button type="button" class="btn icon ghost" data-action="rentry-up"   data-id="${r.id}" data-entry="${e.id}">↑</button>
@@ -139,7 +139,18 @@ export const SAMPLE = `{
       "group": "A", "notes": "pause on chest" },
     { "name": "Chest-Supported Row", "sets": 4, "reps": "10-12", "rest": "2:30", "group": "A" },
     { "type": "cardio", "name": "Treadmill Run", "distance": 3,
-      "distanceUnit": "km", "duration": "18:00" }
+      "distanceUnit": "km", "duration": "18:00" },
+    { "name": "Overhead Press", "rest": "2:00",
+      "sets": [
+        { "weight": 40, "reps": 10 },
+        { "weight": 45, "reps": 8 },
+        { "weight": 50, "reps": "5-6" }
+      ],
+      "notes": [
+        "Warmup: 2x8 @ 20kg, 1x5 @ 30kg",
+        "Tempo 2-0-1, no leg drive",
+        "Stop the set if the bar path drifts forward"
+      ] }
   ]
 }`;
 
@@ -198,28 +209,29 @@ export const routineActions = {
   },
 
   'rentry-add': ({ id }) => {
-    openModal({
+    const modal = openModal({
       title: 'Add exercise',
       bodyHtml: exerciseFormHtml({}),
       okText: 'Add',
-      onSubmit: async (v) => {
-        const e = readExerciseForm(v);
+      onSubmit: async (v, m) => {
+        const e = readExerciseForm(v, m);
         if (!e.name) { toast('Name is required'); return false; }
         await mutateRoutineEntries(id, (r) => r.entries.push(normalizeEntry(e)));
         return true;
       },
     });
+    wireExerciseForm(modal);
   },
 
   'rentry-edit': ({ id, entry }) => {
     const r = getRoutine(id);
     const e = r?.entries.find((x) => x.id === entry);
     if (!e) return;
-    openModal({
+    const modal = openModal({
       title: 'Edit exercise',
       bodyHtml: exerciseFormHtml(e),
-      onSubmit: async (v) => {
-        const patch = readExerciseForm(v);
+      onSubmit: async (v, m) => {
+        const patch = readExerciseForm(v, m);
         if (!patch.name) { toast('Name is required'); return false; }
         await mutateRoutineEntries(id, (rr) => {
           const i = rr.entries.findIndex((x) => x.id === entry);
@@ -228,6 +240,7 @@ export const routineActions = {
         return true;
       },
     });
+    wireExerciseForm(modal);
   },
 
   'rentry-del': async ({ id, entry }) => {

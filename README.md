@@ -61,10 +61,25 @@ should stick, the Session tab has *Save order to routine*.
 - **Session** — today's full picture: every exercise in order with done / in progress / pending
   status and its logged sets inline. Reorder, add, remove, skip, jump to any exercise, and record
   session-level effort, bodyweight and notes. Finish or discard the workout here.
-- **History** — past sessions, newest first. Open one for the full read-only log and export it.
+- **History** — past sessions, newest first. Open one for the full log, correct it, or export it.
 - **Routines** — your routine library and editor, import/export, backup, and settings.
 
 The rest timer bar sits above the tab bar and stays live across all four tabs.
+
+### Correcting a finished session
+
+Open a session from History and tap **Edit**. The log becomes editable in place, exactly like the
+live Session view: fix weights, reps and RPE, add a set you forgot, delete one you didn't do, add or
+remove an exercise, and correct the session RPE, bodyweight and notes. Changes save as you type.
+The rest-timer buttons are hidden, since timing rest on a workout that already happened is
+meaningless.
+
+**Change date & time** also lets you move a session to the day it actually happened — so you can
+log a workout you forgot by running it now and then moving it back. A finish time earlier than the
+start is read as crossing midnight.
+
+Editing a past session never touches your routines, and a live workout in progress is left alone:
+the editor targets the session you opened, not the one you're doing.
 
 ### The rest timer
 
@@ -88,7 +103,8 @@ always correct when you come back. (Android and desktop also vibrate; iOS Safari
 ### Progression
 
 The app shows you what you did last time as a reference line and nothing more. Sets prefill from
-the routine target, or from the previous set in the same exercise. There is no auto-progression.
+the per-set plan for that set number, or from the uniform routine target, or from the previous set
+in the same exercise. There is no auto-progression.
 
 ---
 
@@ -107,7 +123,18 @@ on each exercise.
       "group": "A", "notes": "pause on chest" },
     { "name": "Chest-Supported Row", "sets": 4, "reps": "10-12", "rest": "2:30", "group": "A" },
     { "type": "cardio", "name": "Treadmill Run", "distance": 3,
-      "distanceUnit": "km", "duration": "18:00" }
+      "distanceUnit": "km", "duration": "18:00" },
+    { "name": "Overhead Press", "rest": "2:00",
+      "sets": [
+        { "weight": 40, "reps": 10 },
+        { "weight": 45, "reps": 8 },
+        { "weight": 50, "reps": "5-6" }
+      ],
+      "notes": [
+        "Warmup: 2x8 @ 20kg, 1x5 @ 30kg",
+        "Tempo 2-0-1, no leg drive",
+        "Stop the set if the bar path drifts forward"
+      ] }
   ]
 }
 ```
@@ -116,19 +143,46 @@ on each exercise.
 |---|---|---|
 | `name` | all | **Required.** |
 | `type` | all | `lift` (default) or `cardio`. |
-| `sets` | lift | Target set count. |
-| `reps` | lift | `"5"`, `"6-8"`, or a number. Ranges are kept as a range. |
-| `weight` | lift | Target load, in your configured unit. |
+| `sets` | lift | A **number** for one target across all sets, or a **list** for a per-set plan (see below). |
+| `reps` | lift | `"5"`, `"6-8"`, or a number. Ranges are kept as a range. Ignored when `sets` is a per-set plan. |
+| `weight` | lift | Target load, in your configured unit. Ignored when `sets` is a per-set plan. |
 | `distance`, `distanceUnit` | cardio | `km` or `mi`. |
 | `duration` | cardio | `"18:00"`, `"1:05:00"`, `"20m"`, `"90s"`. A bare number means minutes. |
-| `rest` | all | Rest target. Same formats as `duration`. |
+| `rest` | all | Rest target between sets. Same formats as `duration`. |
 | `group` | all | Same letter on consecutive exercises = one superset/circuit. |
-| `notes` | all | Cue shown on the exercise card. |
+| `notes` | all | Warmup sets, tempo, cues, setup. A string, or a **list of lines** for multi-line notes. |
+
+### Per-set targets
+
+For ascending loads, pyramids, or anything where each set differs, make `sets` a list instead of a
+count. Three equivalent forms are accepted:
+
+```json
+"sets": [ { "weight": 60, "reps": 10 }, { "weight": 70, "reps": 8 }, { "weight": 80, "reps": "5-6" } ]
+"sets": [ "60x10", "70x8", "80x5-6" ]
+"sets": "60x10, 70x8, 80x5-6"
+```
+
+The target set count comes from the length of the list. Omit the weight for bodyweight work
+(`"x8"` or `{ "reps": 8 }`). Reps can still be a range per set. When you log the workout, set 1
+prefills from the first planned entry, set 2 from the second, and so on; any set beyond the plan
+carries the previous set forward. The exercise card shows a **+ All N planned** button that creates
+every planned row at once.
+
+In the app, the exercise form has a *Set targets* selector — switch it to **Different weight / reps
+per set** to get an editable grid instead of the single weight/reps fields.
+
+### Notes
+
+Notes are per exercise and per routine, so warmup protocols and tempo prescriptions live with the
+movement rather than in your head. They're shown on the exercise card in the Now and Session views,
+preserved line-for-line, and quoted in the Markdown export. Use the list form in JSON to avoid
+embedding `\n` by hand.
 
 Also accepted: a **JSON array of routine objects**, a **bare array of exercises** (wrapped into one
 routine), or a **full backup file** (see below). Aliases `exercises`/`title`/`desc`/`restSeconds`/
-`targetWeight` are understood too, so hand-written or LLM-generated files usually just work.
-Bad input is rejected with a specific message rather than partially imported.
+`targetWeight`/`setTargets` are understood too, so hand-written or LLM-generated files usually just
+work. Bad input is rejected with a specific message rather than partially imported.
 
 ## Exporting
 
@@ -175,8 +229,9 @@ Two things to keep in mind:
 
 ## Tests
 
-Two Node suites cover the store, timer, import/export and round-trip restore, plus a jsdom pass
-that drives the real UI through clicks and typing. They are dev-only; the app itself has no
+Three Node suites cover the store, timer, per-set targets, import/export and round-trip restore; a
+jsdom pass that drives the real UI through clicks and typing; and a style pass that resolves
+computed `display` to catch overlays that fail to hide. They are dev-only; the app itself has no
 dependencies.
 
 ```bash

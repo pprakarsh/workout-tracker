@@ -2,7 +2,7 @@
 // with the log for each, plus reordering and session-level notes.
 import {
   state, entryStatus, sessionProgress, sessionVolume, setCurrent, finishSession,
-  discardSession, saveSessionBackToRoutine, updateSessionMeta, blockAt,
+  discardSession, saveSessionBackToRoutine, updateSessionMeta, blockAt, working,
 } from '../store.js';
 import { esc, fmtDur, fmtNum, num } from '../util.js';
 import { targetLine, logSummary } from './entry.js';
@@ -132,7 +132,7 @@ export const sessionActions = {
 /** Session-level field edits (data-sf). Called from app.js. */
 export async function handleSessionField(target) {
   const f = target.dataset.sf;
-  if (!f || !state.active) return;
+  if (!f || !working()) return;
   const patch = {};
   patch[f] = f === 'notes' ? target.value : num(target.value);
   await updateSessionMeta(patch, { silent: true });

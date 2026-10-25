@@ -85,6 +85,7 @@ document.addEventListener('click', async (ev) => {
     state.tab = tabBtn.dataset.tab;
     // tapping a tab always lands on that tab's top-level screen
     state.nav = {};
+    state.editSessionId = null;
     render();
     return;
   }

@@ -128,7 +128,7 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 .ex-head{display:flex;align-items:flex-start;gap:8px}
 .ex-name{font-size:17px;font-weight:700;line-height:1.25}
 .ex-target{font-size:13px;color:var(--fg2);margin-top:3px}
-.ex-notes{font-size:13px;color:var(--warn);margin-top:6px}
+.ex-notes{font-size:13px;color:var(--warn);margin-top:6px;white-space:pre-wrap}
 .lastref{
   font-size:12px;color:var(--fg2);background:var(--bg3);
   border:1px dashed var(--line);border-radius:9px;padding:7px 9px;margin-top:9px;
@@ -153,7 +153,14 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
   width:34px;height:34px;border-radius:9px;border:1px solid var(--line);
   background:var(--bg3);color:var(--accent);font-size:14px;cursor:pointer;padding:0;
 }
-.set-foot{display:flex;gap:8px;margin-top:4px}
+.set-foot{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap}
+
+/* per-set target grid in the exercise form */
+.strow-hdr,.strow{display:grid;grid-template-columns:30px 1fr 1fr 34px;gap:6px;align-items:center}
+.strow-hdr{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg3);font-weight:700;padding:0 2px 4px}
+.strow{margin-bottom:6px}
+.strow .idx{text-align:center;font-size:13px;font-weight:700;color:var(--fg3)}
+.strow input{padding:9px 6px;text-align:center;border-radius:9px}
 
 /* ---------- session list ---------- */
 .sess-item{

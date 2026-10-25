@@ -14,6 +14,7 @@ export const state = {
   routines: [],
   sessions: [],          // every session, newest first
   active: null,          // the in-progress session object (also present in .sessions)
+  editSessionId: null,   // a FINISHED session opened for correction in History
   settings: { ...DEFAULT_SETTINGS },
   timer: null,           // { startedAt, target, sessionId, entryId, setId, label, beeped }
   tab: 'now',
@@ -24,13 +25,84 @@ const listeners = new Set();
 export const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 export const emit = () => listeners.forEach((fn) => fn());
 
+/**
+ * The session the editing actions apply to: normally the live workout, but a
+ * finished session while one is open for correction in History. Everything that
+ * mutates entries/sets goes through this, so the same UI serves both.
+ */
+export function working() {
+  if (state.editSessionId) {
+    return state.sessions.find((s) => s.id === state.editSessionId) || null;
+  }
+  return state.active;
+}
+
+/** True when the thing being edited is a past session, not the live workout. */
+export const editingPast = () => !!state.editSessionId;
+
+export async function setEditing(sessionId) {
+  state.editSessionId = sessionId || null;
+  emit();
+}
+
 /* ------------------------------------------------------------------ */
 /* normalisation                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Per-set targets: a plan with a different load/reps for each set.
+ * Accepts  [{weight:60,reps:10}, …]  |  ["60x10","70x8"]  |  "60x10, 70x8, 80x5"
+ * Reps may be a range ("8-12"); the weight may be omitted ("x10") for bodyweight.
+ * Returns [{weight, repsMin, repsMax}] or null.
+ */
+export function parseSetTargets(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+
+  const one = (str) => {
+    const s = String(str).trim().toLowerCase().replace(/×/g, 'x');
+    if (!s) return null;
+    const m = s.match(/^([\d.]*)\s*(?:x|@|\*)\s*(.+)$/);
+    if (m) {
+      const reps = parseReps(m[2]);
+      return { weight: num(m[1]), repsMin: reps.min, repsMax: reps.max };
+    }
+    // a bare number is a weight with no rep target
+    const w = num(s);
+    return w === null ? null : { weight: w, repsMin: null, repsMax: null };
+  };
+
+  const list = typeof raw === 'string'
+    ? raw.split(/[,;\n]/).map(one)
+    : Array.isArray(raw)
+      ? raw.map((item) => {
+        if (item === null || item === undefined) return null;
+        if (typeof item === 'string' || typeof item === 'number') return one(item);
+        const reps = parseReps(
+          item.reps !== undefined ? item.reps : { min: item.repsMin, max: item.repsMax },
+        );
+        return { weight: num(item.weight), repsMin: reps.min, repsMax: reps.max };
+      })
+      : null;
+
+  if (!list) return null;
+  const clean = list.filter((x) => x && (x.weight !== null || x.repsMin !== null || x.repsMax !== null));
+  return clean.length ? clean : null;
+}
+
 /** Coerce any loosely-shaped entry (hand-written JSON included) into our shape. */
 export function normalizeEntry(raw = {}) {
   const type = String(raw.type || '').toLowerCase() === 'cardio' ? 'cardio' : 'lift';
+  // `sets` is either a count (3) or a per-set plan ([{weight,reps},…])
+  // `sets` is either a count (3), a per-set plan ([{weight,reps},…] / ["60x10",…]),
+  // or the compact string form "60x10, 70x8, 80x5".
+  const setsIsPlan = (Array.isArray(raw.sets)
+    // a plan is [{weight,reps},…]; logged sets carry an id and a done flag, and
+    // must never be mistaken for targets
+    && !raw.sets.some((x) => x && typeof x === 'object' && ('done' in x || 'id' in x)))
+    || (typeof raw.sets === 'string' && /[x×@*,;]/i.test(raw.sets));
+  const setTargets = parseSetTargets(
+    raw.setTargets ?? raw.perSet ?? raw.setPlan ?? (setsIsPlan ? raw.sets : null),
+  );
   const reps = parseReps(
     raw.reps !== undefined ? raw.reps
       : (raw.repsMin !== undefined || raw.repsMax !== undefined)
@@ -38,16 +110,18 @@ export function normalizeEntry(raw = {}) {
         : raw.targetReps,
   );
   const group = raw.group ?? raw.groupId ?? raw.superset ?? null;
+  const declaredSets = num(raw.targetSets ?? (setsIsPlan ? null : raw.sets));
   return {
     id: raw.id || uid('e'),
     type,
     name: String(raw.name || raw.exercise || 'Exercise').trim(),
     group: group === null || group === undefined || group === '' ? null : String(group).trim(),
-    // lift targets
-    targetSets: num(raw.targetSets ?? raw.sets) ?? (type === 'lift' ? 3 : null),
-    repsMin: reps.min,
-    repsMax: reps.max,
-    weight: num(raw.weight ?? raw.targetWeight),
+    // lift targets — either one target for every set, or setTargets per set
+    targetSets: setTargets ? setTargets.length : (declaredSets ?? (type === 'lift' ? 3 : null)),
+    setTargets,
+    repsMin: setTargets ? null : reps.min,
+    repsMax: setTargets ? null : reps.max,
+    weight: setTargets ? null : num(raw.weight ?? raw.targetWeight),
     unit: raw.unit || null,
     // cardio targets
     targetDistance: num(raw.distance ?? raw.targetDistance),
@@ -55,7 +129,9 @@ export function normalizeEntry(raw = {}) {
     targetDuration: parseDur(raw.duration ?? raw.targetDuration),
     // shared
     rest: parseDur(raw.rest ?? raw.restSeconds ?? raw.restTime),
-    notes: String(raw.notes || raw.note || '').trim(),
+    // notes may be a string or a list of lines (handy in hand-written JSON)
+    notes: (Array.isArray(raw.notes) ? raw.notes.join('\n')
+      : String(raw.notes ?? raw.note ?? '')).trim(),
   };
 }
 
@@ -183,10 +259,11 @@ export async function persistSession(session) {
   await dbPut('sessions', session);
 }
 
-/** Persist the active session, optionally without triggering a re-render. */
+/** Persist whatever session is being edited, optionally without re-rendering. */
 async function touch({ silent = false } = {}) {
-  if (!state.active) return;
-  await persistSession(state.active);
+  const s = working();
+  if (!s) return;
+  await persistSession(s);
   if (!silent) emit();
 }
 
@@ -243,6 +320,7 @@ export async function discardSession() {
 
 export async function deleteSession(id) {
   if (state.active && state.active.id === id) return discardSession();
+  if (state.editSessionId === id) state.editSessionId = null;
   state.sessions = state.sessions.filter((x) => x.id !== id);
   await dbDel('sessions', id);
   emit();
@@ -250,9 +328,9 @@ export async function deleteSession(id) {
 
 export const getSession = (id) => state.sessions.find((s) => s.id === id) || null;
 
-/** Push the live session's exercise list back onto its source routine. */
+/** Push the edited session's exercise list back onto its source routine. */
 export async function saveSessionBackToRoutine() {
-  const s = state.active;
+  const s = working();
   if (!s || !s.routineId) return null;
   const r = getRoutine(s.routineId);
   if (!r) return null;
@@ -265,8 +343,21 @@ export async function saveSessionBackToRoutine() {
     .map((e) => {
       const src = e.sourceId ? prior.get(e.sourceId) : null;
       return normalizeEntry({
-        ...e,
         id: e.sourceId || uid('e'),
+        type: e.type,
+        name: e.name,
+        group: e.group,
+        targetSets: e.targetSets,
+        setTargets: e.setTargets,
+        repsMin: e.repsMin,
+        repsMax: e.repsMax,
+        weight: e.weight,
+        targetDistance: e.targetDistance,
+        targetDuration: e.targetDuration,
+        rest: e.rest,
+        notes: e.notes,
+        // a routine only carries a unit if it was explicitly given one, so don't
+        // bake in the unit the session happened to resolve
         unit: src ? src.unit : null,
         distanceUnit: src ? src.distanceUnit : null,
       });
@@ -280,10 +371,14 @@ export async function saveSessionBackToRoutine() {
 /* live session: entries                                              */
 /* ------------------------------------------------------------------ */
 
-export const entryIndex = (id) =>
-  state.active ? state.active.entries.findIndex((e) => e.id === id) : -1;
-export const findEntry = (id) =>
-  state.active ? state.active.entries.find((e) => e.id === id) || null : null;
+export const entryIndex = (id) => {
+  const s = working();
+  return s ? s.entries.findIndex((e) => e.id === id) : -1;
+};
+export const findEntry = (id) => {
+  const s = working();
+  return s ? s.entries.find((e) => e.id === id) || null : null;
+};
 
 /**
  * Indices that make up the "block" at idx: a contiguous run of entries sharing
@@ -301,13 +396,14 @@ export function blockAt(entries, idx) {
 }
 
 export async function setCurrent(idx) {
-  if (!state.active) return;
-  state.active.currentIdx = Math.min(Math.max(idx, 0), Math.max(state.active.entries.length - 1, 0));
+  const s = working();
+  if (!s) return;
+  s.currentIdx = Math.min(Math.max(idx, 0), Math.max(s.entries.length - 1, 0));
   await touch();
 }
 
 export async function stepBlock(dir) {
-  const s = state.active;
+  const s = working();
   if (!s || !s.entries.length) return;
   const blk = blockAt(s.entries, s.currentIdx);
   const target = dir > 0 ? blk[blk.length - 1] + 1 : blk[0] - 1;
@@ -317,7 +413,7 @@ export async function stepBlock(dir) {
 }
 
 export async function addSessionEntry(raw) {
-  const s = state.active;
+  const s = working();
   if (!s) return null;
   const e = toSessionEntry(raw, state.settings);
   s.entries.push(e);
@@ -330,12 +426,13 @@ export async function updateSessionEntry(entryId, patch, opts) {
   const e = findEntry(entryId);
   if (!e) return;
   Object.assign(e, patch);
-  state.active.modified = true;
+  const s = working();
+  if (s) s.modified = true;
   await touch(opts);
 }
 
 export async function removeSessionEntry(entryId) {
-  const s = state.active;
+  const s = working();
   if (!s) return;
   const i = entryIndex(entryId);
   if (i < 0) return;
@@ -346,7 +443,7 @@ export async function removeSessionEntry(entryId) {
 }
 
 export async function moveSessionEntry(entryId, dir) {
-  const s = state.active;
+  const s = working();
   if (!s) return;
   const i = entryIndex(entryId);
   const j = i + dir;
@@ -362,7 +459,8 @@ export async function toggleSkip(entryId) {
   const e = findEntry(entryId);
   if (!e) return;
   e.skipped = !e.skipped;
-  state.active.modified = true;
+  const s = working();
+  if (s) s.modified = true;
   await touch();
 }
 
@@ -370,17 +468,52 @@ export async function toggleSkip(entryId) {
 /* live session: sets                                                 */
 /* ------------------------------------------------------------------ */
 
+/** The planned target for set number i (0-based), per-set plan first. */
+export function plannedSet(e, i) {
+  if (!e || e.type !== 'lift') return null;
+  if (e.setTargets && e.setTargets[i]) return e.setTargets[i];
+  if (e.weight !== null || e.repsMin !== null || e.repsMax !== null) {
+    return { weight: e.weight, repsMin: e.repsMin, repsMax: e.repsMax };
+  }
+  return null;
+}
+
 export async function addSet(entryId) {
   const e = findEntry(entryId);
   if (!e || e.type !== 'lift') return null;
   const prev = e.sets[e.sets.length - 1];
   const set = blankSet(e.unit || state.settings.unit);
-  // Prefill from the previous set, else from the routine target.
-  set.weight = prev ? prev.weight : (e.weight ?? null);
-  set.reps = prev ? prev.reps : (e.repsMin ?? e.repsMax ?? null);
+  const plan = plannedSet(e, e.sets.length);
+  // A per-set plan wins for this set number; otherwise carry the previous set forward.
+  if (e.setTargets && e.setTargets[e.sets.length]) {
+    set.weight = plan.weight ?? (prev ? prev.weight : null);
+    set.reps = plan.repsMin ?? plan.repsMax ?? (prev ? prev.reps : null);
+  } else {
+    set.weight = prev ? prev.weight : (e.weight ?? null);
+    set.reps = prev ? prev.reps : (e.repsMin ?? e.repsMax ?? null);
+  }
   e.sets.push(set);
   await touch();
   return set;
+}
+
+/** Create every remaining planned set in one go. */
+export async function fillPlannedSets(entryId) {
+  const e = findEntry(entryId);
+  if (!e || e.type !== 'lift') return 0;
+  const want = e.setTargets ? e.setTargets.length : (e.targetSets ?? 0);
+  let made = 0;
+  while (e.sets.length < want) {
+    const i = e.sets.length;
+    const plan = plannedSet(e, i);
+    const set = blankSet(e.unit || state.settings.unit);
+    set.weight = plan ? (plan.weight ?? null) : null;
+    set.reps = plan ? (plan.repsMin ?? plan.repsMax ?? null) : null;
+    e.sets.push(set);
+    made++;
+  }
+  if (made) await touch();
+  return made;
 }
 
 export async function updateSet(entryId, setId, patch, opts) {
@@ -416,9 +549,26 @@ export async function updateLog(entryId, patch, opts) {
 }
 
 export async function updateSessionMeta(patch, opts) {
-  if (!state.active) return;
-  Object.assign(state.active, patch);
+  const s = working();
+  if (!s) return;
+  Object.assign(s, patch);
   await touch(opts);
+}
+
+/**
+ * Correct when a session happened. Used by the History editor, which also makes
+ * it possible to log a workout you forgot and then move it to the right day.
+ */
+export async function updateSessionTiming(sessionId, { startedAt, finishedAt }) {
+  const s = getSession(sessionId);
+  if (!s) return null;
+  if (Number.isFinite(startedAt)) s.startedAt = startedAt;
+  if (Number.isFinite(finishedAt)) s.finishedAt = finishedAt;
+  if (s.finishedAt && s.finishedAt < s.startedAt) s.finishedAt = s.startedAt;
+  await persistSession(s);
+  state.sessions.sort((a, b) => b.startedAt - a.startedAt);
+  emit();
+  return s;
 }
 
 /* ------------------------------------------------------------------ */
@@ -429,7 +579,7 @@ export async function startRest({ target, entryId = null, setId = null, label = 
   state.timer = {
     startedAt: Date.now(),
     target: target ?? state.settings.defaultRest,
-    sessionId: state.active ? state.active.id : null,
+    sessionId: working() ? working().id : null,
     entryId, setId, label, beeped: false,
   };
   await metaSet('timer', state.timer);
@@ -451,7 +601,8 @@ export async function stopRest() {
   const elapsed = Math.round((Date.now() - t.startedAt) / 1000);
   state.timer = null;
   await metaSet('timer', null);
-  if (t.entryId && t.setId && state.active && state.active.id === t.sessionId) {
+  const s = working();
+  if (t.entryId && t.setId && s && s.id === t.sessionId) {
     await updateSet(t.entryId, t.setId, { rest: elapsed }, { silent: true });
   }
   emit();
@@ -499,6 +650,7 @@ export async function restoreAll({ routines = [], sessions = [], settings = null
   await metaSet('timer', state.timer);
 
   state.nav = {};
+  state.editSessionId = null;
   emit();
   return { routines: state.routines.length, sessions: state.sessions.length };
 }
@@ -542,7 +694,7 @@ export function lastLogFor(name, excludeSessionId = null) {
   if (!key) return null;
   for (const s of state.sessions) {
     if (s.id === excludeSessionId) continue;
-    if (state.active && s.id === state.active.id) continue;
+    if (!s.finishedAt) continue;        // only completed sessions count as "last time"
     for (const e of s.entries) {
       if (normName(e.name) !== key) continue;
       const hasWork = e.type === 'lift'
