@@ -16,6 +16,9 @@
   --tab-h:56px;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* The hidden attribute must win over the display rules below, which are more
+   specific than the browser's built-in [hidden]{display:none}. */
+[hidden]{display:none !important}
 html,body{margin:0;padding:0;height:100%}
 body{
   background:var(--bg);color:var(--fg);
@@ -176,9 +179,12 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
   bottom:calc(var(--tab-h) + var(--safe-b));
   background:var(--bg2);border-top:1px solid var(--accent);
   padding:9px 12px;
-  display:flex;align-items:center;gap:10px;
+  align-items:center;gap:10px;
   box-shadow:0 -8px 24px rgba(0,0,0,.45);
 }
+/* :not([hidden]) rather than a bare display:flex, so the hidden attribute is
+   never overridden by specificity. */
+#restBar:not([hidden]){display:flex}
 #restBar.over{border-top-color:var(--bad);background:#241a1d}
 #restBar .clock{
   font-variant-numeric:tabular-nums;font-size:30px;font-weight:700;line-height:1;
@@ -196,9 +202,10 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 /* ---------- modal ---------- */
 #modalRoot{
   position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.6);
-  display:flex;align-items:flex-end;justify-content:center;
+  align-items:flex-end;justify-content:center;
   backdrop-filter:blur(2px);
 }
+#modalRoot:not([hidden]){display:flex}
 .modal{
   width:100%;max-width:620px;max-height:88vh;overflow-y:auto;
   background:var(--bg);border:1px solid var(--line);

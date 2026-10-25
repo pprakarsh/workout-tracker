@@ -1,5 +1,5 @@
 // Offline shell cache. Bump CACHE when you change any file below.
-const CACHE = 'workout-v1';
+const CACHE = 'workout-v2';
 
 const ASSETS = [
   '.',
