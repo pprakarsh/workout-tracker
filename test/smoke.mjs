@@ -396,5 +396,65 @@ ok(restCells.join('|') === '125||98',
   `csv leaves the cell empty rather than writing prose into a numeric column (${restCells.join('|')})`);
 await store.discardSession();
 
+section('global exercise library');
+const libR = await store.createRoutine({
+  name: 'Library Source',
+  entries: [
+    { name: 'Hack Squat', sets: [{ weight: 80, reps: 10 }, { weight: 90, reps: 8 }], rest: '2:00', group: 'B', notes: 'Warmup 1x10 @ 40\nSlow eccentric' },
+    { name: 'Standing Calf Raise', sets: 4, reps: '12-15', weight: 60, rest: '1:00' },
+  ],
+});
+const lib = store.exerciseLibrary();
+ok(lib.length > 2, `library spans every routine and session (${lib.length} exercises)`);
+const hack = lib.find((x) => x.key === 'hack squat');
+ok(!!hack, 'a newly added routine exercise appears in the library');
+ok(hack.def.setTargets?.length === 2, 'carries its per-set plan');
+ok(hack.def.rest === 120, 'carries its rest target');
+ok(hack.def.notes.includes('Slow eccentric'), 'carries its notes');
+ok(hack.def.group === null, 'does NOT carry the superset letter — that belongs to the source routine');
+ok(hack.routines === 1 && hack.performed === 0 && hack.lastPerformed === null, 'never performed yet');
+ok(lib.every((x) => x.def && !('sets' in x.def) && !('log' in x.def)),
+  'library definitions hold targets only, never logged sets');
+
+const squatRec = lib.find((x) => x.key === 'back squat');
+ok(squatRec && squatRec.performed > 0, `usage counted: Back Squat performed ${squatRec?.performed}x`);
+ok(squatRec.lastPerformed !== null, 'records when it was last done');
+ok(lib.findIndex((x) => x.key === squatRec.key) < lib.findIndex((x) => x.key === 'hack squat'),
+  'recently performed exercises sort above never-performed ones');
+
+section('an ad-hoc session exercise still enters the library');
+const adhocR = await store.createRoutine({ name: 'Empty Shell', entries: [{ name: 'Placeholder' }] });
+const adhocS = await store.startSession(adhocR.id);
+await store.addSessionEntry({ name: 'Sled Push', sets: 3, reps: 20, weight: 50, notes: 'improvised' });
+const sled = adhocS.entries.find((e) => e.name === 'Sled Push');
+const sledSet = await store.addSet(sled.id);
+await store.updateSet(sled.id, sledSet.id, { done: true });
+await store.finishSession();
+const lib2 = store.exerciseLibrary();
+const sledRec = lib2.find((x) => x.key === 'sled push');
+ok(!!sledRec, 'an exercise that never belonged to a routine is still offered');
+ok(sledRec.routines === 0 && sledRec.performed === 1, 'shown as performed once, in no routine');
+ok(sledRec.def.notes === 'improvised', 'its definition came from the session snapshot');
+
+section('the newest routine definition wins');
+const dupR = await store.createRoutine({
+  name: 'Later Routine', entries: [{ name: 'Hack Squat', sets: 5, reps: 5, weight: 120, rest: '3:00' }],
+});
+await new Promise((r) => setTimeout(r, 5));
+await store.saveRoutine(dupR);                   // make it unambiguously the newer one
+const hack2 = store.findInLibrary('HACK SQUAT');
+ok(hack2.routines === 2, 'counted in both routines');
+ok(hack2.def.weight === 120 && hack2.def.rest === 180,
+  `definition taken from the more recently updated routine (${hack2.def.weight}kg, ${hack2.def.rest}s)`);
+ok(hack2.fromRoutine === 'Later Routine', `names the source routine (${hack2.fromRoutine})`);
+await new Promise((r) => setTimeout(r, 5));
+await store.saveRoutine(store.getRoutine(libR.id));   // now the other one is newest
+ok(store.findInLibrary('hack squat').fromRoutine === 'Library Source',
+  'editing the older routine makes its definition the current one');
+ok(store.findInLibrary('does not exist') === null, 'unknown keys return null');
+await store.deleteRoutine(dupR.id);
+await store.deleteRoutine(adhocR.id);
+await store.deleteRoutine(libR.id);
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

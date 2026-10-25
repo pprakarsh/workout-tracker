@@ -35,6 +35,11 @@ async function click(sel, label = sel) {
   await sleep(40);
   return true;
 }
+/** entry-add / rentry-add now open a picker first; step through to a blank form. */
+async function openBlankExerciseForm(trigger, label) {
+  await click(trigger, label);
+  if ($('[data-action="ex-new"]')) await click('[data-action="ex-new"]', 'Create a new exercise');
+}
 async function type(sel, value) {
   const el = $(sel);
   if (!el) { failures++; console.log(`  FAIL no input: ${sel}`); return; }
@@ -141,7 +146,7 @@ await click('#restBar [data-action="rest-stop"]', 'Stop');
 
 section('add an exercise to today only');
 const before = store.state.active.entries.length;
-await click('[data-action="entry-add"]', '+ Add exercise');
+await openBlankExerciseForm('[data-action="entry-add"]', '+ Add exercise');
 ok($('#modalRoot').hidden === false, 'modal opened');
 $('[name="name"]').value = 'Face Pull';
 $$('#exRows [data-strow]').forEach((row) => {
@@ -211,7 +216,7 @@ await click('#tabBar .tab[data-tab="routines"]');
 await click('[data-action="routine-open"]', 'open routine');
 const rid = store.state.nav.routineId;
 const entriesBefore = store.getRoutine(rid).entries.length;
-await click('[data-action="rentry-add"]', '+ Add exercise');
+await openBlankExerciseForm('[data-action="rentry-add"]', '+ Add exercise');
 ok($('#exRows') !== null, 'the set grid is visible immediately, with no mode to switch');
 ok($('#exMode') === null, 'no set-target mode selector any more');
 ok($('[name="targetSets"]') === null && $('[name="weight"]') === null,
@@ -245,7 +250,7 @@ ok(added2.notes.split('\n').length === 2, 'multi-line notes saved');
 ok(/60×10 · 70×8 · 80×5-6/.test(view()), 'the editor lists the per-set plan');
 
 section('identical rows collapse to a tidy uniform target');
-await click('[data-action="rentry-add"]', '+ Add exercise');
+await openBlankExerciseForm('[data-action="rentry-add"]', '+ Add exercise');
 $('[name="name"]').value = 'Plain Curl';
 $$('#exRows [data-strow]').forEach((row) => {
   row.querySelector('[data-stf="w"]').value = '15';
@@ -286,7 +291,7 @@ ok(reSplit.setTargets?.length === 3 && reSplit.setTargets[2].weight === 80,
   'changing one row turns it back into a per-set plan');
 
 section('switching type hides the set grid');
-await click('[data-action="rentry-add"]', '+ Add exercise');
+await openBlankExerciseForm('[data-action="rentry-add"]', '+ Add exercise');
 $('[name="name"]').value = 'Easy Run';
 $('#exType').value = 'cardio';
 $('#exType').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
@@ -380,6 +385,64 @@ await click('[data-action="hist-edit"]', 'Edit again');
 ok(store.state.editSessionId === editId, 'editing again');
 await click('#tabBar .tab[data-tab="routines"]');
 ok(store.state.editSessionId === null, 'switching tabs exits edit mode');
+
+section('choose an exercise from the global library');
+await click('#tabBar .tab[data-tab="routines"]');
+await click('[data-action="routine-open"]', 'open routine');
+const pickRid = store.state.nav.routineId;
+const countBefore = store.getRoutine(pickRid).entries.length;
+await click('[data-action="rentry-add"]', '+ Add exercise');
+ok($('[data-action="ex-new"]') !== null, 'offers to create a new exercise');
+ok($('#exSearch') !== null, 'offers a searchable list of existing exercises');
+const rows = $$('#exLib [data-action="ex-pick"]');
+ok(rows.length > 2, `${rows.length} existing exercises listed`);
+ok(/last done|never performed/.test($('#exLib').textContent), 'rows show when each was last performed');
+
+$('#exSearch').value = 'ladder';
+$('#exSearch').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(30);
+ok($$('#exLib [data-action="ex-pick"]').length === 1, 'search narrows the list');
+ok(/Ladder Press/.test($('#exLib').textContent), 'the match is the one expected');
+$('#exSearch').value = 'zzzz no such thing';
+$('#exSearch').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(30);
+ok(/Nothing matches/.test($('#exLib').textContent), 'a miss says so rather than showing everything');
+$('#exSearch').value = 'ladder';
+$('#exSearch').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(30);
+
+await click('#exLib [data-action="ex-pick"]', 'pick Ladder Press');
+ok($('[name="name"]').value === 'Ladder Press', 'the form opened prefilled with that exercise');
+ok($$('#exRows [data-strow]').length === 3, 'its 3-set plan came across');
+ok($$('#exRows [data-stf="w"]').map((i) => i.value).join(',') === '40,45,50',
+  `planned weights came across (${$$('#exRows [data-stf="w"]').map((i) => i.value).join(',')})`);
+ok($('[name="rest"]').value === '1:00', 'its rest target came across');
+$$('#exRows [data-stf="w"]')[0].value = '42.5';
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+const reused = store.getRoutine(pickRid).entries.at(-1);
+ok(store.getRoutine(pickRid).entries.length === countBefore + 1, 'added to this routine');
+ok(reused.name === 'Ladder Press', 'the reused exercise was added');
+ok(reused.setTargets[0].weight === 42.5, 'the edit made before saving was kept');
+ok(store.state.routines.find((r) => r.name === 'Plan Test').entries[0].setTargets[0].weight === 40,
+  'the routine it was copied from is unchanged');
+
+section('the picker is also available mid-workout');
+await click('#tabBar .tab[data-tab="now"]');
+await click(`[data-action="routine-start"][data-id="${pickRid}"]`, 'Start');
+await click('[data-action="entry-add"]', '+ Add exercise');
+ok($('#exSearch') !== null, 'same picker when adding to a live session');
+const liveBefore = store.state.active.entries.length;
+await click('#exLib [data-action="ex-pick"]', 'pick the first exercise');
+ok($('[name="name"]').value.length > 0, 'form prefilled');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+ok(store.state.active.entries.length === liveBefore + 1, 'added to the session');
+ok(store.getRoutine(pickRid).entries.length === countBefore + 1, 'the routine was not touched');
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
 
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

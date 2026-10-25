@@ -4,9 +4,9 @@ import {
   state, findEntry, addSet, deleteSet, updateSet, toggleSetDone, toggleSkip,
   removeSessionEntry, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
   lastLogFor, addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
-  parseSetTargets,
+  parseSetTargets, exerciseLibrary, findInLibrary, getRoutine, saveRoutine, normalizeEntry,
 } from '../store.js';
-import { esc, fmtNum, fmtReps, fmtClock, fmtDur, num, parseDur, relDay } from '../util.js';
+import { esc, fmtNum, fmtReps, fmtClock, fmtDur, num, parseDur, relDay, normName } from '../util.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { unlockAudio } from '../timer.js';
 
@@ -398,6 +398,91 @@ export function readExerciseForm(v, modal = null) {
 }
 
 /* ------------------------------------------------------------------ */
+/* exercise picker: reuse an exercise, or define a new one            */
+/* ------------------------------------------------------------------ */
+
+/** dest is either the string 'session' or a routine id. */
+async function commitExercise(dest, patch) {
+  if (dest === 'session') {
+    await addSessionEntry(patch);
+    toast('Added to this session only');
+    return true;
+  }
+  const r = getRoutine(dest);
+  if (!r) { toast('Routine not found'); return false; }
+  r.entries.push(normalizeEntry(patch));
+  await saveRoutine(r);
+  return true;
+}
+
+function openExerciseForm(dest, prefill = {}, { title = 'Add exercise', okText = 'Add' } = {}) {
+  const modal = openModal({
+    title,
+    bodyHtml: exerciseFormHtml(prefill),
+    okText,
+    onSubmit: async (v, m) => {
+      const patch = readExerciseForm(v, m);
+      if (!patch.name) { toast('Name is required'); return false; }
+      return commitExercise(dest, patch);
+    },
+  });
+  wireExerciseForm(modal);
+}
+
+function libraryRows(lib, dest) {
+  if (!lib.length) return '<div class="empty">Nothing matches that search.</div>';
+  return lib.map((x) => {
+    const bits = [];
+    if (x.def && targetLine(x.def)) bits.push(targetLine(x.def));
+    if (x.routines) bits.push(`in ${x.routines} routine${x.routines === 1 ? '' : 's'}`);
+    bits.push(x.lastPerformed ? `last done ${relDay(x.lastPerformed)}` : 'never performed');
+    return `
+      <div class="sess-item" data-action="ex-pick" data-dest="${esc(dest)}" data-key="${esc(x.key)}"
+           role="button" tabindex="0">
+        <div class="body">
+          <div class="nm">${esc(x.name)}${x.def?.type === 'cardio' ? ' <span class="pill">cardio</span>' : ''}</div>
+          <div class="sub">${esc(bits.join(' · '))}</div>
+        </div>
+        <div class="dim">›</div>
+      </div>`;
+  }).join('');
+}
+
+/**
+ * Pick from every exercise already used anywhere, or define a new one.
+ * With an empty library there is nothing to choose, so go straight to the form.
+ */
+export function openExercisePicker(dest, { title = 'Add exercise' } = {}) {
+  const lib = exerciseLibrary();
+  if (!lib.length) { openExerciseForm(dest, {}, { title }); return; }
+
+  const modal = openModal({
+    title,
+    bodyHtml: `
+      <button type="button" class="btn block primary" data-action="ex-new" data-dest="${esc(dest)}">
+        + Create a new exercise</button>
+      <div class="divider"></div>
+      <label class="field"><span>Or reuse one of your ${lib.length} exercises</span>
+        <input id="exSearch" placeholder="Search by name…" autocomplete="off" spellcheck="false"
+               data-nofocus></label>
+      <div id="exLib">${libraryRows(lib, dest)}</div>
+      <p class="hint">Picking one copies its targets, rest and notes into the form so you can adjust
+        them. The superset letter is not copied — that belongs to the routine it came from.</p>`,
+    cancelText: 'Cancel',
+  });
+
+  const search = modal.querySelector('#exSearch');
+  const list = modal.querySelector('#exLib');
+  search.addEventListener('input', () => {
+    const q = normName(search.value);
+    list.innerHTML = libraryRows(
+      q ? lib.filter((x) => x.key.includes(q)) : lib,
+      dest,
+    );
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* actions                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -502,20 +587,16 @@ export const entryActions = {
     }
   },
 
-  'entry-add': async () => {
-    const modal = openModal({
-      title: 'Add exercise to this session',
-      bodyHtml: exerciseFormHtml({}),
-      okText: 'Add',
-      onSubmit: async (v, m) => {
-        const e = readExerciseForm(v, m);
-        if (!e.name) { toast('Name is required'); return false; }
-        await addSessionEntry(e);
-        toast('Added to this session only');
-        return true;
-      },
-    });
-    wireExerciseForm(modal);
+  'entry-add': async () => { openExercisePicker('session', { title: 'Add exercise to this session' }); },
+
+  'ex-new': ({ dest }) => {
+    openExerciseForm(dest, {}, { title: 'New exercise' });
+  },
+
+  'ex-pick': ({ dest, key }) => {
+    const hit = findInLibrary(key);
+    if (!hit || !hit.def) { toast('Could not load that exercise'); return; }
+    openExerciseForm(dest, hit.def, { title: hit.name });
   },
 };
 

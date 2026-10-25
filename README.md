@@ -187,6 +187,29 @@ routine), or a **full backup file** (see below). Aliases `exercises`/`title`/`de
 `targetWeight`/`setTargets` are understood too, so hand-written or LLM-generated files usually just
 work. Bad input is rejected with a specific message rather than partially imported.
 
+### The exercise library
+
+Every exercise you have ever put in a routine or logged in a session is reusable. Tapping **+ Add
+exercise** — in the routine editor or mid-workout — offers two paths: *Create a new exercise*, or
+pick from a searchable list of everything you already use. Each row shows the exercise's targets,
+how many routines contain it, and when you last performed it; the list is ordered by most recently
+performed.
+
+Picking one opens the normal form pre-filled with its type, set grid, rest target and notes, so you
+can adjust anything before adding it. Two deliberate choices there:
+
+- The **superset letter is not copied**, because a group letter describes one routine's arrangement
+  and carrying it over would create accidental supersets.
+- Only **targets** come across, never logged sets — the library holds intent, not history.
+
+Where an exercise appears in several routines, the definition comes from the most recently updated
+one, then the most recently created. An exercise you only ever added ad-hoc during a workout is
+still offered, defined from that session.
+
+The library needs no setup and nothing to maintain: it is derived from your data on the fly, so
+renaming or deleting routines is reflected immediately. The name field also keeps its free-text
+autocomplete, so you can still just type.
+
 ## Exporting
 
 | Where | Format | Contents |

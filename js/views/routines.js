@@ -4,7 +4,9 @@ import {
   normalizeEntry, lastSessionForRoutine, updateSettings, dataFingerprint,
 } from '../store.js';import { dbPut } from '../db.js';
 import { esc, fmtDate, fmtClock, fmtTimeOfDay, relDay, parseDur, APP_VERSION } from '../util.js';
-import { targetLine, exerciseFormHtml, readExerciseForm, wireExerciseForm } from './entry.js';
+import {
+  targetLine, exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker,
+} from './entry.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';
 import {
@@ -253,18 +255,7 @@ export const routineActions = {
   },
 
   'rentry-add': ({ id }) => {
-    const modal = openModal({
-      title: 'Add exercise',
-      bodyHtml: exerciseFormHtml({}),
-      okText: 'Add',
-      onSubmit: async (v, m) => {
-        const e = readExerciseForm(v, m);
-        if (!e.name) { toast('Name is required'); return false; }
-        await mutateRoutineEntries(id, (r) => r.entries.push(normalizeEntry(e)));
-        return true;
-      },
-    });
-    wireExerciseForm(modal);
+    openExercisePicker(id, { title: 'Add exercise to this routine' });
   },
 
   'rentry-edit': ({ id, entry }) => {
