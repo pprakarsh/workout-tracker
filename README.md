@@ -355,10 +355,14 @@ Two things to keep in mind:
 Optional. The app stays local-first — this only adds a copy in a private gist on your GitHub
 account, so a second device can load the same data and you have an off-device backup.
 
-**Set up on the first device:** Routines tab → *Set up Gist sync*. Paste a GitHub
-**fine-grained personal access token** (github.com → Settings → Developer settings → Personal
-access tokens) with the **Gists: Read and write** account permission and nothing else. Leave the
-gist id blank. Tap **Push ↑** — that creates a secret gist and uploads the backup.
+**Set up on the first device:** Routines tab → *Set up Gist sync*. Paste a GitHub token, leave the
+gist id blank, and tap **Push ↑** — that creates a secret gist and uploads the backup.
+
+For the token, use **Personal access tokens (classic)** with the single **`gist`** scope ticked and
+nothing else. That is the scope GitHub's gists API documents as required, so it is the path that
+reliably works. A *fine-grained* token with **Gists: Read and write** may also work, but GitHub's
+support for gists through fine-grained tokens has been inconsistent — if Push returns 403, switch to
+a classic token. Either way the token can only touch gists, not your repositories.
 
 **Set up a second device:** on the first device, *Settings* → **Copy pairing code**. That single
 string carries both the token and the gist id. On the new device, open *Set up Gist sync* and paste

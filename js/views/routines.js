@@ -483,11 +483,15 @@ export const routineActions = {
       bodyHtml: `
         <label class="field"><span>GitHub token, or a pairing code from another device</span>
           <input type="password" name="token" autocomplete="off" spellcheck="false"
-                 placeholder="github_pat_… or pairing code" value="${esc(sync.token || '')}"></label>
-        <p class="hint" style="margin-top:-4px">Create a <b>fine-grained personal access token</b> at
-          github.com → Settings → Developer settings → Personal access tokens, with the
-          <b>Gists: Read and write</b> account permission only. It is stored on this device and is
-          never included in an exported backup.</p>
+                 placeholder="ghp_… or github_pat_… or a pairing code" value="${esc(sync.token || '')}"></label>
+        <p class="hint" style="margin-top:-4px">Make one at github.com → Settings → Developer
+          settings → <b>Personal access tokens (classic)</b> → Generate new token, and tick the
+          single <b>gist</b> scope — nothing else. That scope is what the gists API documents as
+          required, so it is the path that reliably works.<br><br>
+          A <i>fine-grained</i> token with <b>Gists: Read and write</b> may also work, but GitHub's
+          support for gists via fine-grained tokens has been inconsistent; if Push returns 403, use
+          a classic token instead.<br><br>
+          The token is stored on this device only and is never included in an exported backup.</p>
         <label class="field"><span>Gist id (blank = create a new one on first push)</span>
           <input name="gistId" autocomplete="off" spellcheck="false" placeholder="created on first push"
                  value="${esc(sync.gistId || '')}"></label>
