@@ -58,5 +58,15 @@ ok(missing.length === 0, `every file is in the service worker list${missing.leng
 ok(/network-first|fetch\(req\)\s*$|fetch\(req\)\n/.test(sw) || sw.includes('fetch(req)'), 'service worker goes to the network before the cache');
 ok(/const CACHE = 'workout-v\d+'/.test(sw), 'cache name is versioned');
 
+console.log('\n== shell scripts must stay ASCII');
+const sh = readFileSync(`${APP}/deploy.sh`, 'utf8');
+const nonAscii = [...sh].map((c, i) => [c, i]).filter(([c]) => c.charCodeAt(0) > 126);
+// macOS ships bash 3.2, which folds the bytes of a non-ASCII character that
+// directly follows a variable into the variable name: "$BRANCH<ellipsis>"
+// became an unbound-variable error under `set -u`.
+ok(nonAscii.length === 0,
+  `deploy.sh is pure ASCII${nonAscii.length ? ` — found ${nonAscii.map(([c]) => JSON.stringify(c)).join(', ')}` : ''}`);
+ok(/^set -euo pipefail$/m.test(sh), 'deploy.sh fails fast on errors and unset variables');
+
 console.log(`\n${failures === 0 ? 'ALL STYLE CHECKS PASSED' : `${failures} STYLE CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
