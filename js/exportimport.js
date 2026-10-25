@@ -1,5 +1,8 @@
 // Export / import. Nothing leaves the device unless you tap one of these.
-import { state, normalizeRoutine, saveRoutine, persistSession, sessionVolume, emit, restoreAll, dataFingerprint } from './store.js';
+import {
+  state, normalizeRoutine, saveRoutine, persistSession, sessionVolume, emit, restoreAll,
+  dataFingerprint, setLabels,
+} from './store.js';
 import {
   download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, fmtReps, uid,
 } from './util.js';
@@ -62,6 +65,7 @@ export function routineObject(r) {
       }
       if (e.targetDistance !== null) { o.distance = e.targetDistance; o.distanceUnit = e.distanceUnit || 'km'; }
       if (e.targetDuration) o.duration = fmtClock(e.targetDuration);
+      if (e.repeat && e.repeat > 1) o.repeat = e.repeat;
       if (e.rest) o.rest = fmtClock(e.rest);
       if (e.notes) o.notes = e.notes;
       return o;
@@ -155,6 +159,8 @@ const CSV_COLS = [
   'distance', 'distance_unit', 'duration_seconds', 'pace',
   'avg_hr', 'max_hr', 'elevation_m', 'done', 'note',
   'session_rpe', 'bodyweight', 'session_notes',
+  // appended, never inserted: existing columns keep their positions
+  'rir', 'warmup', 'set_label', 'interval_rep', 'interval_of',
 ];
 
 export function csvRows(sessions) {
@@ -170,13 +176,16 @@ export function csvRows(sessions) {
           fmtNum(l.distance), l.distanceUnit || '', l.duration ?? '',
           pace(l.distance, l.duration, l.distanceUnit),
           fmtNum(l.avgHr), fmtNum(l.maxHr), fmtNum(l.elevation),
-          l.done ? 'yes' : 'no', l.note || '', ...tail].map(csvCell).join(','));
+          l.done ? 'yes' : 'no', l.note || '', ...tail,
+          '', '', '', e.repIndex ?? '', e.repTotal ?? ''].map(csvCell).join(','));
       } else {
+        const labels = setLabels(e.sets || []);
         (e.sets || []).forEach((x, i) => {
           rows.push([...base, e.name, 'lift', e.group || '',
             i + 1, fmtNum(x.weight), x.unit || '', fmtNum(x.reps), fmtNum(x.rpe), x.rest ?? '',
             '', '', '', '', '', '', '',
-            x.done ? 'yes' : 'no', x.note || '', ...tail].map(csvCell).join(','));
+            x.done ? 'yes' : 'no', x.note || '', ...tail,
+            fmtNum(x.rir), x.warmup ? 'yes' : 'no', labels[i], '', ''].map(csvCell).join(','));
         });
       }
     });
@@ -208,7 +217,7 @@ export function sessionMarkdown(s) {
 
   s.entries.forEach((e, i) => {
     L.push('');
-    L.push(`## ${i + 1}. ${e.name}${e.group ? ` _(superset ${e.group})_` : ''}${e.skipped ? ' — SKIPPED' : ''}`);
+    L.push(`## ${i + 1}. ${e.name}${e.repTotal ? ` (${e.repIndex}/${e.repTotal})` : ''}${e.group ? ` _(superset ${e.group})_` : ''}${e.skipped ? ' — SKIPPED' : ''}`);
     const tl = targetLine(e);
     if (tl) L.push(`Target: ${tl}`);
     if (e.notes) { L.push(''); L.push(e.notes.split('\n').map((line) => `> ${line}`).join('\n')); }
@@ -217,11 +226,16 @@ export function sessionMarkdown(s) {
     if (e.type === 'lift') {
       const sets = e.sets || [];
       if (!sets.length) { L.push('_nothing logged_'); return; }
-      L.push('| Set | Weight | Reps | RPE | Rest | Done |');
-      L.push('|---:|---:|---:|---:|---:|:--:|');
+      const anyRir = sets.some((x) => x.rir !== null && x.rir !== undefined);
+      const labels = setLabels(sets);
+      L.push(`| Set | Weight | Reps | RPE |${anyRir ? ' RIR |' : ''} Rest | Done |`);
+      L.push(`|---:|---:|---:|---:|${anyRir ? '---:|' : ''}---:|:--:|`);
       sets.forEach((x, n) => {
-        L.push(`| ${n + 1} | ${x.weight !== null ? `${fmtNum(x.weight)} ${x.unit || s.unit}` : '—'} | ${x.reps !== null ? fmtNum(x.reps) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} | ${x.rest ? fmtClock(x.rest) : 'no rest logged'} | ${x.done ? '✓' : ''} |`);
+        const rir = anyRir ? ` ${x.rir !== null && x.rir !== undefined ? fmtNum(x.rir) : '—'} |` : '';
+        L.push(`| ${labels[n]} | ${x.weight !== null ? `${fmtNum(x.weight)} ${x.unit || s.unit}` : '—'} | ${x.reps !== null ? fmtNum(x.reps) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} |${rir} ${x.rest ? fmtClock(x.rest) : 'no rest logged'} | ${x.done ? '✓' : ''} |`);
       });
+      if (sets.some((x) => x.warmup)) L.push('');
+      if (sets.some((x) => x.warmup)) L.push('_W = warmup set; excluded from volume._');
     } else {
       const l = e.log || {};
       const rows = [

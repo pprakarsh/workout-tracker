@@ -151,17 +151,19 @@ entry = {
   targetSets, setTargets,                        // setTargets = per-set plan or null
   repsMin, repsMax, weight,                      // uniform target; null when setTargets exists
   targetDistance, distanceUnit, targetDuration,  // cardio
+  repeat,                                        // cardio intervals; expanded at session start
   rest, notes, unit,
 }
 
 session = {
   id, routineId, routineName, routineDescription,
   startedAt, finishedAt, updatedAt, unit,
-  entries: [ { ...entry, sourceId, sets: [set]|null, log: cardioLog|null, skipped } ],
+  entries: [ { ...entry, sourceId, sets: [set]|null, log: cardioLog|null, skipped,
+               repIndex, repTotal } ],          // repIndex/repTotal on expanded intervals
   currentIdx, rpe, bodyweight, notes, modified,
 }
 
-set       = { id, weight, unit, reps, rpe, note, done, completedAt, rest }
+set       = { id, weight, unit, reps, rpe, rir, warmup, note, done, completedAt, rest }
 cardioLog = { distance, distanceUnit, duration, avgHr, maxHr, elevation, rpe, note, done, completedAt }
 ```
 
@@ -175,6 +177,16 @@ Invariants worth knowing:
   routine" can keep routine entry ids stable.
 - `rest` on a set is the *actual* rest taken, recorded when you stop the timer. `null` means not
   timed, and is rendered as "no rest logged" — never back-filled from the target.
+- **`warmup` sets are excluded from everything that counts**: `entryStatus` compares `targetSets`
+  against working sets only, `sessionVolume` skips them, `plannedSet` is indexed by *working* set
+  number so a warmup does not shift the plan, and `setLabels` numbers them `W1, W2` separately.
+  Anything added later that aggregates sets (PRs, charts) must use `workingSets(e)`.
+- `rpe` and `rir` are both stored and neither is derived from the other, even though
+  RIR ≈ 10 − RPE. `settings.effortScale` decides which columns are shown, not which are stored.
+- A cardio entry holds **one** effort, so `repeat` is expanded by `expandEntry()` at session start
+  into that many entries sharing one group label, carrying `repIndex`/`repTotal` for display.
+  `saveSessionBackToRoutine` collapses them again, or a 6×400m routine would grow to six lines
+  every time it was saved.
 
 ### Normalisation is the import boundary
 
@@ -210,6 +222,19 @@ Now: tap ⏱       → marks the set done, startRest({target: entry.rest ?? sett
 restBar: Stop     → stopRest() writes the elapsed seconds onto that set
 Session: Finish   → finishSession() stamps finishedAt, clears active + timer, autoPushIfEnabled()
 ```
+
+### The +/- stepper — the one deliberate exception to the render loop
+
+Tapping a stepper button must not re-render, or the keyboard closes and the caret is lost. So the
+strip in `app.js`:
+
+1. reveals itself on `focusin` of a weight/reps field and remembers that element;
+2. cancels `pointerdown` so the focused input keeps focus;
+3. writes the new value straight into `input.value` and dispatches an `input` event, which runs the
+   normal silent-save path — no `emit()`, no re-render.
+
+The event is constructed from `input.ownerDocument.defaultView.Event` rather than the ambient
+global, so it works whichever realm the element belongs to (and is therefore testable under jsdom).
 
 ### The rest timer
 

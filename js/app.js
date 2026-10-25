@@ -117,6 +117,58 @@ document.addEventListener('input', async (ev) => {
   return undefined;
 });
 
+/* ------------------------------------------------------------------ */
+/* the +/- stepper strip                                              */
+/* ------------------------------------------------------------------ */
+
+// Which numeric field the stepper should act on: whatever was focused last.
+let stepTarget = null;
+
+function showStepBarFor(input) {
+  const card = input.closest('.card[data-entry]');
+  document.querySelectorAll('.stepbar').forEach((b) => { b.hidden = b.closest('.card') !== card; });
+}
+
+document.addEventListener('focusin', (ev) => {
+  const t = ev.target;
+  if (t.dataset?.f === 'weight' || t.dataset?.f === 'reps') {
+    stepTarget = t;
+    showStepBarFor(t);
+  }
+});
+
+// Cancel pointerdown so the focused input keeps focus (and the keyboard stays up).
+document.addEventListener('pointerdown', (ev) => {
+  if (ev.target.closest?.('.stepbar button')) ev.preventDefault();
+});
+
+document.addEventListener('click', (ev) => {
+  const btn = ev.target.closest?.('.stepbar button');
+  if (!btn) return;
+  ev.preventDefault();
+  const field = btn.dataset.step;
+  // act on the focused field when it matches, else the first matching field in this card
+  let input = stepTarget && stepTarget.isConnected && stepTarget.dataset.f === field ? stepTarget : null;
+  if (!input) {
+    const card = btn.closest('.card[data-entry]');
+    const rows = [...(card?.querySelectorAll(`.set-row input[data-f="${field}"]`) || [])];
+    input = rows.find((i) => !i.value) || rows[rows.length - 1] || null;
+  }
+  if (!input) { toast('Add a set first'); return; }
+
+  const step = Number(btn.dataset.delta);
+  const current = Number(String(input.value).replace(',', '.'));
+  const base = Number.isFinite(current) ? current : 0;
+  const next = Math.round((base + step) * 1000) / 1000;
+  input.value = next > 0 ? String(next) : '';
+  // Reuse the normal silent-save path; no re-render, so focus and caret survive.
+  // Build the event from the element's own window rather than the ambient global,
+  // so this works regardless of which realm the element belongs to.
+  const Ev = input.ownerDocument?.defaultView?.Event || Event;
+  input.dispatchEvent(new Ev('input', { bubbles: true }));
+  stepTarget = input;
+}, true);
+
 // Re-render on blur so derived values (pace, volume, status pills) catch up — but not
 // while you are moving between fields, which would destroy the focused input.
 document.addEventListener('blur', (ev) => {

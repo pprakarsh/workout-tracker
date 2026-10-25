@@ -196,6 +196,8 @@ focus-stealing blur, the clock-skew comparison, logged sets read as targets).
 | Changed | Also update |
 |---|---|
 | A field on an entry | `normalizeEntry`, the exercise form, `routineObject`, `SAMPLE`/`SAMPLE_RUN`, `AI_PROMPT`, README field table |
+| A field on a set | `blankSet`, the set row, `effortTag`/`logSummary`, the Markdown table, the CSV columns (append only), ARCHITECTURE data model |
+| Anything that aggregates sets | use `workingSets(e)` so warmups stay excluded |
 | The CSV columns | README export table — the column order is a published contract someone's spreadsheet depends on |
 | Anything about `group`, units or durations | `AI_PROMPT`, the in-app *Import format* card, README |
 | A stored shape | `restoreAll`, `backupObject`, and check an old backup still imports |
@@ -211,7 +213,8 @@ Honest list, with the trigger for paying it off rather than a vague "someday":
 |---|---|
 | Sync is a whole-file blob, so it cannot merge two devices | When you start logging on two devices in the same week. Needs per-record push/pull plus deletion tombstones |
 | No schema migration framework; `normalizeEntry` absorbs everything | When a field must *change meaning* rather than be added |
-| Volume and any future PR logic count warmup sets | Before adding PR detection, or it will be wrong from day one |
+| ~~Volume counts warmup sets~~ | **Done.** `workingSets(e)` is the accessor; any new aggregate must use it |
+| Cardio intervals are expanded entries, not a first-class repeat log | If you ever want per-rep splits inside one effort |
 | `store.js` and `routines.js` are the largest modules | When either passes ~900 lines |
 | No charts, so years of logs stay a list | When you have enough history to want a trend |
 | Exercises have no muscle-group tags | When you want weekly volume per muscle |

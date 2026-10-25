@@ -3,7 +3,9 @@ import {
   state, getRoutine, saveRoutine, createRoutine, deleteRoutine, duplicateRoutine,
   normalizeEntry, lastSessionForRoutine, updateSettings, dataFingerprint,
 } from '../store.js';import { dbPut } from '../db.js';
-import { esc, fmtDate, fmtClock, fmtTimeOfDay, relDay, parseDur, APP_VERSION } from '../util.js';
+import {
+  esc, fmtDate, fmtClock, fmtTimeOfDay, fmtNum, relDay, parseDur, APP_VERSION,
+} from '../util.js';
 import {
   exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker,
 } from './entry.js';
@@ -163,6 +165,8 @@ export function render() {
       <div class="kv"><span>Distance unit</span><span>${esc(state.settings.distanceUnit)}</span></div>
       <div class="kv"><span>Default rest</span><span>${esc(fmtClock(state.settings.defaultRest))}</span></div>
       <div class="kv"><span>Beep at rest target</span><span>${state.settings.beep ? 'on' : 'off'}</span></div>
+      <div class="kv"><span>Weight step</span><span>± ${esc(fmtNum(state.settings.weightStep))}</span></div>
+      <div class="kv"><span>Effort per set</span><span>${esc(state.settings.effortScale.toUpperCase())}</span></div>
       <button type="button" class="btn block ghost" style="margin-top:10px" data-action="settings-open">Change settings</button>
     </div>
 
@@ -250,8 +254,8 @@ export const SAMPLE = `{
 
 export const SAMPLE_RUN = `{
   "//": "Running / mixed day. Shows every field the app understands.",
-  "//2": "Each cardio entry logs ONE effort, so for intervals add one entry per",
-  "//3": "rep and give them the same group label to keep them as one block.",
+  "//2": "One cardio entry logs ONE effort. Use the repeat field for intervals and",
+  "//3": "the app expands it into that many efforts, grouped, logged and rested separately.",
   "name": "Run with Upper Body",
   "description": "Zone 2 base, 2 x 400m, then pressing and pulling. ~60 min.",
   "entries": [
@@ -259,11 +263,9 @@ export const SAMPLE_RUN = `{
       "distance": 1.2, "distanceUnit": "km", "duration": "8:00", "rest": "1:30",
       "notes": "Easy, nose breathing only" },
 
-    { "type": "cardio", "name": "400m Repeat", "group": "I",
+    { "type": "cardio", "name": "400m Repeat", "repeat": 6, "group": "I",
       "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30",
       "notes": ["Target 1:35", "Walk the rest, do not sit down"] },
-    { "type": "cardio", "name": "400m Repeat", "group": "I",
-      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30" },
 
     { "type": "cardio", "name": "Cooldown Jog",
       "distance": 1.5, "distanceUnit": "km", "duration": "11:00" },
@@ -322,6 +324,8 @@ Every entry:
   "group"  superset / circuit label. See GROUP below.
   "notes"  string, OR an array of strings for multiple lines. Use it for warmup
            sets, tempo prescriptions, cues, setup, pace or heart-rate instructions.
+           Warmup sets are NOT separate entries and have no field: I mark a logged
+           set as a warmup in the app. Describe them in "notes" instead.
 
 LIFTING entries ("type":"lift", or omit "type") - pick ONE of two shapes:
 
@@ -345,9 +349,11 @@ CARDIO entries ("type":"cardio"):
   "duration"      target time: "18:00" | "1:05:00" | "20m" | "90s". A bare number
                   with no unit means MINUTES here.
   "rest"          rest after this effort - use it between intervals
-  IMPORTANT: one cardio entry is ONE effort that I log once. For interval work, emit
-  one entry PER REPETITION and give them all the same "group" label. Do not try to
-  express intervals with "sets" - cardio entries have no sets.
+  "repeat"        number of intervals, e.g. 6 for 6 x 400m. ONE entry, not six.
+  IMPORTANT: one cardio entry logs ONE effort, so express intervals with "repeat"
+  and the app expands them into that many efforts, grouped together, each logged
+  and rested separately. Do NOT write one entry per repetition, and do NOT use
+  "sets" on a cardio entry - cardio entries have no sets.
   There are NO target fields for pace, heart rate, elevation or perceived effort; I
   record those while logging. Put pace or HR targets in "notes" instead.
 
@@ -363,6 +369,10 @@ GROUP - supersets and circuits:
     the members of a superset next to each other in the array.
   - Omit "group" entirely for a normal standalone exercise.
 
+NOT IN THE SCHEMA - do not invent fields for these:
+  Warmup sets, RPE and RIR (reps in reserve) are recorded while logging, not
+  targeted in a routine. Describe intended warmups and effort in "notes".
+
 ================ WORKED EXAMPLE 1: running + upper body ================
 ${SAMPLE_RUN}
 
@@ -374,7 +384,7 @@ ${SAMPLE}
 - Every entry has a "name".
 - Lifting entries use shape A or shape B, never both.
 - Cardio entries use distance/duration, never "sets".
-- Interval reps are separate entries sharing one "group" label, and are adjacent.
+- Intervals use "repeat" on a single entry, never one entry per repetition.
 - Every member of a group has its own "rest".
 - All loads and distances are in the units I specified.
 - Durations and rests use an explicit form such as "2:30", "90s" or "20m".
@@ -661,6 +671,19 @@ export const routineActions = {
             <option value="1" ${s.beep ? 'selected' : ''}>On</option>
             <option value="0" ${!s.beep ? 'selected' : ''}>Off</option>
           </select></label>
+        <div class="grid2">
+          <label class="field"><span>Weight step for the +/- buttons</span>
+            <input name="weightStep" inputmode="decimal" value="${esc(fmtNum(s.weightStep))}"></label>
+          <label class="field"><span>Effort logged per set</span>
+            <select name="effortScale">
+              <option value="rpe" ${s.effortScale === 'rpe' ? 'selected' : ''}>RPE only</option>
+              <option value="rir" ${s.effortScale === 'rir' ? 'selected' : ''}>RIR only</option>
+              <option value="both" ${s.effortScale === 'both' ? 'selected' : ''}>Both</option>
+            </select></label>
+        </div>
+        <p class="hint">RPE is how hard the set felt (1-10). RIR is how many reps you had left in
+          reserve. They are two scales for the same thing and are stored separately — nothing is
+          converted between them.</p>
         <p class="hint">The unit is stored on each set as you log it, so switching later
           never rewrites your history.</p>`,
       onSubmit: async (v) => {
@@ -668,6 +691,8 @@ export const routineActions = {
           unit: v.unit, distanceUnit: v.distanceUnit,
           defaultRest: parseDur(v.defaultRest) ?? 120,
           beep: v.beep === '1',
+          weightStep: Math.abs(Number(v.weightStep)) || 2.5,
+          effortScale: ['rpe', 'rir', 'both'].includes(v.effortScale) ? v.effortScale : 'rpe',
         });
         toast('Settings saved');
         return true;

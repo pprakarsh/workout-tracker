@@ -473,22 +473,22 @@ const run = state.routines.find((x) => x.name === 'Run with Upper Body');
 ok(!!run, 'named correctly');
 ok(run.description.includes('400m'), 'description imported');
 ok(!('//' in run) && !('//2' in run), 'the // note keys were dropped, not turned into data');
-ok(run.entries.length === 6, `6 entries (${run.entries.length})`);
+ok(run.entries.length === 5, `5 entries (${run.entries.length})`);
 
-const [warm, i1, i2, cool, inc, chin] = run.entries;
+const [warm, interval, cool, inc, chin] = run.entries;
 ok(warm.type === 'cardio' && warm.targetDistance === 1.2 && warm.distanceUnit === 'km',
   'cardio distance + unit imported');
 ok(warm.targetDuration === 480, `cardio duration "8:00" -> 480s (${warm.targetDuration})`);
 ok(warm.rest === 90, `rest works on a cardio entry too ("1:30" -> ${warm.rest}s)`);
 ok(warm.notes === 'Easy, nose breathing only', 'cardio notes imported');
 ok(warm.setTargets === null && warm.targetSets === null, 'no set targets on cardio');
+ok(warm.repeat === null, 'an entry without repeat has none');
 
-ok(i1.group === 'I' && i2.group === 'I', 'the two intervals share a group label');
-ok(store.blockAt(run.entries, 1).length === 2, 'and therefore form one block');
-ok(store.blockAt(run.entries, 0).length === 1, 'the warmup stays on its own');
-ok(i1.notes.split('\n').length === 2, 'cardio notes accept a list of lines');
-ok(i1.targetDuration === 95, `"1:35" -> 95s (${i1.targetDuration})`);
-ok(i1.targetDistance === 0.4, 'fractional distance kept');
+ok(interval.repeat === 6, `intervals expressed as repeat: 6 on ONE entry (${interval.repeat})`);
+ok(interval.group === 'I', 'with its own group label');
+ok(interval.targetDuration === 95 && interval.targetDistance === 0.4 && interval.rest === 150,
+  'carrying per-rep distance, duration and rest');
+ok(interval.notes.split('\n').length === 2, 'cardio notes accept a list of lines');
 ok(cool.rest === null, 'an entry with no rest target has none — not a default');
 
 ok(inc.setTargets?.length === 3, 'per-set plan on the lifting entry');
@@ -497,7 +497,50 @@ ok(inc.rest === 150 && inc.group === 'B', 'rest and group on the lift');
 ok(inc.notes.split('\n').length === 2, 'notes list joined into lines');
 ok(chin.setTargets.length === 3 && chin.setTargets[0].weight === null && chin.setTargets[0].repsMin === 8,
   'bodyweight shorthand "x8" imported with no weight');
-ok(store.blockAt(run.entries, 4).length === 2, 'the two lifts form a second block');
+
+section('intervals expand into one effort per repetition at session start');
+const ivs = await store.startSession(run.id);
+ok(ivs.entries.length === 10, `5 routine entries became 10 session entries (${ivs.entries.length})`);
+const reps = ivs.entries.filter((e) => e.name === '400m Repeat');
+ok(reps.length === 6, `6 separate efforts to log (${reps.length})`);
+ok(reps.every((e) => e.group === 'I'), 'all sharing the group label');
+ok(reps.map((e) => e.repIndex).join(',') === '1,2,3,4,5,6', 'numbered 1..6 for display');
+ok(reps.every((e) => e.repTotal === 6), 'each knows the total');
+ok(reps.every((e) => e.log && e.sets === null), 'each has its own cardio log');
+ok(store.blockAt(ivs.entries, ivs.entries.indexOf(reps[0])).length === 6,
+  'and they form a single block, so Next skips the whole set of intervals');
+ok(reps.every((e) => e.rest === 150), 'each rep carries the rest target');
+await store.updateLog(reps[0].id, { distance: 0.4, duration: 96, done: true });
+await store.updateLog(reps[1].id, { distance: 0.4, duration: 98, done: true });
+ok(store.entryStatus(reps[0]) === 'done' && store.entryStatus(reps[2]) === 'pending',
+  'reps are completed independently');
+
+section('saving back collapses the expanded intervals again');
+await store.saveSessionBackToRoutine();
+const runAfter = store.getRoutine(run.id);
+ok(runAfter.entries.length === 5, `routine stays 5 entries, not 10 (${runAfter.entries.length})`);
+const ivAfter = runAfter.entries.find((e) => e.name === '400m Repeat');
+ok(ivAfter.repeat === 6, `repeat preserved as ${ivAfter.repeat}`);
+await store.discardSession();
+
+section('auto group labels when intervals have none');
+const noGroup = await store.createRoutine({
+  name: 'Bare Intervals',
+  entries: [
+    { type: 'cardio', name: 'Hill Sprint', repeat: 3, duration: '0:30', rest: '2:00' },
+    { type: 'cardio', name: 'Flat Sprint', repeat: 2, duration: '0:20', rest: '1:30' },
+  ],
+});
+const bg = await store.startSession(noGroup.id);
+ok(bg.entries.length === 5, `3 + 2 efforts (${bg.entries.length})`);
+const g1 = [...new Set(bg.entries.filter((e) => e.name === 'Hill Sprint').map((e) => e.group))];
+const g2 = [...new Set(bg.entries.filter((e) => e.name === 'Flat Sprint').map((e) => e.group))];
+ok(g1.length === 1 && g2.length === 1, 'each interval set got one label');
+ok(g1[0] !== g2[0], `and the two sets got different labels (${g1[0]} vs ${g2[0]})`);
+ok(store.blockAt(bg.entries, 0).length === 3 && store.blockAt(bg.entries, 3).length === 2,
+  'so they form two separate blocks of 3 and 2');
+await store.discardSession();
+await store.deleteRoutine(noGroup.id);
 
 section('the running sample survives an export/import round trip');
 const runJson = JSON.stringify(xi.routineObject(run));
@@ -529,8 +572,10 @@ for (const [label, needle] of [
   ['that a group does not share rest', 'does NOT share one rest'],
   ['the two set-target shapes', 'A DIFFERENT target per set'],
   ['the bodyweight shorthand', '"x8"'],
-  ['that one cardio entry is one effort', 'one cardio entry is ONE effort'],
-  ['that intervals are one entry per rep', 'one entry PER REPETITION'],
+  ['that one cardio entry is one effort', 'one cardio entry logs ONE effort'],
+  ['that intervals use repeat', 'express intervals with "repeat"'],
+  ['that warmups and RIR are logged, not targeted', 'NOT IN THE SCHEMA'],
+  ['the repeat field', '"repeat"'],
   ['that pace and HR are not targetable', 'NO target fields for pace'],
   ['that a bare duration means minutes', 'means MINUTES here'],
   ['that // keys are ignored', 'starting with "//" is ignored'],
@@ -607,12 +652,12 @@ try { ex1 = JSON.parse(ex1Raw.trim()); } catch (e) { /* reported below */ }
 try { ex2 = JSON.parse(ex2Raw.trim()); } catch (e) { /* reported below */ }
 ok(ex1 !== null, 'example 1 inside the prompt is parseable JSON on its own');
 ok(ex2 !== null, 'example 2 inside the prompt is parseable JSON on its own');
-ok(ex1?.name === 'Run with Upper Body' && ex1?.entries?.length === 6,
+ok(ex1?.name === 'Run with Upper Body' && ex1?.entries?.length === 5,
   `example 1 is the full running routine (${ex1?.entries?.length} entries)`);
 ok(ex2?.name === 'Squat day with Push Movements' && ex2?.entries?.length === 5,
   `example 2 is the full lifting routine (${ex2?.entries?.length} entries)`);
-ok(ex1.entries.some((e) => e.type === 'cardio' && e.rest) && ex1.entries.some((e) => e.group === 'I'),
-  'example 1 still carries cardio rest and interval grouping after being embedded');
+ok(ex1.entries.some((e) => e.type === 'cardio' && e.rest) && ex1.entries.some((e) => e.repeat === 6),
+  'example 1 still carries cardio rest and the interval repeat after being embedded');
 ok(ex2.entries.some((e) => Array.isArray(e.sets)) && ex2.entries.some((e) => Array.isArray(e.notes)),
   'example 2 still carries a per-set plan and multi-line notes');
 
@@ -625,6 +670,107 @@ for (const nm of ['Run with Upper Body', 'Squat day with Push Movements']) {
   const r = state.routines.filter((x) => x.name === nm).pop();
   await store.deleteRoutine(r.id);
 }
+
+section('warmup sets count towards nothing');
+const wR = await store.createRoutine({
+  name: 'Warmup Check', entries: [{ name: 'Squat', sets: 3, reps: 5, weight: 100, rest: '2:00' }],
+});
+const wS = await store.startSession(wR.id);
+const wE = wS.entries[0];
+const w1 = await store.addSet(wE.id, { warmup: true });
+const w2 = await store.addSet(wE.id, { warmup: true });
+ok(w1.warmup === true && w2.warmup === true, 'warmup sets created as warmups');
+await store.updateSet(wE.id, w1.id, { weight: 60, reps: 5, done: true });
+await store.updateSet(wE.id, w2.id, { weight: 85, reps: 3, done: true });
+ok(store.entryStatus(wE) === 'pending', 'two completed warmups leave the exercise pending');
+ok(store.sessionVolume(wS) === 0, `warmups contribute no volume (${store.sessionVolume(wS)})`);
+
+const k1 = await store.addSet(wE.id);
+ok(k1.weight === 100 && k1.reps === 5,
+  `the first working set still prefills from the target, not the warmup (${k1.weight}x${k1.reps})`);
+await store.updateSet(wE.id, k1.id, { done: true });
+ok(store.entryStatus(wE) === 'partial', 'one working set of three = partial');
+ok(store.sessionVolume(wS) === 500, `volume counts working sets only (${store.sessionVolume(wS)})`);
+const k2 = await store.addSet(wE.id);
+const k3 = await store.addSet(wE.id);
+await store.updateSet(wE.id, k2.id, { done: true });
+await store.updateSet(wE.id, k3.id, { done: true });
+ok(store.entryStatus(wE) === 'done', 'three working sets completes a 3-set target despite the warmups');
+ok(store.workingSets(wE).length === 3 && wE.sets.length === 5, '3 working sets of 5 logged');
+
+section('set labels number warmups separately');
+ok(store.setLabels(wE.sets).join(',') === 'W1,W2,1,2,3',
+  `labels read W1,W2,1,2,3 (${store.setLabels(wE.sets).join(',')})`);
+await store.toggleWarmup(wE.id, w2.id);
+ok(store.setLabels(wE.sets).join(',') === 'W1,1,2,3,4',
+  `promoting a warmup renumbers (${store.setLabels(wE.sets).join(',')})`);
+ok(store.entryStatus(wE) === 'done', 'and it now counts towards the target');
+await store.toggleWarmup(wE.id, w2.id);
+
+section('RIR is logged alongside RPE, never derived from it');
+await store.updateSet(wE.id, k1.id, { rpe: 8, rir: 2 });
+const both = store.getSession(wS.id).entries[0].sets.find((x) => x.id === k1.id);
+ok(both.rpe === 8 && both.rir === 2, 'both scales stored independently');
+await store.updateSet(wE.id, k2.id, { rir: 1 });
+const rirOnly = wE.sets.find((x) => x.id === k2.id);
+ok(rirOnly.rir === 1 && rirOnly.rpe === null, 'RIR alone is fine; nothing back-fills RPE');
+ok(fmt.effortTag(both) === ' @8 r2', `effort tag shows both (${fmt.effortTag(both)})`);
+ok(fmt.effortTag(rirOnly) === ' r1', `RIR alone renders as r1 (${fmt.effortTag(rirOnly)})`);
+ok(fmt.effortTag({ rpe: 9, rir: null }) === ' @9', 'RPE alone renders as @9');
+ok(fmt.effortTag({ rpe: null, rir: null }) === '', 'neither renders as nothing');
+ok(fmt.effortTag({ rpe: 0, rir: 0 }) === ' @0 r0', 'zero is a value, not a blank');
+
+section('warmups and RIR in summaries and exports');
+const sum = fmt.logSummary(wE);
+ok(sum.startsWith('W 60'), `warmups marked W in the summary (${sum.slice(0, 20)})`);
+ok(fmt.logSummary(wE, { workingOnly: true }).includes('W') === false,
+  'the "last time" reference hides warmups');
+ok(fmt.logSummary(wE, { workingOnly: true }).includes('@8 r2'), 'and shows both effort values');
+ok(fmt.restLine(wE).startsWith('Rest: no rest logged'), 'rest line unaffected');
+
+await store.updateSessionMeta({ rpe: 8 });
+const wMd = xi.sessionMarkdown(wS);
+ok(/\| Set \| Weight \| Reps \| RPE \| RIR \| Rest \| Done \|/.test(wMd),
+  'markdown gains a RIR column when any set has one');
+ok(/\| W1 \|/.test(wMd) && /\| W2 \|/.test(wMd), 'markdown labels warmups W1/W2');
+ok(/_W = warmup set; excluded from volume\._/.test(wMd), 'and explains the marker');
+
+const wCsv = xi.csvRows([wS]);
+const header = wCsv.split('\n')[0].split(',');
+// the column ORDER is a published contract: new columns may only be appended
+ok(header[0] === 'date' && header[8] === 'weight' && header[11] === 'rpe'
+  && header[24] === 'session_notes',
+  'existing CSV column positions unchanged');
+ok(header.slice(25).join(',') === 'rir,warmup,set_label,interval_rep,interval_of',
+  `new CSV columns appended after the old ones (${header.slice(25).join(',')})`);
+const rows = wCsv.trim().split('\n').slice(1).map((l) => l.split(','));
+const warmCol = header.indexOf('warmup');
+ok(rows.map((r) => r[warmCol]).join(',') === 'yes,yes,no,no,no',
+  `CSV marks which rows are warmups (${rows.map((r) => r[warmCol]).join(',')})`);
+ok(rows[2][header.indexOf('rir')] === '2', 'CSV carries RIR');
+await store.finishSession();
+await store.deleteSession(wS.id);
+await store.deleteRoutine(wR.id);
+
+section('planned per-set targets index by working set, not row');
+const pw = await store.createRoutine({
+  name: 'Plan + Warmup',
+  entries: [{ name: 'Press', sets: [{ weight: 40, reps: 10 }, { weight: 45, reps: 8 }] }],
+});
+const pwS = await store.startSession(pw.id);
+const pwE = pwS.entries[0];
+await store.addSet(pwE.id, { warmup: true });
+const pk1 = await store.addSet(pwE.id);
+const pk2 = await store.addSet(pwE.id);
+ok(pk1.weight === 40 && pk1.reps === 10, `working set 1 took plan row 1 (${pk1.weight}x${pk1.reps})`);
+ok(pk2.weight === 45 && pk2.reps === 8,
+  `working set 2 took plan row 2, unshifted by the warmup (${pk2.weight}x${pk2.reps})`);
+await store.addSet(pwE.id, { warmup: true });
+const filled = await store.fillPlannedSets(pwE.id);
+ok(filled === 0, 'fillPlannedSets counts working sets, so the plan is already complete');
+await store.discardSession();
+await store.deleteRoutine(pw.id);
+
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

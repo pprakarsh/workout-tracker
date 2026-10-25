@@ -106,6 +106,27 @@ One limitation to be aware of: a PWA on iOS cannot reliably play a sound or fire
 while fully backgrounded, so the target beep only plays if the app is open. The clock itself is
 always correct when you come back. (Android and desktop also vibrate; iOS Safari ignores vibration.)
 
+### Warmup sets
+
+Tap a set's number to toggle it between a warmup and a working set, or use **+ Warmup** to add one
+directly. Warmups are labelled `W1`, `W2` and styled with a dashed outline, and they are excluded
+from everything that counts: the target set count, session volume, and the "last time" reference
+line. Working sets keep their own numbering, and a per-set plan is indexed by working set, so adding
+a warmup never shifts your planned loads.
+
+### Effort: RPE, RIR, or both
+
+Settings → *Effort logged per set* chooses which columns appear: **RPE** (how hard it felt, 1–10),
+**RIR** (reps left in reserve), or both. Both are stored independently and nothing is converted
+between them, even though RIR ≈ 10 − RPE — a value you typed is never overwritten by one the app
+inferred. Summaries render them as `@8` and `r2`.
+
+### Faster number entry
+
+Focus a weight or reps field and a **− / +** strip appears under the exercise. The weight step is
+configurable in Settings (default 2.5); reps step by 1. Tapping a button keeps the field focused and
+the keyboard up, so you can nudge and keep going without a re-render.
+
 ### Progression
 
 The app shows you what you did last time as a reference line and nothing more. Sets prefill from
@@ -154,6 +175,7 @@ on each exercise.
 | `weight` | lift | Target load, in your configured unit. Ignored when `sets` is a per-set plan. |
 | `distance`, `distanceUnit` | cardio | `km` or `mi`. |
 | `duration` | cardio | `"18:00"`, `"1:05:00"`, `"20m"`, `"90s"`. A bare number means **minutes**. |
+| `repeat` | cardio | Number of intervals, e.g. `6` for 6×400m. One entry, not six — see below. |
 | `rest` | all | Rest target between sets, and between cardio efforts. Same formats, but a bare number means **seconds**. |
 | `group` | all | Superset / circuit label — see below. |
 | `notes` | all | Warmup sets, tempo, cues, setup. A string, or a **list of lines** for multi-line notes. |
@@ -190,8 +212,10 @@ pace, average and max heart rate, elevation and perceived effort have no target 
 those while logging. Put a pace or heart-rate instruction in `notes` if you want it on screen during
 the run.
 
-Each cardio entry logs **one** effort, so for intervals add one entry per repetition and give them
-the same `group` label to keep them together. The running sample below does exactly that.
+Each cardio entry logs **one** effort, so intervals use `repeat`: set `"repeat": 6` on a single
+400m entry and starting a workout creates six efforts, grouped together, each logged and rested
+separately. Saving a session back to its routine collapses them again. Warmup sets and RIR are
+recorded while logging and have no routine fields — describe intended warmups in `notes`.
 
 ### A complete running / mixed example
 

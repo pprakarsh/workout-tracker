@@ -498,5 +498,97 @@ ok(document.querySelector('textarea[readonly]') === null, 'the temporary textare
 Object.defineProperty(dom.window.navigator, 'clipboard', { value: realClipboard, configurable: true });
 delete document.execCommand;
 
+section('warmup toggle, RIR column and the +/- stepper');
+await click('#tabBar .tab[data-tab="now"]');
+const stepR = await xi.importFromText(JSON.stringify({
+  name: 'Stepper Check', entries: [{ name: 'Row', sets: 2, reps: 10, weight: 50, rest: '1:00' }],
+}));
+ok(stepR.routines === 1, 'fixture routine imported');
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const stepRoutine = store.state.routines.find((r) => r.name === 'Stepper Check');
+await click(`[data-action="routine-start"][data-id="${stepRoutine.id}"]`, 'Start');
+
+ok($('[data-action="set-add-warmup"]') !== null, 'a + Warmup button is offered');
+await click('[data-action="set-add-warmup"]', '+ Warmup');
+await click('[data-action="set-add"]', '+ Add set');
+ok($$('.set-row').length === 2, 'two rows');
+ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === 'W1,1',
+  `rows labelled W1 and 1 (${[...$$('.set-row .idx')].map((b) => b.textContent).join(',')})`);
+ok($$('.set-row')[0].classList.contains('warm'), 'the warmup row is styled as one');
+ok($$('.set-row')[1].querySelector('input[data-f="weight"]').value === '50',
+  'the working set prefilled from the target, not the warmup');
+
+await click('.set-row .idx', 'tap the set label to toggle warmup');
+ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === '1,2',
+  'tapping the label promotes it to a working set and renumbers');
+await click('.set-row .idx', 'tap again');
+ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === 'W1,1', 'and back again');
+
+section('the stepper changes the focused field without losing focus');
+ok($('.stepbar') !== null, 'a stepper strip exists in the card');
+ok($('.stepbar').hidden === true, 'hidden until a numeric field is focused');
+const wIn = $$('.set-row')[1].querySelector('input[data-f="weight"]');
+wIn.focus();
+await sleep(30);
+ok($('.stepbar').hidden === false, 'revealed on focus');
+const plus = [...$$('.stepbar button')].find((b) => b.textContent.includes('+2.5'));
+ok(!!plus, `the step matches the setting (${[...$$('.stepbar button')].map((b) => b.textContent).join(' ')})`);
+plus.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(40);
+ok(wIn.value === '52.5', `+2.5 applied to the field (${wIn.value})`);
+ok(document.activeElement === wIn, 'focus stayed in the field, so the keyboard stays up');
+const steppedSet = store.state.active.entries[0].sets[1];
+ok(steppedSet.weight === 52.5, `and persisted to the store (${steppedSet.weight})`);
+const minus = [...$$('.stepbar button')].find((b) => b.textContent.includes('-1 rep') || b.textContent.includes('−1 rep'));
+const rIn = $$('.set-row')[1].querySelector('input[data-f="reps"]');
+rIn.focus();
+await sleep(20);
+minus.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(40);
+ok(rIn.value === '9', `-1 rep applied to reps, not weight (${rIn.value})`);
+ok(store.state.active.entries[0].sets[1].reps === 9, 'reps persisted');
+ok($$('.set-row').length === 2, 'no re-render happened, so the rows are untouched');
+
+section('the effort columns follow the setting');
+ok($('.set-row input[data-f="rpe"]') !== null, 'RPE column shown by default');
+ok($('.set-row input[data-f="rir"]') === null, 'RIR hidden by default');
+await store.updateSettings({ effortScale: 'both' });
+await sleep(40);
+ok($('.set-row input[data-f="rpe"]') !== null && $('.set-row input[data-f="rir"]') !== null,
+  'both columns shown when the setting says both');
+ok($('.set-row').classList.contains('cols-2eff'), 'and the row grid widens to two effort columns');
+await type('.set-row input[data-f="rir"]', '2');
+ok(store.state.active.entries[0].sets[0].rir === 2, 'typing RIR persists');
+await store.updateSettings({ effortScale: 'rir' });
+await sleep(40);
+ok($('.set-row input[data-f="rpe"]') === null && $('.set-row input[data-f="rir"]') !== null,
+  'RIR only when the setting says so');
+ok($('.set-row').classList.contains('cols-1eff'), 'back to one effort column');
+await store.updateSettings({ effortScale: 'rpe' });
+
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
+section('intervals appear as separate efforts in the session list');
+await xi.importFromText(JSON.stringify({
+  name: 'Interval Check',
+  entries: [{ type: 'cardio', name: '200m', repeat: 4, duration: '0:40', rest: '1:30' }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const ivR = store.state.routines.find((r) => r.name === 'Interval Check');
+await click(`[data-action="routine-start"][data-id="${ivR.id}"]`, 'Start');
+ok(store.state.active.entries.length === 4, `4 efforts to log (${store.state.active.entries.length})`);
+ok(/1\/4/.test(view()), 'the Now card shows which rep you are on');
+ok($$('.card[data-entry]').length === 4, 'all four appear together as one block');
+await click('#tabBar .tab[data-tab="session"]');
+ok($$('.sess-item').length === 4, 'and as four rows in the session list');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

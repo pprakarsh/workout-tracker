@@ -5,6 +5,7 @@ import {
   removeSessionEntry, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
   lastLogFor, addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
   parseSetTargets, exerciseLibrary, findInLibrary, getRoutine, saveRoutine, normalizeEntry,
+  setLabels, workingSets, toggleWarmup,
 } from '../store.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { planLine, targetLine, pace, logSummary, restLine } from '../format.js';
@@ -18,7 +19,7 @@ import { unlockAudio } from '../timer.js';
 function lastRefHtml(e) {
   const hit = lastLogFor(e.name, working()?.id);
   if (!hit) return '<div class="lastref dim">No previous log for this exercise.</div>';
-  const sum = logSummary(hit.entry);
+  const sum = logSummary(hit.entry, { workingOnly: true });
   if (!sum) return '';
   return `<div class="lastref">Last (${esc(relDay(hit.session.startedAt))}): <b>${esc(sum)}</b></div>`;
 }
@@ -37,7 +38,7 @@ export function renderEntry(e, { showLast = true, allowRest = true } = {}) {
   <div class="card" data-entry="${e.id}" style="${e.skipped ? 'opacity:.55' : ''}">
     <div class="ex-head">
       <div style="flex:1;min-width:0">
-        <div class="ex-name">${esc(e.name)}
+        <div class="ex-name">${esc(e.name)}${e.repTotal ? ` <span class="dim">${e.repIndex}/${e.repTotal}</span>` : ''}
           ${e.group ? `<span class="pill grp">${esc(e.group)}</span>` : ''} ${pill}</div>
         ${targetLine(e) ? `<div class="ex-target">${esc(targetLine(e))}</div>` : ''}
         ${e.notes ? `<div class="ex-notes">${esc(e.notes)}</div>` : ''}
@@ -54,20 +55,34 @@ export function renderEntry(e, { showLast = true, allowRest = true } = {}) {
 /* editable card                                                      */
 /* ------------------------------------------------------------------ */
 
-function setRow(e, s, i, allowRest) {
+const showRpe = () => state.settings.effortScale !== 'rir';
+const showRir = () => state.settings.effortScale === 'rir' || state.settings.effortScale === 'both';
+
+/** Grid template must match the number of effort columns on show. */
+function rowClass() {
+  const n = (showRpe() ? 1 : 0) + (showRir() ? 1 : 0);
+  return n === 2 ? 'cols-2eff' : 'cols-1eff';
+}
+
+function setRow(e, s, label, workingIdx, allowRest) {
   const unit = s.unit || e.unit || state.settings.unit;
-  const plan = plannedSet(e, i);
+  const plan = s.warmup ? null : plannedSet(e, workingIdx);
   const wPh = plan && plan.weight !== null && plan.weight !== undefined ? fmtNum(plan.weight) : esc(unit);
   const rPh = plan && fmtReps(plan.repsMin, plan.repsMax) ? fmtReps(plan.repsMin, plan.repsMax) : 'reps';
   return `
-    <div class="set-row ${s.done ? 'done' : ''}" data-entry="${e.id}" data-set="${s.id}">
-      <div class="idx">${i + 1}</div>
+    <div class="set-row ${rowClass()} ${s.done ? 'done' : ''} ${s.warmup ? 'warm' : ''}"
+         data-entry="${e.id}" data-set="${s.id}">
+      <button type="button" class="idx" data-action="set-warmup" data-entry="${e.id}" data-set="${s.id}"
+              title="${s.warmup ? 'Make this a working set' : 'Mark as a warmup set'}"
+              aria-label="Set ${esc(label)}, tap to toggle warmup">${esc(label)}</button>
       <input inputmode="decimal" enterkeyhint="next" data-f="weight" placeholder="${wPh}"
-             value="${esc(fmtNum(s.weight))}" aria-label="Weight set ${i + 1}">
+             value="${esc(fmtNum(s.weight))}" aria-label="Weight set ${esc(label)}">
       <input inputmode="numeric" enterkeyhint="next" data-f="reps" placeholder="${esc(rPh)}"
-             value="${esc(fmtNum(s.reps))}" aria-label="Reps set ${i + 1}">
-      <input inputmode="decimal" enterkeyhint="done" data-f="rpe" placeholder="RPE"
-             value="${esc(fmtNum(s.rpe))}" aria-label="RPE set ${i + 1}">
+             value="${esc(fmtNum(s.reps))}" aria-label="Reps set ${esc(label)}">
+      ${showRpe() ? `<input inputmode="decimal" enterkeyhint="next" data-f="rpe" placeholder="RPE"
+             value="${esc(fmtNum(s.rpe))}" aria-label="RPE set ${esc(label)}">` : ''}
+      ${showRir() ? `<input inputmode="decimal" enterkeyhint="done" data-f="rir" placeholder="RIR"
+             value="${esc(fmtNum(s.rir))}" aria-label="Reps in reserve, set ${esc(label)}">` : ''}
       <button type="button" class="chk ${s.done ? 'on' : ''}" title="Mark set done"
               data-action="set-done" data-entry="${e.id}" data-set="${s.id}">✓</button>
       ${allowRest ? `<button type="button" class="rest-btn" title="Finish set and start rest"
@@ -76,20 +91,49 @@ function setRow(e, s, i, allowRest) {
     </div>`;
 }
 
+/**
+ * The +/- strip. It is hidden until a numeric field in this card is focused, and
+ * acts on whatever is focused. Buttons cancel pointerdown so focus is not lost,
+ * and they write through an input event so the normal silent-save path runs
+ * without a re-render — which is what keeps the keyboard up.
+ */
+function stepBar(e) {
+  const w = fmtNum(state.settings.weightStep);
+  return `
+    <div class="stepbar" data-stepbar="${e.id}" hidden>
+      <button type="button" data-step="weight" data-delta="-${w}">−${w}</button>
+      <button type="button" data-step="weight" data-delta="${w}">+${w}</button>
+      <button type="button" data-step="reps" data-delta="-1">−1 rep</button>
+      <button type="button" data-step="reps" data-delta="1">+1 rep</button>
+    </div>`;
+}
+
 function liftBody(e, allowRest) {
-  const rows = (e.sets || []).map((s, i) => setRow(e, s, i, allowRest)).join('');
+  const sets = e.sets || [];
+  const labels = setLabels(sets);
+  let working = -1;
+  const rows = sets.map((s, i) => {
+    if (!s.warmup) working++;
+    return setRow(e, s, labels[i], s.warmup ? -1 : working, allowRest);
+  }).join('');
   const planned = e.setTargets ? e.setTargets.length : (e.targetSets ?? 0);
-  const missing = Math.max(0, planned - (e.sets || []).length);
+  const missing = Math.max(0, planned - workingSets(e).length);
   const rest = restLine(e);
   return `
     <div class="sets">
-      <div class="set-hdr"><div>#</div><div>Weight</div><div>Reps</div><div>RPE</div><div></div><div></div></div>
+      <div class="set-hdr ${rowClass()}">
+        <div>Set</div><div>Weight</div><div>Reps</div>
+        ${showRpe() ? '<div>RPE</div>' : ''}${showRir() ? '<div>RIR</div>' : ''}
+        <div></div><div></div>
+      </div>
       ${rows || '<p class="hint" style="margin:2px 0 8px">No sets logged yet.</p>'}
     </div>
+    ${stepBar(e)}
     <div class="set-foot">
       <button type="button" class="btn sm primary" data-action="set-add" data-entry="${e.id}">+ Add set</button>
+      <button type="button" class="btn sm ghost" data-action="set-add-warmup" data-entry="${e.id}">+ Warmup</button>
       ${missing > 1 ? `<button type="button" class="btn sm" data-action="set-fill" data-entry="${e.id}">+ All ${missing} planned</button>` : ''}
-      ${(e.sets || []).length ? `<button type="button" class="btn sm ghost" data-action="set-del-last" data-entry="${e.id}">− Remove last</button>` : ''}
+      ${sets.length ? `<button type="button" class="btn sm ghost" data-action="set-del-last" data-entry="${e.id}">− Remove last</button>` : ''}
     </div>
     ${rest ? `<div class="small dim" style="margin-top:6px">${esc(rest)}</div>` : ''}`;
 }
@@ -204,6 +248,12 @@ export function exerciseFormHtml(e = {}) {
           <input name="targetDuration" inputmode="text" placeholder="30:00"
                  value="${e.targetDuration ? esc(fmtClock(e.targetDuration)) : ''}"></label>
       </div>
+      <label class="field"><span>Repeat (intervals)</span>
+        <input name="repeat" inputmode="numeric" placeholder="1"
+               value="${esc(fmtNum(e.repeat))}"></label>
+      <p class="hint" style="margin-top:-4px">A cardio entry logs one effort. Set this to 6 for
+        6 × 400m and starting a workout creates six efforts, grouped together, each logged and
+        rested separately.</p>
     </div>
 
     <label class="field"><span>Rest between sets - 2:30, 90s, or a number of seconds</span>
@@ -284,7 +334,10 @@ export function readExerciseForm(v, modal = null) {
   };
 
   if (base.type === 'cardio' || !modal) {
-    return { ...base, setTargets: null, targetSets: null, repsMin: null, repsMax: null, weight: null };
+    return {
+      ...base, setTargets: null, targetSets: null, repsMin: null, repsMax: null, weight: null,
+      repeat: base.type === 'cardio' ? num(v.repeat) : null,
+    };
   }
 
   const rowEls = [...modal.querySelectorAll('#exRows [data-strow]')];
@@ -419,6 +472,10 @@ function restLabelFor(e, setIdx) {
 
 export const entryActions = {
   'set-add': async ({ entry }) => { await addSet(entry); },
+
+  'set-add-warmup': async ({ entry }) => { await addSet(entry, { warmup: true }); },
+
+  'set-warmup': async ({ entry, set }) => { await toggleWarmup(entry, set); },
 
   'set-fill': async ({ entry }) => {
     const n = await fillPlannedSets(entry);

@@ -4,7 +4,7 @@
 // the screen does, and a core module must never import from a view — see the
 // dependency rule in ARCHITECTURE.md. Everything here is a pure string builder:
 // no DOM, no HTML, no escaping. Callers escape.
-import { state } from './store.js';
+import { state, setLabels } from './store.js';
 import { fmtNum, fmtReps, fmtClock, fmtDur } from './util.js';
 
 /** "60×10 · 70×8 · 80×5-6" for a per-set plan. */
@@ -34,6 +34,7 @@ export function targetLine(e) {
       bits.push(`${fmtNum(e.targetDistance)} ${e.distanceUnit || state.settings.distanceUnit}`);
     }
     if (e.targetDuration) bits.push(fmtDur(e.targetDuration));
+    if (e.repeat && e.repeat > 1) bits.unshift(`${e.repeat} ×`);
   }
   if (e.rest) bits.push(`rest ${fmtClock(e.rest)}`);
   return bits.join(' · ');
@@ -45,8 +46,20 @@ export function pace(distance, seconds, unit) {
   return `${fmtClock(seconds / distance)}/${unit || 'km'}`;
 }
 
-/** One-line summary of what was actually logged, for list views and exports. */
-export function logSummary(e) {
+/** The effort suffix for a set: "@8" for RPE, "r2" for reps-in-reserve. */
+export function effortTag(s) {
+  const bits = [];
+  if (s.rpe !== null && s.rpe !== undefined) bits.push(`@${fmtNum(s.rpe)}`);
+  if (s.rir !== null && s.rir !== undefined) bits.push(`r${fmtNum(s.rir)}`);
+  return bits.length ? ` ${bits.join(' ')}` : '';
+}
+
+/**
+ * One-line summary of what was actually logged, for list views and exports.
+ * Warmups are prefixed "W". Pass { workingOnly } where warmups would be noise,
+ * such as the "last time" reference while you are logging.
+ */
+export function logSummary(e, { workingOnly = false } = {}) {
   if (e.type === 'cardio') {
     const l = e.log || {};
     const bits = [];
@@ -60,12 +73,13 @@ export function logSummary(e) {
     if (l.rpe) bits.push(`RPE ${fmtNum(l.rpe)}`);
     return bits.join(' · ');
   }
-  const sets = (e.sets || []).filter((s) => s.done || s.reps !== null || s.weight !== null);
+  const sets = (e.sets || []).filter((s) => (s.done || s.reps !== null || s.weight !== null)
+    && !(workingOnly && s.warmup));
   if (!sets.length) return '';
   return sets.map((s) => {
     const w = s.weight !== null ? `${fmtNum(s.weight)}${s.unit || ''}` : '—';
     const r = s.reps !== null ? fmtNum(s.reps) : '—';
-    return `${w}×${r}${s.rpe ? ` @${fmtNum(s.rpe)}` : ''}`;
+    return `${s.warmup ? 'W ' : ''}${w}×${r}${effortTag(s)}`;
   }).join('  ');
 }
 
@@ -76,12 +90,13 @@ export function logSummary(e) {
  */
 export function restLine(e) {
   const sets = e.sets || [];
+  const labels = setLabels(sets);
   const logged = sets
-    .map((s, i) => ({ s, i }))
+    .map((s, i) => ({ s, label: labels[i] }))
     .filter(({ s }) => s.done || s.weight !== null || s.reps !== null);
   if (!logged.length) return '';
   if (!sets.some((s) => s.rest)) return 'Rest: no rest logged for any set';
   return `Rest after sets: ${logged
-    .map(({ s, i }) => `${i + 1}) ${s.rest ? fmtClock(s.rest) : 'no rest logged'}`)
+    .map(({ s, label }) => `${label}) ${s.rest ? fmtClock(s.rest) : 'no rest logged'}`)
     .join(' · ')}`;
 }

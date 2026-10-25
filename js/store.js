@@ -7,6 +7,8 @@ export const DEFAULT_SETTINGS = {
   distanceUnit: 'km',
   defaultRest: 120,      // seconds, used when a routine entry has no rest target
   beep: true,            // sound when the rest target is reached
+  weightStep: 2.5,       // the +/- stepper increment for weight
+  effortScale: 'rpe',    // 'rpe' | 'rir' | 'both' -- which effort column(s) to log
 };
 
 export const state = {
@@ -128,6 +130,13 @@ export function normalizeEntry(raw = {}) {
     distanceUnit: raw.distanceUnit || null,
     // a bare cardio duration is read as minutes; a bare rest value as seconds
     targetDuration: parseDur(raw.duration ?? raw.targetDuration, { bare: 'minutes' }),
+    // intervals: one cardio entry logged `repeat` times, expanded at session start
+    repeat: type === 'cardio'
+      ? (() => {
+        const n = num(raw.repeat ?? raw.rounds ?? raw.intervals);
+        return n && n > 1 ? Math.min(Math.round(n), 50) : null;
+      })()
+      : null,
     // shared
     rest: parseDur(raw.rest ?? raw.restSeconds ?? raw.restTime),
     // notes may be a string or a list of lines (handy in hand-written JSON)
@@ -148,10 +157,22 @@ export function normalizeRoutine(raw = {}) {
   };
 }
 
-const blankSet = (unit) => ({
-  id: uid('s'), weight: null, unit, reps: null, rpe: null,
-  note: '', done: false, completedAt: null, rest: null,
+const blankSet = (unit, warmup = false) => ({
+  id: uid('s'), weight: null, unit, reps: null, rpe: null, rir: null,
+  warmup, note: '', done: false, completedAt: null, rest: null,
 });
+
+/**
+ * Display labels for a set list: warmups are W1, W2... and working sets are
+ * numbered 1, 2... independently, which is how lifters count them.
+ */
+export function setLabels(sets = []) {
+  let w = 0; let n = 0;
+  return sets.map((s) => (s.warmup ? `W${++w}` : String(++n)));
+}
+
+/** Sets that count towards targets, volume and records. */
+export const workingSets = (e) => (e.sets || []).filter((s) => !s.warmup);
 
 const blankLog = (distanceUnit) => ({
   distance: null, distanceUnit, duration: null,
@@ -172,6 +193,30 @@ function toSessionEntry(entry, settings) {
     log: e.type === 'cardio' ? blankLog(e.distanceUnit || settings.distanceUnit) : null,
     skipped: false,
   };
+}
+
+/**
+ * Routine entry -> one or more session entries. A cardio entry with `repeat`
+ * becomes that many independent efforts sharing one superset label, because a
+ * cardio log holds a single effort. Everything else passes through as one.
+ */
+function expandEntry(entry, settings, groupSeq) {
+  const base = normalizeEntry(entry);
+  if (base.type !== 'cardio' || !base.repeat || base.repeat < 2) {
+    return [toSessionEntry(base, settings)];
+  }
+  const group = base.group || `R${groupSeq()}`;
+  return Array.from({ length: base.repeat }, (_, i) => ({
+    ...toSessionEntry({ ...base, group }, settings),
+    repIndex: i + 1,
+    repTotal: base.repeat,
+  }));
+}
+
+/** Counter for auto-generated interval group labels within one session. */
+function groupSequencer(taken = new Set()) {
+  let n = 0;
+  return () => { let v = ++n; while (taken.has(`R${v}`)) v = ++n; return v; };
 }
 
 /* ------------------------------------------------------------------ */
@@ -279,7 +324,10 @@ export async function startSession(routineId) {
     startedAt: Date.now(),
     finishedAt: null,
     unit: state.settings.unit,
-    entries: (r ? r.entries : []).map((e) => toSessionEntry(e, state.settings)),
+    entries: (() => {
+      const seq = groupSequencer();
+      return (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings, seq));
+    })(),
     currentIdx: 0,
     rpe: null,
     bodyweight: null,
@@ -336,8 +384,15 @@ export async function saveSessionBackToRoutine() {
   const r = getRoutine(s.routineId);
   if (!r) return null;
   const prior = new Map(r.entries.map((e) => [e.id, e]));
+  // Expanded interval reps collapse back into a single entry carrying `repeat`,
+  // otherwise a 6x400m routine would grow to six lines every time it was saved.
+  const repCount = new Map();
+  s.entries.forEach((e) => {
+    if (e.repTotal && e.sourceId) repCount.set(e.sourceId, (repCount.get(e.sourceId) || 0) + 1);
+  });
   r.entries = s.entries
     .filter((e) => !e.skipped)
+    .filter((e) => !e.repTotal || e.repIndex === 1)
     // Keep the original routine entry ids where the exercise came from the routine,
     // and don't bake the session's resolved units into the routine: a routine only
     // carries a unit if it was explicitly given one.
@@ -357,6 +412,7 @@ export async function saveSessionBackToRoutine() {
         targetDuration: e.targetDuration,
         rest: e.rest,
         notes: e.notes,
+        repeat: e.repTotal ? (repCount.get(e.sourceId) || e.repTotal) : e.repeat,
         // a routine only carries a unit if it was explicitly given one, so don't
         // bake in the unit the session happened to resolve
         unit: src ? src.unit : null,
@@ -416,11 +472,12 @@ export async function stepBlock(dir) {
 export async function addSessionEntry(raw) {
   const s = working();
   if (!s) return null;
-  const e = toSessionEntry(raw, state.settings);
-  s.entries.push(e);
+  const seq = groupSequencer(new Set(s.entries.map((x) => x.group).filter(Boolean)));
+  const made = expandEntry(raw, state.settings, seq);
+  s.entries.push(...made);
   s.modified = true;
   await touch();
-  return e;
+  return made[0];
 }
 
 export async function updateSessionEntry(entryId, patch, opts) {
@@ -479,23 +536,42 @@ export function plannedSet(e, i) {
   return null;
 }
 
-export async function addSet(entryId) {
+export async function addSet(entryId, { warmup = false } = {}) {
   const e = findEntry(entryId);
   if (!e || e.type !== 'lift') return null;
   const prev = e.sets[e.sets.length - 1];
-  const set = blankSet(e.unit || state.settings.unit);
-  const plan = plannedSet(e, e.sets.length);
-  // A per-set plan wins for this set number; otherwise carry the previous set forward.
-  if (e.setTargets && e.setTargets[e.sets.length]) {
+  const set = blankSet(e.unit || state.settings.unit, warmup);
+  if (warmup) {
+    // a warmup has no planned target; start from the previous set or the first target
+    const ref = prev || plannedSet(e, 0);
+    set.weight = ref ? (ref.weight ?? null) : null;
+    set.reps = ref ? (ref.reps ?? ref.repsMin ?? null) : null;
+    e.sets.push(set);
+    await touch();
+    return set;
+  }
+  // planned targets are indexed by WORKING set number, so warmups don't shift them
+  const workingCount = workingSets(e).length;
+  const plan = plannedSet(e, workingCount);
+  if (e.setTargets && e.setTargets[workingCount]) {
     set.weight = plan.weight ?? (prev ? prev.weight : null);
     set.reps = plan.repsMin ?? plan.repsMax ?? (prev ? prev.reps : null);
   } else {
-    set.weight = prev ? prev.weight : (e.weight ?? null);
-    set.reps = prev ? prev.reps : (e.repsMin ?? e.repsMax ?? null);
+    const prevWorking = workingSets(e).slice(-1)[0];
+    set.weight = prevWorking ? prevWorking.weight : (e.weight ?? null);
+    set.reps = prevWorking ? prevWorking.reps : (e.repsMin ?? e.repsMax ?? null);
   }
   e.sets.push(set);
   await touch();
   return set;
+}
+
+export async function toggleWarmup(entryId, setId) {
+  const e = findEntry(entryId);
+  const set = e?.sets?.find((x) => x.id === setId);
+  if (!set) return;
+  set.warmup = !set.warmup;
+  await touch();
 }
 
 /** Create every remaining planned set in one go. */
@@ -504,8 +580,8 @@ export async function fillPlannedSets(entryId) {
   if (!e || e.type !== 'lift') return 0;
   const want = e.setTargets ? e.setTargets.length : (e.targetSets ?? 0);
   let made = 0;
-  while (e.sets.length < want) {
-    const i = e.sets.length;
+  while (workingSets(e).length < want) {
+    const i = workingSets(e).length;
     const plan = plannedSet(e, i);
     const set = blankSet(e.unit || state.settings.unit);
     set.weight = plan ? (plan.weight ?? null) : null;
@@ -823,7 +899,8 @@ export const completedSessions = () => state.sessions.filter((s) => s.finishedAt
 export function entryStatus(e) {
   if (e.skipped) return 'skipped';
   if (e.type === 'cardio') return e.log?.done ? 'done' : 'pending';
-  const sets = e.sets || [];
+  // warmups are not working sets: they count towards neither the target nor volume
+  const sets = workingSets(e);
   const done = sets.filter((s) => s.done).length;
   if (!done) return 'pending';
   const target = e.targetSets ?? sets.length;
@@ -838,7 +915,7 @@ export function sessionProgress(s) {
 
 export function sessionVolume(s) {
   let v = 0;
-  s.entries.forEach((e) => (e.sets || []).forEach((x) => {
+  s.entries.forEach((e) => workingSets(e).forEach((x) => {
     if (x.done && x.weight !== null && x.reps !== null) v += x.weight * x.reps;
   }));
   return Math.round(v);
