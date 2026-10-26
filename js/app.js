@@ -1,7 +1,10 @@
 // Bootstrap: load state, render the active tab, route delegated events.
 import { state, init, subscribe, exerciseNames } from './store.js';
 import { renderRestBar, timerActions, unlockAudio } from './timer.js';
-import { initSync, autoPullOnLaunch } from './sync.js';
+import {
+  initSync, autoPullOnLaunch, autoPullOnForeground, watchRoutines, setSyncNotifier,
+  flushPendingPush,
+} from './sync.js';
 import { toast } from './ui.js';
 
 import * as nowView from './views/now.js';
@@ -193,13 +196,42 @@ document.addEventListener('keydown', (ev) => {
 subscribe(render);
 
 /* ------------------------------------------------------------------ */
+/* background sync triggers                                           */
+/* ------------------------------------------------------------------ */
+
+// An installed PWA resumes rather than cold-starting, so returning to the app is
+// the moment that matters, not page load.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  autoPullOnForeground().then((res) => {
+    if (!res || res.skipped) return;
+    if (res.error) toast(`Gist sync: ${res.error}`, 5000);
+    else if (res.conflict) toast('This device has unpushed changes - sync from Routines', 5000);
+    else if (res.ok) toast(`Updated from gist: ${res.actual.sessions} sessions`, 3000);
+  });
+});
+
+// A queued routine push may have been scheduled while offline.
+window.addEventListener('online', () => { flushPendingPush(); });
+
+/* ------------------------------------------------------------------ */
 /* start                                                              */
 /* ------------------------------------------------------------------ */
+
+/** How background sync reports in. Quiet on success, loud on anything else. */
+function syncNotice(res) {
+  if (!res) return;
+  if (res.error) toast(`Gist sync: ${res.error}`, 5000);
+  else if (res.conflict) toast('Gist has newer data - sync manually from Routines', 5000);
+  else if (res.ok && res.reason === 'routine') toast('Routine changes pushed to gist', 2200);
+}
 
 (async function start() {
   try {
     await init();
     await initSync();
+    setSyncNotifier(syncNotice);
+    watchRoutines();
     // Land on the workout if one is running, otherwise on the routine library.
     state.tab = state.active ? 'now' : (state.routines.length ? 'now' : 'routines');
     render();

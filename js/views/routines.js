@@ -14,7 +14,7 @@ import { openModal, confirmDialog, toast, copyText } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';
 import {
   sync, syncConfigured, configureSync, disconnectSync, pushNow, pullNow,
-  pairingCode, parsePairing,
+  pairingCode, parsePairing, scheduleRoutinePush,
 } from '../sync.js';
 
 /* ------------------------------------------------------------------ */
@@ -84,8 +84,10 @@ function syncCard() {
       <div class="kv"><span>Gist</span><span>${sync.gistId ? `${esc(sync.gistId.slice(0, 10))}…` : 'not created yet'}</span></div>
       <div class="kv"><span>Last pushed</span><span>${esc(whenShort(sync.lastPushedAt))}</span></div>
       <div class="kv"><span>Last pulled</span><span>${esc(whenShort(sync.lastPulledAt))}</span></div>
-      <div class="kv"><span>Push when a workout is finished</span><span>${sync.autoPush ? 'on' : 'off'}</span></div>
+      <div class="kv"><span>Push after finishing a workout</span><span>${sync.autoPush ? 'on' : 'off'}</span></div>
+      <div class="kv"><span>Push when a routine changes</span><span>${sync.autoPushRoutines ? 'on' : 'off'}</span></div>
       <div class="kv"><span>Pull when the app opens</span><span>${sync.autoPull ? 'on' : 'off'}</span></div>
+      <div class="kv"><span>Pull on returning to the app</span><span>${sync.autoPull && sync.autoPullForeground ? 'on' : 'off'}</span></div>
       <div class="btn-row" style="margin-top:10px">
         <button type="button" class="btn primary" data-action="sync-push">Push ↑</button>
         <button type="button" class="btn" data-action="sync-pull">Pull ↓</button>
@@ -518,8 +520,22 @@ export const routineActions = {
               <option value="0" ${sync.autoPull ? '' : 'selected'}>Off</option>
             </select></label>
         </div>
-        <p class="hint" style="margin-top:-4px">Opening the app pulls a newer copy only when nothing
-          here would be lost. If this device has unpushed work, it leaves it alone and says so.</p>
+        <div class="grid2">
+          <label class="field"><span>Push when a routine changes</span>
+            <select name="autoPushRoutines">
+              <option value="1" ${sync.autoPushRoutines ? 'selected' : ''}>On</option>
+              <option value="0" ${sync.autoPushRoutines ? '' : 'selected'}>Off</option>
+            </select></label>
+          <label class="field"><span>Pull when the app returns to the front</span>
+            <select name="autoPullForeground">
+              <option value="1" ${sync.autoPullForeground ? 'selected' : ''}>On</option>
+              <option value="0" ${sync.autoPullForeground ? '' : 'selected'}>Off</option>
+            </select></label>
+        </div>
+        <p class="hint" style="margin-top:-4px">Pulls only ever happen when nothing here would be
+          lost — if this device has unpushed work, they leave it alone and say so. A foreground pull
+          is rate limited to once every 5 minutes and is skipped entirely while a workout is in
+          progress. Routine pushes are debounced, so a burst of edits becomes one gist revision.</p>
         ${code ? `<div class="divider"></div>
           <div class="tiny">Set up another device</div>
           <p class="hint" style="margin-top:4px">Copy this one string and paste it into the token field
@@ -536,7 +552,9 @@ export const routineActions = {
           token: paired ? paired.token : raw,
           gistId: paired && paired.gistId ? paired.gistId : v.gistId,
           autoPush: v.autoPush === '1',
+          autoPushRoutines: v.autoPushRoutines === '1',
           autoPull: v.autoPull === '1',
+          autoPullForeground: v.autoPullForeground === '1',
         });
         toast(paired ? 'Paired with the other device' : 'Gist sync configured');
 
@@ -778,4 +796,6 @@ export async function handleRoutineField(target) {
   r.updatedAt = Date.now();
   // persist without a re-render so the caret stays put
   await dbPut('routines', r);
+  // this path deliberately does not emit(), so the store watcher cannot see it
+  scheduleRoutinePush();
 }

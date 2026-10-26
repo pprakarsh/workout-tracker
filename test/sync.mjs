@@ -316,5 +316,90 @@ ok(sy.sync.token === null && sy.sync.gistId === null, 'token and gist id cleared
 ok(sy.syncConfigured() === false, 'reported as unconfigured');
 ok(store.dataFingerprint().sessions > 0, 'local data untouched by disconnecting');
 
+section('automatic push when the routine library changes');
+await sy.configureSync({ token: hub.validToken, gistId: gSkew.id, autoPushRoutines: true });
+await sy.pushNow({ force: true });
+sy.watchRoutines();
+let notices = [];
+sy.setSyncNotifier((n) => notices.push(n));
+ok(sy.pendingPush() === false, 'nothing queued to begin with');
+
+const callsBeforeRoutine = hub.calls.length;
+const autoR = await store.createRoutine({ name: 'Auto Push Me', entries: [{ name: 'Squat' }] });
+await new Promise((r) => setTimeout(r, 20));
+ok(sy.pendingPush() === true, 'creating a routine queued a push');
+ok(hub.calls.length === callsBeforeRoutine, 'but it is debounced, not fired immediately');
+
+// a burst of edits must collapse into ONE push, not one per change
+await store.saveRoutine(autoR);
+await store.saveRoutine(autoR);
+await store.createRoutine({ name: 'And Me', entries: [{ name: 'Bench' }] });
+await new Promise((r) => setTimeout(r, 20));
+ok(sy.pendingPush() === true, 'still just one queued push after four changes');
+
+await sy.flushPendingPush();
+ok(sy.pendingPush() === false, 'flushing clears the queue');
+ok(hub.calls.length > callsBeforeRoutine, 'and the push actually happened');
+ok(notices.some((n) => n.reason === 'routine' && n.ok), `reported back: ${JSON.stringify(notices.at(-1))}`);
+const autoPushed = JSON.parse(hub.gists.get(sy.sync.gistId).files[FILE].content);
+ok(autoPushed.routines.some((r) => r.name === 'Auto Push Me'), 'the new routine reached the gist');
+
+section('logging sets does NOT trigger a routine push');
+const noisy = await store.startSession(autoR.id);
+const nSet = await store.addSet(noisy.entries[0].id);
+await store.updateSet(noisy.entries[0].id, nSet.id, { weight: 60, reps: 5, done: true });
+await new Promise((r) => setTimeout(r, 20));
+ok(sy.pendingPush() === false, 'a session change queues nothing — no gist revision per set');
+await store.discardSession();
+
+section('routine auto-push respects its switch and reports failures');
+await sy.configureSync({ autoPushRoutines: false });
+await sy.pushNow({ force: true });
+sy.cancelPendingPush();
+await store.createRoutine({ name: 'Should Not Push', entries: [{ name: 'Curl' }] });
+await new Promise((r) => setTimeout(r, 20));
+ok(sy.pendingPush() === false, 'switched off, nothing is queued');
+await sy.configureSync({ autoPushRoutines: true });
+await sy.pushNow({ force: true });
+
+notices = [];
+const savedFetch2 = global.fetch;
+global.fetch = async () => { throw new TypeError('Load failed'); };
+await store.createRoutine({ name: 'Offline Routine', entries: [{ name: 'Row' }] });
+await new Promise((r) => setTimeout(r, 20));
+await sy.flushPendingPush();
+global.fetch = savedFetch2;
+ok(notices.some((n) => n.error && /offline/i.test(n.error)),
+  `a failed background push is reported, not swallowed: ${notices.at(-1)?.error?.slice(0, 40)}`);
+
+section('automatic pull when the app returns to the foreground');
+await sy.configureSync({ autoPull: true, autoPullForeground: true });
+await sy.pushNow({ force: true });
+sy.cancelPendingPush();
+sy.sync.lastCheckedAt = 0;   // as if the app had not checked for a while
+const fg1 = await sy.autoPullOnForeground();
+ok(fg1 && fg1.upToDate === true, `a foreground check after the cooldown runs (${JSON.stringify(fg1)})`);
+const fg2 = await sy.autoPullOnForeground();
+ok(fg2 && fg2.skipped === 'cooldown', 'a second check straight away is rate limited');
+ok((await sy.autoPullOnForeground({ cooldownMs: 0 })).upToDate === true,
+  'with the cooldown waived it runs again');
+
+// a workout in progress must never be replaced underneath you
+const guard = await store.startSession(autoR.id);
+const fg3 = await sy.autoPullOnForeground({ cooldownMs: 0 });
+ok(fg3 && fg3.skipped === 'workout-in-progress',
+  'skipped entirely while a workout is in progress');
+ok(store.state.active?.id === guard.id, 'the live session is untouched');
+await store.discardSession();
+
+// and it still refuses when there is unpushed work
+await store.createRoutine({ name: 'Unpushed', entries: [{ name: 'Dip' }] });
+sy.cancelPendingPush();
+const fg4 = await sy.autoPullOnForeground({ cooldownMs: 0 });
+ok(fg4 && fg4.conflict === true, 'declines when local work would be lost');
+await sy.configureSync({ autoPullForeground: false });
+ok(await sy.autoPullOnForeground({ cooldownMs: 0 }) === null, 'respects its own switch');
+await sy.configureSync({ autoPullForeground: true });
+
 console.log(`\n${failures === 0 ? 'ALL SYNC CHECKS PASSED' : `${failures} SYNC CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

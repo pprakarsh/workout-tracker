@@ -7,7 +7,7 @@
 //
 // The token is kept in IndexedDB under its own meta key, NOT in settings, so it
 // never ends up inside an exported backup.
-import { state, emit, dataFingerprint } from './store.js';
+import { state, emit, subscribe, dataFingerprint } from './store.js';
 import { metaGet, metaSet } from './db.js';
 import { backupObject, importFromText } from './exportimport.js';
 import { uid, APP_VERSION } from './util.js';
@@ -19,12 +19,22 @@ export const sync = {
   token: null,
   gistId: null,
   deviceId: null,
-  autoPush: false,
-  autoPull: true,        // on launch, fetch a newer copy when nothing local would be lost
+  autoPush: false,         // push after finishing a workout
+  autoPushRoutines: true,  // push after a routine is created, edited, deleted or imported
+  autoPull: true,          // fetch a newer copy when nothing local would be lost
+  autoPullForeground: true,// ...not just at launch, but when the app comes back to the front
   lastPushedAt: null,
   lastPulledAt: null,
-  lastSeenRemoteMs: 0,   // the remote pushedAt we last observed
+  lastCheckedAt: 0,        // last time we asked the gist whether it had moved on
+  lastSeenRemoteMs: 0,     // the remote pushedAt we last observed
 };
+
+/**
+ * How background sync reports back. app.js supplies a toast; tests supply a spy.
+ * Keeping it a callback means sync.js needs no DOM and stays unit-testable.
+ */
+let notifier = () => {};
+export const setSyncNotifier = (fn) => { notifier = typeof fn === 'function' ? fn : () => {}; };
 
 export async function initSync() {
   const saved = await metaGet('sync', null);
@@ -41,11 +51,15 @@ async function persist() {
 
 export const syncConfigured = () => !!sync.token;
 
-export async function configureSync({ token, gistId, autoPush, autoPull }) {
+export async function configureSync({
+  token, gistId, autoPush, autoPushRoutines, autoPull, autoPullForeground,
+}) {
   if (token !== undefined) sync.token = (token || '').trim() || null;
   if (gistId !== undefined) sync.gistId = (gistId || '').trim() || null;
   if (autoPush !== undefined) sync.autoPush = !!autoPush;
+  if (autoPushRoutines !== undefined) sync.autoPushRoutines = !!autoPushRoutines;
   if (autoPull !== undefined) sync.autoPull = !!autoPull;
+  if (autoPullForeground !== undefined) sync.autoPullForeground = !!autoPullForeground;
   sync.lastSeenRemoteMs = 0;
   await persist();
   emit();
@@ -76,6 +90,7 @@ export function parsePairing(text) {
 }
 
 export async function disconnectSync() {
+  cancelPendingPush();
   sync.token = null;
   sync.gistId = null;
   sync.autoPush = false;
@@ -272,6 +287,83 @@ export async function autoPushIfEnabled() {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* automatic push when the routine library changes                    */
+/* ------------------------------------------------------------------ */
+
+let pushTimer = null;
+let lastRoutineSig = null;
+
+/**
+ * A cheap signature of the routine library. Length catches create/delete and the
+ * newest updatedAt catches an edit, since every routine write stamps it.
+ */
+const routineSignature = () =>
+  `${state.routines.length}:${state.routines.reduce((m, r) => Math.max(m, r.updatedAt || 0), 0)}`;
+
+export const pendingPush = () => pushTimer !== null;
+
+export function cancelPendingPush() {
+  if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+}
+
+/**
+ * Schedule a push after a routine change, debounced so a burst of edits (adding
+ * three exercises, or typing a description) becomes one push and one gist
+ * revision rather than a dozen.
+ */
+export function scheduleRoutinePush({ delay = 4000 } = {}) {
+  if (!sync.autoPushRoutines || !sync.token) return false;
+  cancelPendingPush();
+  pushTimer = setTimeout(async () => {
+    pushTimer = null;
+    try {
+      const res = await pushNow();
+      if (res.conflict) notifier({ reason: 'routine', conflict: true });
+      else notifier({ reason: 'routine', ok: true, counts: res.counts });
+    } catch (err) {
+      notifier({ reason: 'routine', error: err.message });
+    }
+  }, delay);
+  return true;
+}
+
+/** Push now if one was queued — used when the network comes back. */
+export async function flushPendingPush() {
+  if (!pendingPush()) return null;
+  cancelPendingPush();
+  try {
+    const res = await pushNow();
+    if (res.conflict) { notifier({ reason: 'routine', conflict: true }); return { conflict: true }; }
+    notifier({ reason: 'routine', ok: true, counts: res.counts });
+    return { ok: true };
+  } catch (err) {
+    notifier({ reason: 'routine', error: err.message });
+    return { error: err.message };
+  }
+}
+
+/**
+ * Watch the store for routine changes. Subscribing beats calling a push from
+ * each of the ten mutation sites (create, edit, delete, duplicate, reorder,
+ * import, save-back-to-routine...) where one would eventually be forgotten.
+ * Session changes deliberately do not trigger this — a push per logged set
+ * would spam gist revisions for no benefit.
+ */
+export function watchRoutines() {
+  lastRoutineSig = routineSignature();
+  subscribe(() => {
+    const sig = routineSignature();
+    if (sig === lastRoutineSig) return;
+    lastRoutineSig = sig;
+    scheduleRoutinePush();
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* automatic pull                                                     */
+/* ------------------------------------------------------------------ */
+
 /**
  * Run at startup. Pulls when this device is empty (a fresh install) or simply
  * behind, and declines when local work would be lost. Never throws — a failure
@@ -291,6 +383,7 @@ export async function autoPullOnLaunch() {
 
     const result = await importFromText(remote.content, { mode: 'replace' });
     sync.lastPulledAt = Date.now();
+    sync.lastCheckedAt = Date.now();
     sync.lastSeenRemoteMs = remote.remotePushedAtMs || Date.now();
     await persist();
     emit();
@@ -298,4 +391,21 @@ export async function autoPullOnLaunch() {
   } catch (err) {
     return { error: err.message };
   }
+}
+
+/**
+ * Pull when the app comes back to the foreground.
+ *
+ * An installed PWA usually *resumes* rather than cold-starting, so the
+ * launch-time pull can go days without running. This closes that gap, rate
+ * limited so switching apps mid-workout does not hammer the API. Same guards as
+ * every other pull: it declines whenever local work would be lost.
+ */
+export async function autoPullOnForeground({ cooldownMs = 5 * 60 * 1000 } = {}) {
+  if (!sync.autoPull || !sync.autoPullForeground || !sync.token || !sync.gistId) return null;
+  if (state.active) return { skipped: 'workout-in-progress' };
+  if (Date.now() - (sync.lastCheckedAt || 0) < cooldownMs) return { skipped: 'cooldown' };
+  sync.lastCheckedAt = Date.now();
+  await persist();
+  return autoPullOnLaunch();
 }

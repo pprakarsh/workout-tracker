@@ -401,9 +401,37 @@ string carries both the token and the gist id. On the new device, open *Set up G
 it into the token field. Because the new device is empty, it pulls immediately — no second tap, no
 typing a token on a phone keyboard. Treat the pairing code like a password.
 
-**After that it is automatic.** Opening the app pulls a newer copy from the gist in the background,
-and *Push after finishing a workout* (off by default) uploads when you finish one. Both can be
-turned off, and both are also available as manual Push/Pull buttons.
+### When sync happens automatically
+
+Four triggers, each individually switchable in *Settings*, and all subject to the same conflict
+guards — none of them will ever overwrite work without asking.
+
+| Trigger | Default | Behaviour |
+|---|---|---|
+| **Push after finishing a workout** | off | Pushes once, when you tap Finish |
+| **Push when a routine changes** | on | Debounced ~4s, so adding three exercises is one push and one gist revision. Routines change rarely, which is why this is on by default |
+| **Pull when the app opens** | on | Only on a cold start |
+| **Pull on returning to the app** | on | Rate limited to once per 5 minutes, and skipped entirely while a workout is in progress |
+
+That last one matters more than it sounds: an installed PWA usually *resumes* rather than
+cold-starting, so a launch-only pull can go days without running. Returning to the app is the
+moment staleness actually bites.
+
+Logging sets deliberately triggers nothing. A push per logged set would fill the gist's revision
+history with noise for no benefit — finish the workout, or tap **Push ↑**.
+
+A routine push queued while offline is retried when the network returns. Manual **Push ↑** and
+**Pull ↓** are always available regardless of the switches.
+
+### Other automatic-pull options, and why they are not used
+
+| Option | Verdict |
+|---|---|
+| Poll every few minutes while open | Rejected: wastes requests to detect a change only you could have made, from a device you are not using |
+| Pull right before starting a workout | Plausible — guarantees the latest routine. Not built because the foreground pull already covers the realistic case. Easy to add if you want it |
+| Background Sync / Periodic Background Sync API | Not available on iOS; Chrome-only |
+| Server push (webhook, SSE, WebSocket) | Impossible without a server, which this app deliberately does not have |
+| Pull on every tab focus with no cooldown | Rejected: switching apps mid-workout would hammer the API |
 
 ### What it will and won't do
 

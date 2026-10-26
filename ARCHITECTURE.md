@@ -264,6 +264,21 @@ pull: GET the gist → importFromText(mode:'replace') → restoreAll() wipes and
 launch: autoPullOnLaunch() pulls when the device is empty, or behind with nothing local at risk
 ```
 
+Four automatic triggers, all going through the guards above:
+
+| Trigger | Where | Notes |
+|---|---|---|
+| after finishing a workout | `autoPushIfEnabled()` from `session.js` | immediate, with a toast |
+| routine library changed | `watchRoutines()` subscribes to the store | debounced 4s |
+| launch | `autoPullOnLaunch()` from `app.js` | after first render, never blocking boot |
+| returning to the foreground | `autoPullOnForeground()` on `visibilitychange` | 5 min cooldown, skipped during a workout |
+
+`watchRoutines()` subscribes to `emit()` and compares a cheap routine signature
+(`length:maxUpdatedAt`) rather than calling a push from each of the ten routine mutation sites,
+where one would eventually be forgotten. Session changes deliberately do not trigger it. The one
+path it cannot see is `handleRoutineField`, which writes without emitting to preserve the caret, so
+that function calls `scheduleRoutinePush()` itself.
+
 `unsyncedLocalChanges()` compares record `updatedAt` against **this device's** last sync time, never
 the timestamp inside the remote payload — a device with a wrong clock must not be able to make your
 unpushed work look stale. The comparison is `>=` so a record saved in the same millisecond as the
