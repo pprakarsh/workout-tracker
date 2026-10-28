@@ -93,6 +93,22 @@ stored shape, check `restoreAll` (verbatim restore), `backupObject` (what ships 
 | `test/sync.mjs` | gist sync against a fake GitHub API: push/pull, both conflict directions, clock skew, truncation, bad tokens, offline |
 | `test/dom.mjs` | the real UI under jsdom: clicks, typing, focus retention, modals, the full finish-a-workout flow |
 
+### Judge a run by its exit code, never by its output
+
+`npm test` chains the four suites with `&&`, so a non-zero exit is the only signal you need —
+and the only one you may trust. Do not conclude a suite passed because its output contained
+`PASSED` or did not contain `FAIL`. A suite that dies before running anything (a syntax error, a
+bad import, a throw at module scope) prints neither, and a grep-based check reads that silence as
+success. This exact mistake shipped build 18 while `smoke.mjs` could not be parsed.
+
+If you must run a suite alone, branch on the status:
+
+```bash
+cd test && for f in style smoke sync dom; do
+  node $f.mjs >/tmp/$f.log 2>&1 && echo "PASS $f" || echo "FAIL $f"
+done
+```
+
 They run on jsdom + fake-indexeddb, so no browser and no network. What they **cannot** check:
 visual layout, touch ergonomics, real iOS Safari behaviour, and real GitHub API responses. Say so
 rather than implying those are verified.
@@ -104,7 +120,7 @@ claim made in documentation — keep doing that.
 ## Shipping
 
 ```bash
-cd test && npm test                    # must be green
+cd test && npm test                    # must exit 0 -- do not read the output instead
 # bump APP_VERSION in js/util.js and CACHE in sw.js
 git add -A && git commit -m "..."      # Conventional Commits
 ./deploy.sh                            # pushes main, enables Pages, prints the URL
