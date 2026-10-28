@@ -834,18 +834,19 @@ section('the numbers can be entered during the rest, and the set then ticks on s
 await store.updateSet(fe.id, fe.sets[0].id, { weight: 40 });
 ok(store.setIsLoggable(fe.sets[0]) === true, 'typing the weight mid-rest makes it loggable');
 state.timer.startedAt -= 95_000;
-const r1 = await store.stopRest();
-ok(r1.elapsed === 95, `rest recorded (${r1.elapsed}s)`);
-ok(r1.pending === null, 'nothing pending');
+const stopA = await store.stopRest();
+ok(stopA.elapsed === 95, `rest recorded (${stopA.elapsed}s)`);
+ok(stopA.pending === null, 'nothing pending');
 ok(fe.sets[0].done === true, 'and stopping ticks the set now that it has numbers');
 ok(fe.sets[0].rest === 95, 'with the measured rest attached');
 
 section('stopping with still no numbers keeps the rest but says the set is unlogged');
 await store.startRestForSet(fe.id, fe.sets[1].id);
 state.timer.startedAt -= 60_000;
-const r2 = await store.stopRest();
-ok(r2.elapsed === 60, 'rest measured');
-ok(r2.pending && r2.pending.setId === fe.sets[1].id, 'the caller is told which set is still unlogged');
+const stopB = await store.stopRest();
+ok(stopB.elapsed === 60, 'rest measured');
+ok(stopB.pending && stopB.pending.setId === fe.sets[1].id,
+  'the caller is told which set is still unlogged');
 ok(fe.sets[1].done === false, 'it is not ticked with no load');
 ok(fe.sets[1].rest === 60, 'but the rest is kept, not thrown away');
 ok(fmt.restLine(fe).includes('2) 1:00'),
