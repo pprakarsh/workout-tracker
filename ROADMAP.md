@@ -22,7 +22,8 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Warmup sets | Excluded from targets, volume and the last-time reference |
 | RPE and RIR per set | Stored independently, never converted |
 | ± stepper on weight and reps | Keeps focus, no re-render |
-| Cardio intervals via `repeat` | Expanded into one logged effort per rep |
+| Cardio: a run is time + pace + distance, any two | The third is derived; duration is the anchor |
+| Cardio intervals as one `pattern`, logged in one tap | `1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6`; any round still editable |
 | Exercise library | Derived from all routines and sessions |
 | Editing finished sessions, including the date | Same UI as the live session |
 | Export: JSON backup, CSV, per-session Markdown | CSV column order is a contract |
@@ -49,7 +50,8 @@ plate calculator is offered, and whether your history becomes more than a list.
 | **Repeat a past session** as a new workout | Covers ad-hoc days with no routine | S | — |
 | **Calendar / streak view** in History | Training pattern at a glance | M | — |
 | **Search and filter in History** | Only matters past a few hundred sessions | S | — |
-| **Per-rep splits inside one cardio effort** | Intervals are separate entries today, which is fine; this is for splits *within* an effort | M | Changes the cardio log shape |
+| **Distance-based interval legs** | `400m @ 4:00/km` instead of a time. Legs are timed today, which covers treadmill work; this is for track sessions | S | `parseLeg` must disambiguate `400m` from 400 minutes |
+| **Rest as an interval leg** | A rest leg is timed by the clock rather than planned | S | Would let the block drive the rest timer |
 | **Import from Strong / Hevy CSV** | Only if you migrate from another app | M | — |
 | **Per-record sync with tombstones** | Real merge instead of last-write-wins | L | Do this when you start logging on two devices in the same week |
 | **Program / week structure** — which routine is due today | Mild value for a fixed weekly split | M | Resist turning into a periodisation engine |

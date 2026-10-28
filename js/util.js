@@ -131,7 +131,7 @@ export function download(filename, text, mime = 'text/plain') {
 export const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** Shown in the Routines tab so you can tell which build is actually loaded. */
-export const APP_VERSION = '18';
+export const APP_VERSION = '19';
 
 /** CSV field quoting. */
 export function csvCell(v) {

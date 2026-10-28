@@ -1,6 +1,17 @@
 // Application state + persistence. Everything lives on this device: IndexedDB only.
 import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
 import { uid, num, parseReps, parseDur } from './util.js';
+import { resolveRun, isIntervals, plannedLegs, reconcileLegs, cardioLogged } from './cardio.js';
+import {
+  blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
+  parseSetTargets, setLabels, workingSets,
+} from './model.js';
+
+// Re-exported so the store stays the single front door for callers: views ask
+// the store for everything about a session, shape helpers included.
+export {
+  normalizeEntry, normalizeRoutine, parseSetTargets, setLabels, workingSets, materializePlan,
+};
 
 export const DEFAULT_SETTINGS = {
   unit: 'kg',            // default load unit for new sets
@@ -18,6 +29,9 @@ export const state = {
   sessions: [],          // every session, newest first
   active: null,          // the in-progress session object (also present in .sessions)
   editSessionId: null,   // a FINISHED session opened for correction in History
+  // transient view state: which interval blocks have their rounds expanded.
+  // Not persisted -- it is a disclosure triangle, not data.
+  openRounds: new Set(),
   settings: { ...DEFAULT_SETTINGS },
   timer: null,           // { startedAt, target, sessionId, entryId, setId, label, beeped }
   tab: 'now',
@@ -46,205 +60,6 @@ export const editingPast = () => !!state.editSessionId;
 export async function setEditing(sessionId) {
   state.editSessionId = sessionId || null;
   emit();
-}
-
-/* ------------------------------------------------------------------ */
-/* normalisation                                                       */
-/* ------------------------------------------------------------------ */
-
-/**
- * Per-set targets: a plan with a different load/reps for each set.
- * Accepts  [{weight:60,reps:10}, …]  |  ["60x10","70x8"]  |  "60x10, 70x8, 80x5"
- * Reps may be a range ("8-12"); the weight may be omitted ("x10") for bodyweight.
- * Returns [{weight, repsMin, repsMax}] or null.
- */
-export function parseSetTargets(raw) {
-  if (raw === null || raw === undefined || raw === '') return null;
-
-  const one = (str) => {
-    const s = String(str).trim().toLowerCase().replace(/×/g, 'x');
-    if (!s) return null;
-    const m = s.match(/^([\d.]*)\s*(?:x|@|\*)\s*(.+)$/);
-    if (m) {
-      const reps = parseReps(m[2]);
-      return { weight: num(m[1]), repsMin: reps.min, repsMax: reps.max };
-    }
-    // a bare number is a weight with no rep target
-    const w = num(s);
-    return w === null ? null : { weight: w, repsMin: null, repsMax: null };
-  };
-
-  const list = typeof raw === 'string'
-    ? raw.split(/[,;\n]/).map(one)
-    : Array.isArray(raw)
-      ? raw.map((item) => {
-        if (item === null || item === undefined) return null;
-        if (typeof item === 'string' || typeof item === 'number') return one(item);
-        const reps = parseReps(
-          item.reps !== undefined ? item.reps : { min: item.repsMin, max: item.repsMax },
-        );
-        return { weight: num(item.weight), repsMin: reps.min, repsMax: reps.max };
-      })
-      : null;
-
-  if (!list) return null;
-  const clean = list.filter((x) => x && (x.weight !== null || x.repsMin !== null || x.repsMax !== null));
-  return clean.length ? clean : null;
-}
-
-/** Coerce any loosely-shaped entry (hand-written JSON included) into our shape. */
-export function normalizeEntry(raw = {}) {
-  const type = String(raw.type || '').toLowerCase() === 'cardio' ? 'cardio' : 'lift';
-  // `sets` is either a count (3) or a per-set plan ([{weight,reps},…])
-  // `sets` is either a count (3), a per-set plan ([{weight,reps},…] / ["60x10",…]),
-  // or the compact string form "60x10, 70x8, 80x5".
-  const setsIsPlan = (Array.isArray(raw.sets)
-    // a plan is [{weight,reps},…]; logged sets carry an id and a done flag, and
-    // must never be mistaken for targets
-    && !raw.sets.some((x) => x && typeof x === 'object' && ('done' in x || 'id' in x)))
-    || (typeof raw.sets === 'string' && /[x×@*,;]/i.test(raw.sets));
-  const setTargets = parseSetTargets(
-    raw.setTargets ?? raw.perSet ?? raw.setPlan ?? (setsIsPlan ? raw.sets : null),
-  );
-  const reps = parseReps(
-    raw.reps !== undefined ? raw.reps
-      : (raw.repsMin !== undefined || raw.repsMax !== undefined)
-        ? { min: raw.repsMin, max: raw.repsMax }
-        : raw.targetReps,
-  );
-  const group = raw.group ?? raw.groupId ?? raw.superset ?? null;
-  const declaredSets = num(raw.targetSets ?? (setsIsPlan ? null : raw.sets));
-  return {
-    id: raw.id || uid('e'),
-    type,
-    name: String(raw.name || raw.exercise || 'Exercise').trim(),
-    group: group === null || group === undefined || group === '' ? null : String(group).trim(),
-    // lift targets — either one target for every set, or setTargets per set
-    targetSets: setTargets ? setTargets.length : (declaredSets ?? (type === 'lift' ? 3 : null)),
-    setTargets,
-    repsMin: setTargets ? null : reps.min,
-    repsMax: setTargets ? null : reps.max,
-    weight: setTargets ? null : num(raw.weight ?? raw.targetWeight),
-    unit: raw.unit || null,
-    // a bodyweight movement: pull-ups, dips, push-ups. Sets default to BW and
-    // any `weight` logged is treated as ADDED load.
-    bodyweight: !!(raw.bodyweight ?? raw.bw),
-    // cardio targets
-    targetDistance: num(raw.distance ?? raw.targetDistance),
-    distanceUnit: raw.distanceUnit || null,
-    // a bare cardio duration is read as minutes; a bare rest value as seconds
-    targetDuration: parseDur(raw.duration ?? raw.targetDuration, { bare: 'minutes' }),
-    // intervals: one cardio entry logged `repeat` times, expanded at session start
-    repeat: type === 'cardio'
-      ? (() => {
-        const n = num(raw.repeat ?? raw.rounds ?? raw.intervals);
-        return n && n > 1 ? Math.min(Math.round(n), 50) : null;
-      })()
-      : null,
-    // shared
-    rest: parseDur(raw.rest ?? raw.restSeconds ?? raw.restTime),
-    // notes may be a string or a list of lines (handy in hand-written JSON)
-    notes: (Array.isArray(raw.notes) ? raw.notes.join('\n')
-      : String(raw.notes ?? raw.note ?? '')).trim(),
-  };
-}
-
-export function normalizeRoutine(raw = {}) {
-  const entries = (raw.entries || raw.exercises || []).map(normalizeEntry);
-  return {
-    id: raw.id || uid('r'),
-    name: String(raw.name || raw.title || 'Untitled routine').trim(),
-    description: String(raw.description || raw.desc || '').trim(),
-    entries,
-    createdAt: raw.createdAt || Date.now(),
-    updatedAt: raw.updatedAt || Date.now(),
-  };
-}
-
-const blankSet = (unit, warmup = false) => ({
-  id: uid('s'), weight: null, unit, reps: null, rpe: null, rir: null,
-  // bodyweight: the load is your own body. `weight` then means ADDED load
-  // (a belt, a dumbbell between the feet) and may stay null for plain BW.
-  bodyweight: false,
-  warmup, note: '', done: false, completedAt: null, rest: null,
-});
-
-/**
- * Display labels for a set list: warmups are W1, W2... and working sets are
- * numbered 1, 2... independently, which is how lifters count them.
- */
-export function setLabels(sets = []) {
-  let w = 0; let n = 0;
-  return sets.map((s) => (s.warmup ? `W${++w}` : String(++n)));
-}
-
-/** Sets that count towards targets, volume and records. */
-export const workingSets = (e) => (e.sets || []).filter((s) => !s.warmup);
-
-const blankLog = (distanceUnit) => ({
-  distance: null, distanceUnit, duration: null,
-  avgHr: null, maxHr: null, elevation: null,
-  rpe: null, note: '', done: false, completedAt: null,
-});
-
-/** Routine entry -> session entry (a snapshot; editing it never touches the routine). */
-function toSessionEntry(entry, settings) {
-  const e = normalizeEntry(entry);
-  return {
-    ...e,
-    id: uid('e'),          // fresh id: the session copy is its own thing
-    sourceId: e.id,        // remembers which routine entry it came from
-    unit: e.unit || settings.unit,
-    distanceUnit: e.distanceUnit || settings.distanceUnit,
-    sets: e.type === 'lift' ? [] : null,
-    log: e.type === 'cardio' ? blankLog(e.distanceUnit || settings.distanceUnit) : null,
-    skipped: false,
-  };
-}
-
-/**
- * Routine entry -> one or more session entries. A cardio entry with `repeat`
- * becomes that many independent efforts sharing one superset label, because a
- * cardio log holds a single effort. Everything else passes through as one.
- */
-function expandEntry(entry, settings, groupSeq) {
-  const base = normalizeEntry(entry);
-  if (base.type !== 'cardio' || !base.repeat || base.repeat < 2) {
-    return [materializePlan(toSessionEntry(base, settings))];
-  }
-  const group = base.group || `R${groupSeq()}`;
-  return Array.from({ length: base.repeat }, (_, i) => ({
-    ...toSessionEntry({ ...base, group }, settings),
-    repIndex: i + 1,
-    repTotal: base.repeat,
-  }));
-}
-
-/**
- * Create the rows the plan calls for, so a session opens as a checklist to tick
- * off rather than an empty form with an "add set" button. Logging a set is
- * confirming one, not creating one.
- */
-function materializePlan(entry) {
-  if (entry.type !== 'lift') return entry;
-  const want = entry.setTargets ? entry.setTargets.length : (entry.targetSets ?? 0);
-  for (let i = entry.sets.length; i < want; i++) {
-    const plan = entry.setTargets?.[i]
-      || (entry.weight !== null || entry.repsMin !== null
-        ? { weight: entry.weight, repsMin: entry.repsMin, repsMax: entry.repsMax } : null);
-    const set = blankSet(entry.unit);
-    set.bodyweight = !!entry.bodyweight;
-    set.weight = plan ? (plan.weight ?? null) : null;
-    set.reps = plan ? (plan.repsMin ?? plan.repsMax ?? null) : null;
-    entry.sets.push(set);
-  }
-  return entry;
-}
-
-/** Counter for auto-generated interval group labels within one session. */
-function groupSequencer(taken = new Set()) {
-  let n = 0;
-  return () => { let v = ++n; while (taken.has(`R${v}`)) v = ++n; return v; };
 }
 
 /* ------------------------------------------------------------------ */
@@ -352,10 +167,7 @@ export async function startSession(routineId) {
     startedAt: Date.now(),
     finishedAt: null,
     unit: state.settings.unit,
-    entries: (() => {
-      const seq = groupSequencer();
-      return (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings, seq));
-    })(),
+    entries: (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings)),
     currentIdx: 0,
     rpe: null,
     bodyweight: null,
@@ -438,9 +250,12 @@ export async function saveSessionBackToRoutine() {
         weight: e.weight,
         targetDistance: e.targetDistance,
         targetDuration: e.targetDuration,
+        targetPace: e.targetPace,
+        legs: e.legs,
+        rounds: e.rounds,
         rest: e.rest,
         notes: e.notes,
-        repeat: e.repTotal ? (repCount.get(e.sourceId) || e.repTotal) : e.repeat,
+        repeat: e.repTotal ? (repCount.get(e.sourceId) || e.repTotal) : null,
         // a routine only carries a unit if it was explicitly given one, so don't
         // bake in the unit the session happened to resolve
         unit: src ? src.unit : null,
@@ -500,8 +315,7 @@ export async function stepBlock(dir) {
 export async function addSessionEntry(raw) {
   const s = working();
   if (!s) return null;
-  const seq = groupSequencer(new Set(s.entries.map((x) => x.group).filter(Boolean)));
-  const made = expandEntry(raw, state.settings, seq);
+  const made = expandEntry(raw, state.settings);
   s.entries.push(...made);
   s.modified = true;
   await touch();
@@ -730,11 +544,95 @@ export async function toggleSetDone(entryId, setId) {
   await touch();
 }
 
+/** Show or hide the per-round detail of one interval block. */
+export async function toggleRounds(entryId) {
+  if (state.openRounds.has(entryId)) state.openRounds.delete(entryId);
+  else state.openRounds.add(entryId);
+  emit();
+}
+
+/**
+ * Edit a run's numbers. When one of {distance, duration, pace} changes the
+ * others are brought back into line by resolveRun, so the three can never
+ * disagree -- enter a time and a pace and the distance follows.
+ */
 export async function updateLog(entryId, patch, opts) {
   const e = findEntry(entryId);
   if (!e || e.type !== 'cardio') return;
-  e.log = { ...e.log, ...patch };
+  const anchor = ['pace', 'distance', 'duration'].find((k) => k in patch) || null;
+  const next = { ...e.log, ...patch };
+  e.log = anchor ? resolveRun(next, anchor) : next;
   await touch(opts);
+}
+
+/**
+ * Log the whole interval block in one tap: every round takes its planned
+ * numbers. This is the point of the pattern -- a treadmill block is one thing
+ * you did, not six things to visit. Tapping again clears the block.
+ */
+export async function logAllRounds(entryId) {
+  const e = findEntry(entryId);
+  const legs = e?.log?.legs;
+  if (!legs || !legs.length) return 0;
+  const all = legs.every((x) => x.done);
+  legs.forEach((x) => { x.done = !all; });
+  e.log.done = !all;
+  e.log.completedAt = all ? null : Date.now();
+  await touch();
+  return all ? 0 : legs.length;
+}
+
+/** Tick or un-tick one leg of one round. */
+export async function toggleLeg(entryId, legId) {
+  const e = findEntry(entryId);
+  const leg = e?.log?.legs?.find((x) => x.id === legId);
+  if (!leg) return;
+  leg.done = !leg.done;
+  e.log.done = e.log.legs.some((x) => x.done);
+  e.log.completedAt = e.log.done ? (e.log.completedAt || Date.now()) : null;
+  await touch();
+}
+
+/**
+ * Change one round's numbers. The leg is flagged `edited`, which exempts it
+ * from a later edit of the pattern: "round 4 was slower" must survive "the plan
+ * was actually 1:15 throughout".
+ */
+export async function updateLeg(entryId, legId, patch, opts) {
+  const e = findEntry(entryId);
+  const leg = e?.log?.legs?.find((x) => x.id === legId);
+  if (!leg) return;
+  Object.assign(leg, patch, { edited: true });
+  await touch(opts);
+}
+
+/** Drop the hand-edit on one leg and take the planned numbers back. */
+export async function resetLeg(entryId, legId) {
+  const e = findEntry(entryId);
+  const leg = e?.log?.legs?.find((x) => x.id === legId);
+  if (!leg || !isIntervals(e)) return;
+  const plan = e.legs[leg.leg];
+  if (!plan) return;
+  Object.assign(leg, {
+    label: plan.label || '', duration: plan.duration ?? null, pace: plan.pace ?? null, edited: false,
+  });
+  await touch();
+}
+
+/**
+ * Replace the interval pattern on a live entry, re-expanding the rounds. Ticks
+ * are kept and hand-edited legs keep their own numbers; see reconcileLegs.
+ * Pass legs: null to turn the block back into one plain run.
+ */
+export async function setIntervalPlan(entryId, { legs, rounds }) {
+  const e = findEntry(entryId);
+  if (!e || e.type !== 'cardio') return;
+  e.legs = legs && legs.length ? legs : null;
+  e.rounds = e.legs ? Math.max(1, Math.round(rounds || 1)) : null;
+  e.log = { ...e.log, legs: e.legs ? reconcileLegs(e, e.log?.legs || []) : null };
+  const s = working();
+  if (s) s.modified = true;   // the session now diverges from its routine
+  await touch();
 }
 
 export async function updateSessionMeta(patch, opts) {
@@ -865,7 +763,7 @@ export function dataFingerprint() {
     // ticked sets only: pre-materialised rows are plan, and counting them would
     // inflate the number both devices compare after a restore
     sets += e.type === 'cardio'
-      ? (e.log && (e.log.done || e.log.distance !== null) ? 1 : 0)
+      ? (cardioLogged(e.log) ? 1 : 0)
       : (e.sets || []).filter((x) => x.done).length;
   }));
   const oldest = state.sessions.length ? Math.min(...state.sessions.map((s) => s.startedAt)) : null;

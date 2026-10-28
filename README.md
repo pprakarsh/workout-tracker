@@ -258,9 +258,10 @@ on each exercise.
 | `reps` | lift | `"5"`, `"6-8"`, or a number. Ranges are kept as a range. Ignored when `sets` is a per-set plan. |
 | `weight` | lift | Target load, in your configured unit. Ignored when `sets` is a per-set plan. |
 | `distance`, `distanceUnit` | cardio | `km` or `mi`. |
-| `duration` | cardio | `"18:00"`, `"1:05:00"`, `"20m"`, `"90s"`. A bare number means **minutes**. |
-| `repeat` | cardio | Number of intervals, e.g. `6` for 6×400m. One entry, not six — see below. |
-| `rest` | all | Rest target between sets, and between cardio efforts. Same formats, but a bare number means **seconds**. |
+| `duration` | cardio | `"28:30"`, `"1:05:00"`, `"28m"`, `"90s"`. A bare number means **minutes**. |
+| `pace` | cardio | `"6:00"`, `"6:00/km"`, `"6 min/km"`. A bare number means **minutes per unit**, so `6` is 6:00/km. |
+| `pattern` | cardio | A whole interval block in one string — see below. Replaces the old `repeat`, which still imports. |
+| `rest` | all | Rest target between sets, and after a cardio entry. Same formats, but a bare number means **seconds**. |
 | `group` | all | Superset / circuit label — see below. |
 | `notes` | all | Warmup sets, tempo, cues, setup. A string, or a **list of lines** for multi-line notes. |
 
@@ -291,15 +292,52 @@ Things worth knowing:
 
 ### Targets vs. what you log
 
-A routine holds **targets** only. For cardio you can target `distance`, `duration` and `rest`;
-pace, average and max heart rate, elevation and perceived effort have no target fields — you record
-those while logging. Put a pace or heart-rate instruction in `notes` if you want it on screen during
-the run.
+A routine holds **targets** only. Heart rate, elevation and perceived effort have no target
+fields — you record those while logging. Warmup sets and RIR are likewise recorded while logging;
+describe intended warmups in `notes`.
 
-Each cardio entry logs **one** effort, so intervals use `repeat`: set `"repeat": 6` on a single
-400m entry and starting a workout creates six efforts, grouped together, each logged and rested
-separately. Saving a session back to its routine collapses them again. Warmup sets and RIR are
-recorded while logging and have no routine fields — describe intended warmups in `notes`.
+A cardio entry is **either** one straight run **or** one interval block.
+
+**A straight run** is the triple `distance` / `duration` / `pace`, of which **any two fix the
+third**. Give a time and a pace and the distance follows, which is how a treadmill works; give a
+distance and a time and you get your pace. Duration is the anchor: changing the time keeps the pace
+you set and moves the distance.
+
+**An interval block** is one `pattern` string, which the app expands into rounds:
+
+```
+pattern = leg + leg + ... x rounds
+leg     = <time> [name] [@ <pace>]
+```
+
+```json
+{ "type": "cardio", "name": "Treadmill Intervals",
+  "pattern": "1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6", "rest": "2:30" }
+```
+
+That is six rounds of two legs — twelve rows — and it logs with **one tap**. Any single round can
+then be corrected without touching the other five, and a round you change by hand keeps its own
+numbers even if you later fix the pattern.
+
+The parser is forgiving, because this gets typed on a phone between sets. `+` or `,` separates legs;
+`@` or `-` separates a leg's parts; the round count may lead or trail; brackets are ignored; and
+`min`, `mins per km` and `min/km` all work. So this is the same block:
+
+```
+(1 min - 8 mins per km + 1:30 - walk - 6 mins per km) x 6
+```
+
+The app always echoes back the canonical form as you type, so a mis-read is visible before you save
+it. Two rules are worth remembering, and both are stated on screen next to the field:
+
+- A bare **leg time** is **seconds** — `90` is 1:30. Interval legs are short.
+- A bare **pace** is **minutes** per unit — `8` is 8:00/km. That is how paces are written.
+
+Legs are **timed, not measured**: write the time a leg takes, not `400m`. A distance there would be
+ambiguous with a duration, so it is refused rather than guessed at.
+
+The older `"repeat": 6` form still imports — it becomes six rounds of one leg built from the
+entry's own duration and pace.
 
 ### A complete running / mixed example
 
@@ -307,22 +345,23 @@ Every field the app understands, in one routine:
 
 ```json
 {
-  "//": "Each cardio entry logs ONE effort, so intervals are one entry per rep.",
+  "//": "A cardio entry is EITHER one straight run OR one interval block.",
   "name": "Run with Upper Body",
-  "description": "Zone 2 base, 2 x 400m, then pressing and pulling. ~60 min.",
+  "description": "Zone 2 base, 6 x 400m, then pressing and pulling. ~60 min.",
   "entries": [
     { "type": "cardio", "name": "Warmup Jog",
       "distance": 1.2, "distanceUnit": "km", "duration": "8:00", "rest": "1:30",
       "notes": "Easy, nose breathing only" },
 
-    { "type": "cardio", "name": "400m Repeat", "group": "I",
-      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30",
-      "notes": ["Target 1:35", "Walk the rest, do not sit down"] },
-    { "type": "cardio", "name": "400m Repeat", "group": "I",
-      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30" },
+    { "//": "One entry. Six rounds of two legs, logged in one tap.",
+      "type": "cardio", "name": "400m Repeat", "group": "I",
+      "pattern": "1:35 @ 4:00/km + 1:30 walk @ 9:00/km x 6",
+      "distanceUnit": "km", "rest": "2:30",
+      "notes": ["Target 1:35 per rep", "Walk the rest, do not sit down"] },
 
-    { "type": "cardio", "name": "Cooldown Jog",
-      "distance": 1.5, "distanceUnit": "km", "duration": "11:00" },
+    { "//": "A plain run can target a PACE instead of a distance.",
+      "type": "cardio", "name": "Cooldown Jog",
+      "duration": "11:00", "pace": "7:20", "distanceUnit": "km" },
 
     { "name": "Incline Bench Press", "group": "B", "rest": "2:30",
       "sets": [
@@ -402,7 +441,7 @@ autocomplete, so you can still just type.
 
 The Routines tab has a **Generate a routine with an AI tool** card with a *Copy the AI prompt*
 button. The prompt is self-contained — it specifies every field, both set-target shapes, what
-`group` does, how to express intervals, which cardio metrics are targetable, and the duration
+`group` does, how to write an interval `pattern`, which cardio metrics are targetable, and the duration
 formats — and embeds both worked examples below. Paste it into any AI chat tool, fill in the
 `WHAT I WANT` block at the top, and paste the JSON it returns into *Import*.
 

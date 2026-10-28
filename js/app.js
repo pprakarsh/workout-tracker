@@ -13,6 +13,7 @@ import * as sessionView from './views/session.js';
 import * as historyView from './views/history.js';
 import * as routinesView from './views/routines.js';
 import { entryActions, handleFieldInput } from './views/entry.js';
+import { cardioActions } from './views/cardio.js';
 
 const VIEWS = {
   now: nowView,
@@ -30,6 +31,7 @@ const TITLES = {
 
 const ACTIONS = {
   ...entryActions,
+  ...cardioActions,
   ...nowView.nowActions,
   ...sessionView.sessionActions,
   ...historyView.historyActions,
@@ -115,7 +117,7 @@ document.addEventListener('click', async (ev) => {
 // Live field edits persist silently (no re-render) so the keyboard and caret stay put.
 document.addEventListener('input', async (ev) => {
   const t = ev.target;
-  if (t.dataset?.f) return handleFieldInput(t);
+  if (t.dataset?.f || t.dataset?.lf) return handleFieldInput(t);
   if (t.dataset?.sf) return sessionView.handleSessionField(t);
   if (t.dataset?.rf) return routinesView.handleRoutineField(t);
   return undefined;
@@ -190,9 +192,11 @@ document.addEventListener('blur', (ev) => {
 
 // Enter in a set field moves to the next field instead of submitting anything.
 document.addEventListener('keydown', (ev) => {
-  if (ev.key !== 'Enter' || !ev.target.dataset?.f) return;
+  if (ev.key !== 'Enter') return;
+  const kind = ev.target.dataset?.f ? 'f' : (ev.target.dataset?.lf ? 'lf' : null);
+  if (!kind) return;
   ev.preventDefault();
-  const inputs = [...document.querySelectorAll('#viewRoot input[data-f]')];
+  const inputs = [...document.querySelectorAll(`#viewRoot input[data-${kind}]`)];
   const i = inputs.indexOf(ev.target);
   if (i >= 0 && i < inputs.length - 1) inputs[i + 1].focus();
   else ev.target.blur();

@@ -7,6 +7,7 @@ import {
   download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, fmtReps, uid,
 } from './util.js';
 import { pace, targetLine, loadLabel } from './format.js';
+import { patternText, legTotals, byRound, intervalSummary, fmtPace } from './cardio.js';
 
 export const SCHEMA = 'workout-tracker/v1';
 
@@ -65,7 +66,10 @@ export function routineObject(r) {
       }
       if (e.targetDistance !== null) { o.distance = e.targetDistance; o.distanceUnit = e.distanceUnit || 'km'; }
       if (e.targetDuration) o.duration = fmtClock(e.targetDuration);
-      if (e.repeat && e.repeat > 1) o.repeat = e.repeat;
+      if (e.targetPace) o.pace = fmtClock(e.targetPace);
+      // one readable string instead of a nested legs array: it round-trips
+      // through parseIntervals and a human can edit it
+      if (e.legs && e.legs.length) o.pattern = patternText(e.legs, e.rounds, e.distanceUnit || 'km');
       if (e.rest) o.rest = fmtClock(e.rest);
       if (e.notes) o.notes = e.notes;
       return o;
@@ -161,6 +165,9 @@ const CSV_COLS = [
   'session_rpe', 'bodyweight', 'session_notes',
   // appended, never inserted: existing columns keep their positions
   'rir', 'warmup', 'set_label', 'interval_rep', 'interval_of',
+  // the interval redesign: one row per LEG of one round, so a treadmill block
+  // exports as data instead of a single collapsed line
+  'leg_label', 'leg_index', 'pace_seconds',
 ];
 
 export function csvRows(sessions) {
@@ -171,13 +178,31 @@ export function csvRows(sessions) {
     s.entries.forEach((e) => {
       if (e.type === 'cardio') {
         const l = e.log || {};
+        const du = l.distanceUnit || '';
+        if (l.legs && l.legs.length) {
+          // one row per logged leg; an unticked leg is plan, not history
+          l.legs.filter((lg) => lg.done).forEach((lg) => {
+            const dist = lg.duration && lg.pace ? Math.round((lg.duration / lg.pace) * 1000) / 1000 : '';
+            rows.push([...base, e.name, 'cardio', e.group || '',
+              '', '', '', '', '', '',
+              fmtNum(dist), du, lg.duration ?? '',
+              lg.pace ? fmtPace(lg.pace, du || 'km') : '',
+              fmtNum(l.avgHr), fmtNum(l.maxHr), fmtNum(l.elevation),
+              'yes', l.note || '', ...tail,
+              '', '', '', lg.round, e.rounds ?? '',
+              lg.label || '', lg.leg + 1, lg.pace ?? ''].map(csvCell).join(','));
+          });
+          return;
+        }
+        if (!l.done) return;
         rows.push([...base, e.name, 'cardio', e.group || '',
           '', '', '', '', '', '',
-          fmtNum(l.distance), l.distanceUnit || '', l.duration ?? '',
-          pace(l.distance, l.duration, l.distanceUnit),
+          fmtNum(l.distance), du, l.duration ?? '',
+          l.pace ? fmtPace(l.pace, du || 'km') : pace(l.distance, l.duration, du),
           fmtNum(l.avgHr), fmtNum(l.maxHr), fmtNum(l.elevation),
-          l.done ? 'yes' : 'no', l.note || '', ...tail,
-          '', '', '', e.repIndex ?? '', e.repTotal ?? ''].map(csvCell).join(','));
+          'yes', l.note || '', ...tail,
+          '', '', '', '', '',
+          '', '', l.pace ?? ''].map(csvCell).join(','));
       } else {
         const labels = setLabels(e.sets || []);
         // only ticked sets: an unticked pre-materialised row is plan, not log
@@ -187,7 +212,8 @@ export function csvRows(sessions) {
             i + 1, fmtNum(x.weight), x.unit || '', fmtNum(x.reps), fmtNum(x.rpe), x.rest ?? '',
             '', '', '', '', '', '', '',
             x.done ? 'yes' : 'no', x.note || '', ...tail,
-            fmtNum(x.rir), x.warmup ? 'yes' : 'no', labels[i], '', ''].map(csvCell).join(','));
+            fmtNum(x.rir), x.warmup ? 'yes' : 'no', labels[i], '', '',
+            '', '', ''].map(csvCell).join(','));
         });
       }
     });
@@ -241,10 +267,37 @@ export function sessionMarkdown(s) {
       if (sets.some((x) => x.warmup)) L.push('_W = warmup set; excluded from volume._');
     } else {
       const l = e.log || {};
+      const du = l.distanceUnit || 'km';
+      // an interval block: a table of rounds, which is what you actually ran
+      if (l.legs && l.legs.length) {
+        const multi = (e.legs || []).length > 1;
+        L.push(`**Pattern** \`${patternText(e.legs, e.rounds, du)}\``);
+        const summary = intervalSummary(l, du);
+        L.push(summary ? `**Logged** ${summary}` : '_nothing logged_');
+        L.push('');
+        L.push('| Round | Leg | Time | Pace | Dist | ✓ |');
+        L.push('|---:|:--|---:|---:|---:|:--:|');
+        byRound(l.legs).forEach((group, r) => group.forEach((lg, i) => {
+          const t = legTotals([lg]);
+          L.push(`| ${r + 1}${multi ? String.fromCharCode(97 + i) : ''} | ${lg.label || '—'} | ${
+            lg.duration ? fmtClock(lg.duration) : '—'} | ${
+            lg.pace ? fmtPace(lg.pace, du) : '—'} | ${
+            t.distance ? `${fmtNum(t.distance)} ${du}` : '—'} | ${lg.done ? '✓' : ''} |`);
+        }));
+        const extra = [
+          l.avgHr ? `avg HR ${fmtNum(l.avgHr)}` : null,
+          l.maxHr ? `max HR ${fmtNum(l.maxHr)}` : null,
+          l.rpe !== null && l.rpe !== undefined ? `RPE ${fmtNum(l.rpe)}` : null,
+          l.note || null,
+        ].filter(Boolean);
+        if (extra.length) { L.push(''); L.push(`_${extra.join(' · ')}_`); }
+        return;
+      }
+      if (!l.done) { L.push('_nothing logged_'); return; }
       const rows = [
-        ['Distance', l.distance !== null && l.distance !== undefined ? `${fmtNum(l.distance)} ${l.distanceUnit || 'km'}` : null],
-        ['Duration', l.duration ? fmtClock(l.duration) : null],
-        ['Pace', pace(l.distance, l.duration, l.distanceUnit) || null],
+        ['Distance', l.distance !== null && l.distance !== undefined ? `${fmtNum(l.distance)} ${du}` : null],
+        ['Time', l.duration ? fmtClock(l.duration) : null],
+        ['Pace', l.pace ? fmtPace(l.pace, du) : (pace(l.distance, l.duration, du) || null)],
         ['Avg HR', l.avgHr ? `${fmtNum(l.avgHr)} bpm` : null],
         ['Max HR', l.maxHr ? `${fmtNum(l.maxHr)} bpm` : null],
         ['Elevation', l.elevation ? `${fmtNum(l.elevation)} m` : null],

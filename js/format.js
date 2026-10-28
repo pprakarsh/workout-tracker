@@ -4,7 +4,11 @@
 // the screen does, and a core module must never import from a view — see the
 // dependency rule in ARCHITECTURE.md. Everything here is a pure string builder:
 // no DOM, no HTML, no escaping. Callers escape.
-import { state, setLabels } from './store.js';
+import { state } from './store.js';
+import { setLabels } from './model.js';
+import {
+  isIntervals, patternText, paceOf, fmtPace, intervalSummary, totalsText,
+} from './cardio.js';
 import { fmtNum, fmtReps, fmtClock, fmtDur } from './util.js';
 
 /** "60×10 · 70×8 · 80×5-6" for a per-set plan. */
@@ -31,22 +35,25 @@ export function targetLine(e) {
         bits.push(`@ ${fmtNum(e.weight)} ${e.unit || state.settings.unit}`);
       }
     }
+  } else if (isIntervals(e)) {
+    // the pattern says it all: "1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6"
+    const unit = e.distanceUnit || state.settings.distanceUnit;
+    bits.push(patternText(e.legs, e.rounds, unit));
+    const totals = totalsText(e.legs, e.rounds, unit);
+    if (totals) bits.push(totals);
   } else {
     if (e.targetDistance !== null && e.targetDistance !== undefined) {
       bits.push(`${fmtNum(e.targetDistance)} ${e.distanceUnit || state.settings.distanceUnit}`);
     }
     if (e.targetDuration) bits.push(fmtDur(e.targetDuration));
-    if (e.repeat && e.repeat > 1) bits.unshift(`${e.repeat} ×`);
+    if (e.targetPace) bits.push(fmtPace(e.targetPace, e.distanceUnit || state.settings.distanceUnit));
   }
   if (e.rest) bits.push(`rest ${fmtClock(e.rest)}`);
-  return bits.join(' · ');
+  return bits.join(' \u00b7 ');
 }
 
 /** "5:19/km" from a distance and a duration in seconds. */
-export function pace(distance, seconds, unit) {
-  if (!distance || !seconds) return '';
-  return `${fmtClock(seconds / distance)}/${unit || 'km'}`;
-}
+export const pace = paceOf;
 
 /**
  * How a set's load reads: "BW", "BW+10kg", "102.5kg", or an em dash when nothing
@@ -78,16 +85,28 @@ export function effortTag(s) {
 export function logSummary(e, { workingOnly = false } = {}) {
   if (e.type === 'cardio') {
     const l = e.log || {};
+    const unit = l.distanceUnit || 'km';
+    // an interval block reports as rounds; only ticked legs count
+    if (l.legs && l.legs.length) {
+      const iv = intervalSummary(l, unit);
+      const extra = [];
+      if (l.avgHr) extra.push(`avg ${fmtNum(l.avgHr)} bpm`);
+      if (l.rpe) extra.push(`RPE ${fmtNum(l.rpe)}`);
+      return iv ? [iv, ...extra].join(' \u00b7 ') : '';
+    }
+    // a plain run reports nothing until it is confirmed: the numbers are
+    // pre-filled from the plan, so an unticked log is intent, not history
+    if (!l.done) return '';
     const bits = [];
-    if (l.distance !== null && l.distance !== undefined) bits.push(`${fmtNum(l.distance)} ${l.distanceUnit || 'km'}`);
+    if (l.distance !== null && l.distance !== undefined) bits.push(`${fmtNum(l.distance)} ${unit}`);
     if (l.duration) bits.push(fmtClock(l.duration));
-    const p = pace(l.distance, l.duration, l.distanceUnit);
+    const p = l.pace ? fmtPace(l.pace, unit) : paceOf(l.distance, l.duration, unit);
     if (p) bits.push(p);
     if (l.avgHr) bits.push(`avg ${fmtNum(l.avgHr)} bpm`);
     if (l.maxHr) bits.push(`max ${fmtNum(l.maxHr)} bpm`);
     if (l.elevation) bits.push(`${fmtNum(l.elevation)} m elev`);
     if (l.rpe) bits.push(`RPE ${fmtNum(l.rpe)}`);
-    return bits.join(' · ');
+    return bits.join(' \u00b7 ');
   }
   // Only ticked sets. Since the plan is pre-materialised, an unticked row is
   // intent, not history -- showing it would report the plan as if it happened.

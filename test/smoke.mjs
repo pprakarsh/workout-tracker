@@ -41,6 +41,7 @@ const fmt = await import(`${APP}/js/format.js`);
 const q = await import(`${APP}/js/queries.js`);
 const { state } = store;
 const util = await import(`${APP}/js/util.js`);
+const cardioLib = await import(`${APP}/js/cardio.js`);
 const parseDurCheck = (v, bare) => (bare ? util.parseDur(v, { bare }) : util.parseDur(v));
 
 const renderAll = (label) => {
@@ -519,14 +520,22 @@ ok(warm.targetDuration === 480, `cardio duration "8:00" -> 480s (${warm.targetDu
 ok(warm.rest === 90, `rest works on a cardio entry too ("1:30" -> ${warm.rest}s)`);
 ok(warm.notes === 'Easy, nose breathing only', 'cardio notes imported');
 ok(warm.setTargets === null && warm.targetSets === null, 'no set targets on cardio');
-ok(warm.repeat === null, 'an entry without repeat has none');
+ok(warm.legs === null && warm.rounds === null, 'a straight run carries no interval pattern');
 
-ok(interval.repeat === 6, `intervals expressed as repeat: 6 on ONE entry (${interval.repeat})`);
+ok(interval.legs?.length === 2, `intervals are ONE entry holding a 2-leg pattern (${interval.legs?.length})`);
+ok(interval.rounds === 6, `repeated 6 times (${interval.rounds})`);
+ok(interval.legs[0].duration === 95 && interval.legs[0].pace === 240,
+  `first leg 1:35 @ 4:00/km (${interval.legs[0].duration}s @ ${interval.legs[0].pace}s)`);
+ok(interval.legs[1].label === 'walk' && interval.legs[1].duration === 90,
+  'second leg keeps its name and its own time');
+ok(cardioLib.patternText(interval.legs, interval.rounds, 'km')
+  === '1:35 @ 4:00/km + 1:30 walk @ 9:00/km \u00d7 6', 'and renders back to the same pattern');
 ok(interval.group === 'I', 'with its own group label');
-ok(interval.targetDuration === 95 && interval.targetDistance === 0.4 && interval.rest === 150,
-  'carrying per-rep distance, duration and rest');
+ok(interval.rest === 150, 'carrying its rest target');
 ok(interval.notes.split('\n').length === 2, 'cardio notes accept a list of lines');
-ok(cool.rest === null, 'an entry with no rest target has none — not a default');
+ok(cool.rest === null, 'an entry with no rest target has none \u2014 not a default');
+ok(cool.targetPace === 440 && cool.targetDuration === 660,
+  `a plain run can target a pace instead of a distance (${cool.targetPace}s/km)`);
 
 ok(inc.setTargets?.length === 3, 'per-set plan on the lifting entry');
 ok(inc.setTargets[2].repsMin === 5 && inc.setTargets[2].repsMax === 6, 'rep range inside the plan');
@@ -535,49 +544,197 @@ ok(inc.notes.split('\n').length === 2, 'notes list joined into lines');
 ok(chin.setTargets.length === 3 && chin.setTargets[0].weight === null && chin.setTargets[0].repsMin === 8,
   'bodyweight shorthand "x8" imported with no weight');
 
-section('intervals expand into one effort per repetition at session start');
-const ivs = await store.startSession(run.id);
-ok(ivs.entries.length === 10, `5 routine entries became 10 session entries (${ivs.entries.length})`);
-const reps = ivs.entries.filter((e) => e.name === '400m Repeat');
-ok(reps.length === 6, `6 separate efforts to log (${reps.length})`);
-ok(reps.every((e) => e.group === 'I'), 'all sharing the group label');
-ok(reps.map((e) => e.repIndex).join(',') === '1,2,3,4,5,6', 'numbered 1..6 for display');
-ok(reps.every((e) => e.repTotal === 6), 'each knows the total');
-ok(reps.every((e) => e.log && e.sets === null), 'each has its own cardio log');
-ok(store.blockAt(ivs.entries, ivs.entries.indexOf(reps[0])).length === 6,
-  'and they form a single block, so Next skips the whole set of intervals');
-ok(reps.every((e) => e.rest === 150), 'each rep carries the rest target');
-await store.updateLog(reps[0].id, { distance: 0.4, duration: 96, done: true });
-await store.updateLog(reps[1].id, { distance: 0.4, duration: 98, done: true });
-ok(store.entryStatus(reps[0]) === 'done' && store.entryStatus(reps[2]) === 'pending',
-  'reps are completed independently');
+section('pace arithmetic: a bare pace is minutes, a bare leg time is seconds');
+ok(cardioLib.parsePace('8:00/km') === 480, 'an explicit pace with a unit');
+ok(cardioLib.parsePace('6') === 360, 'a bare pace is MINUTES per unit (6 -> 6:00/km)');
+ok(cardioLib.parsePace('5 mins per km') === 300, '"5 mins per km" spelled out');
+ok(cardioLib.parsePace('8 min/km') === 480, '"8 min/km"');
+ok(cardioLib.parsePace(240) === 14400, 'a bare NUMBER typed as a pace is minutes too (240 -> 240:00)');
+ok(cardioLib.storedSeconds(240, cardioLib.parsePace) === 240,
+  'but a stored number is already seconds and is not re-scaled');
+ok(cardioLib.fmtPace(390, 'km') === '6:30/km', 'and renders back');
+ok(cardioLib.parsePace('') === null && cardioLib.parsePace(null) === null, 'empty is null, not zero');
 
-section('saving back collapses the expanded intervals again');
+section('normalising an entry twice must not change it');
+// Entries are re-normalised on every session start and every save back to a
+// routine. When a stored value was parsed as human input again, each pass
+// multiplied every cardio duration and pace by sixty.
+const once = store.normalizeEntry({ type: 'cardio', name: 'Jog', duration: '8:00', pace: '7:20' });
+const twice = store.normalizeEntry(once);
+ok(once.targetDuration === 480 && once.targetPace === 440, 'parsed from text the first time');
+ok(twice.targetDuration === 480 && twice.targetPace === 440,
+  `and unchanged the second time (${twice.targetDuration}s, ${twice.targetPace}s/km)`);
+ok(JSON.stringify(store.normalizeEntry(twice)) === JSON.stringify(twice), 'idempotent from then on');
+const ivOnce = store.normalizeEntry({ type: 'cardio', name: 'I', pattern: '1:35 @ 4:00/km + 1:30 walk @ 9:00/km x 6' });
+ok(JSON.stringify(store.normalizeEntry(ivOnce).legs) === JSON.stringify(ivOnce.legs),
+  'an interval pattern survives re-normalisation too');
+ok(store.normalizeEntry({ type: 'cardio', name: 'X', duration: 20, pace: 6 }).targetPace === 360,
+  'while a bare number from a human still means minutes');
+
+section('a run is any two of time, pace and distance');
+const rr = (log, changed) => cardioLib.resolveRun(log, changed);
+ok(rr({ duration: 1800, pace: 360 }, 'pace').distance === 5, '30:00 at 6:00/km is 5 km');
+ok(rr({ duration: 1800, distance: 5 }, 'distance').pace === 360, '5 km in 30:00 is 6:00/km');
+ok(rr({ distance: 5, pace: 360 }, 'pace').duration === 1800, '5 km at 6:00/km takes 30:00');
+// the anchor rule: editing the TIME holds the pace you set, as a treadmill does
+const held = rr({ duration: 2400, pace: 360, distance: 5 }, 'duration');
+ok(held.pace === 360 && held.distance === 6.667,
+  `editing the time keeps the pace and moves the distance (${held.distance} km)`);
+ok(rr({ duration: 1800 }, 'duration').distance === undefined, 'one number alone derives nothing');
+
+section('the interval pattern parses the way the on-screen hint says it does');
+const pp = (t) => { const r = cardioLib.parseIntervals(t); return r ? cardioLib.patternText(r.legs, r.rounds, 'km') : null; };
+const CANON = '1:00 @ 8:00/km + 1:30 walk @ 6:00/km \u00d7 6';
+ok(pp('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6') === CANON, 'the canonical form round-trips');
+ok(pp('(1:00 @ 8:00/km + 1:30 walk @ 6:00/km) x 6') === CANON, 'brackets are ignored');
+ok(pp('6 x (1:00 @ 8:00/km + 1:30 walk @ 6:00/km)') === CANON, 'the round count may lead');
+ok(pp('1:00 @ 8:00/km + 1:30 walk @ 6:00/km \u00d7 6') === CANON, 'the multiplication sign works too');
+// the notation a human actually types, dashes and spelled-out units and all
+ok(pp('1 min - 8 mins per km + 1:30 - walk - 6 mins per km x 6') === CANON,
+  `loose notation reaches the same pattern (${pp('1 min - 8 mins per km + 1:30 - walk - 6 mins per km x 6')})`);
+ok(pp('1 min @ 8 min/km + 1:30 walk @ 6 min/km x 6') === CANON, 'as does "min/km"');
+ok(pp('60 @ 8:00/km + 90 walk @ 6:00/km x 6') === CANON, 'a bare leg time is SECONDS');
+ok(pp('1:00 hard + 1:00 easy x 10') === '1:00 hard + 1:00 easy \u00d7 10', 'paces are optional');
+ok(pp('nonsense') === null, 'a bare word is not a pattern');
+ok(pp('') === null && cardioLib.parseIntervals(null) === null, 'nothing in, nothing out');
+// "400m" would otherwise be read as 400 MINUTES by the duration parser
+ok(cardioLib.parseIntervals('400m @ 6:00/km').legs[0].duration === null,
+  'a leg is timed, not measured: "400m" is refused rather than read as 400 minutes');
+ok(pp('1:00 @ 8:00/km x 999').endsWith('\u00d7 50'), 'the round count is capped');
+
+section('interval totals are honest about what they do not know');
+const tot = (t) => { const r = cardioLib.parseIntervals(t); return cardioLib.legTotals(r.legs); };
+const t1 = tot('1:00 @ 8:00/km + 1:30 @ 6:00/km');
+ok(t1.duration === 150 && t1.distance === 0.375 && t1.partial === false,
+  `a fully paced pattern totals exactly (${t1.distance} km)`);
+const t2 = tot('1:00 @ 8:00/km + 1:00 rest');
+ok(t2.partial === true, 'a leg with no pace makes the distance a floor, not a figure');
+ok(cardioLib.totalsText(tot('1:00 @ 8:00/km + 1:00 rest') && cardioLib.parseIntervals('1:00 @ 8:00/km + 1:00 rest').legs, 6, 'km').includes('\u2265'),
+  'and that is said out loud with a >= sign');
+
+section('an interval block is ONE session entry, with the rounds inside it');
+const ivs = await store.startSession(run.id);
+ok(ivs.entries.length === 5, `5 routine entries stay 5 session entries (${ivs.entries.length})`);
+const iv = ivs.entries.find((e) => e.name === '400m Repeat');
+ok(iv.log.legs.length === 12, `2 legs x 6 rounds = 12 rows to log (${iv.log.legs.length})`);
+ok(iv.log.legs.every((lg) => !lg.done), 'none ticked yet');
+ok(iv.log.legs[0].duration === 95 && iv.log.legs[0].pace === 240,
+  'pre-filled from the plan, so logging is confirming');
+ok(iv.log.legs.map((lg) => lg.round).join('') === '112233445566', 'rounds in order');
+ok(store.blockAt(ivs.entries, ivs.entries.indexOf(iv)).length === 1,
+  'and it is a single block \u2014 Next no longer steps through six cards');
+ok(fmt.logSummary(iv) === '', 'a pre-filled but unconfirmed block reports nothing');
+
+section('the whole block logs in one tap');
+const nLegs = await store.logAllRounds(iv.id);
+ok(nLegs === 12, `one action logged all 12 legs (${nLegs})`);
+ok(iv.log.legs.every((lg) => lg.done), 'every leg ticked');
+ok(store.entryStatus(iv) === 'done', 'and the entry counts as done');
+ok(fmt.logSummary(iv) === '6 rounds \u00b7 18:30 \u00b7 3.375 km',
+  `summarised as rounds, time and distance (${fmt.logSummary(iv)})`);
+ok(await store.logAllRounds(iv.id) === 0 && iv.log.legs.every((lg) => !lg.done),
+  'tapping again clears the block');
+
+section('one round can be corrected without touching the other five');
+await store.logAllRounds(iv.id);
+const slow = iv.log.legs.find((lg) => lg.round === 4 && lg.leg === 0);
+await store.updateLeg(iv.id, slow.id, { duration: 108 });
+ok(slow.duration === 108 && slow.edited === true, 'round 4 holds its own slower time');
+ok(iv.log.legs.filter((lg) => lg.leg === 0 && lg.duration === 95).length === 5,
+  'the other five working legs are untouched');
+ok(fmt.logSummary(iv).includes('1 leg adjusted'), 'the summary says one leg was adjusted');
+
+section('fixing the pattern leaves a hand-edited round alone');
+await store.setIntervalPlan(iv.id, cardioLib.parseIntervals('1:40 @ 4:00/km + 1:30 walk @ 9:00/km x 6'));
+ok(iv.log.legs.filter((lg) => lg.leg === 0 && lg.duration === 100).length === 5,
+  'five working legs follow the new plan');
+const stillSlow = iv.log.legs.find((lg) => lg.round === 4 && lg.leg === 0);
+ok(stillSlow.duration === 108, `the edited round kept 1:48 (${stillSlow.duration}s)`);
+ok(iv.log.legs.every((lg) => lg.done), 'and nothing was un-ticked by the change');
+await store.resetLeg(iv.id, stillSlow.id);
+ok(stillSlow.duration === 100 && stillSlow.edited === false, 'it can be put back on plan');
+
+section('growing the round count keeps what is already logged');
+await store.setIntervalPlan(iv.id, cardioLib.parseIntervals('1:40 @ 4:00/km + 1:30 walk @ 9:00/km x 8'));
+ok(iv.log.legs.length === 16, `8 rounds now (${iv.log.legs.length} legs)`);
+ok(iv.log.legs.filter((lg) => lg.done).length === 12, '12 legs stay logged, the new 4 do not');
+
+section('a straight run derives the third number from the other two');
+const jog = ivs.entries.find((e) => e.name === 'Warmup Jog');
+await store.updateLog(jog.id, { duration: 1800 });
+await store.updateLog(jog.id, { pace: 360 });
+ok(jog.log.distance === 5, `30:00 at 6:00/km is 5 km (${jog.log.distance})`);
+await store.updateLog(jog.id, { distance: 4 });
+ok(jog.log.pace === 450, `shortening it to 4 km repaces to 7:30/km (${jog.log.pace})`);
+await store.updateLog(jog.id, { duration: 2400 });
+ok(jog.log.pace === 450 && jog.log.distance === 5.333,
+  `editing the time holds the pace and moves the distance (${jog.log.distance})`);
+ok(fmt.logSummary(jog) === '', 'still nothing logged until it is confirmed');
+await store.updateLog(jog.id, { done: true, completedAt: Date.now() });
+ok(fmt.logSummary(jog) === '5.333 km \u00b7 40:00 \u00b7 7:30/km', `then it reads ${fmt.logSummary(jog)}`);
+
+section('an interval block saves back to its routine as one entry');
 await store.saveSessionBackToRoutine();
 const runAfter = store.getRoutine(run.id);
-ok(runAfter.entries.length === 5, `routine stays 5 entries, not 10 (${runAfter.entries.length})`);
+ok(runAfter.entries.length === 5, `routine stays 5 entries (${runAfter.entries.length})`);
 const ivAfter = runAfter.entries.find((e) => e.name === '400m Repeat');
-ok(ivAfter.repeat === 6, `repeat preserved as ${ivAfter.repeat}`);
+ok(ivAfter.rounds === 8 && ivAfter.legs.length === 2, `pattern preserved as 2 legs x ${ivAfter.rounds}`);
 await store.discardSession();
 
-section('auto group labels when intervals have none');
-const noGroup = await store.createRoutine({
-  name: 'Bare Intervals',
-  entries: [
-    { type: 'cardio', name: 'Hill Sprint', repeat: 3, duration: '0:30', rest: '2:00' },
-    { type: 'cardio', name: 'Flat Sprint', repeat: 2, duration: '0:20', rest: '1:30' },
-  ],
+section('old routines that used `repeat` still work');
+const legacy = await store.createRoutine({
+  name: 'Legacy Intervals',
+  entries: [{ type: 'cardio', name: 'Hill Sprint', repeat: 3, duration: '0:30', rest: '2:00' }],
 });
-const bg = await store.startSession(noGroup.id);
-ok(bg.entries.length === 5, `3 + 2 efforts (${bg.entries.length})`);
-const g1 = [...new Set(bg.entries.filter((e) => e.name === 'Hill Sprint').map((e) => e.group))];
-const g2 = [...new Set(bg.entries.filter((e) => e.name === 'Flat Sprint').map((e) => e.group))];
-ok(g1.length === 1 && g2.length === 1, 'each interval set got one label');
-ok(g1[0] !== g2[0], `and the two sets got different labels (${g1[0]} vs ${g2[0]})`);
-ok(store.blockAt(bg.entries, 0).length === 3 && store.blockAt(bg.entries, 3).length === 2,
-  'so they form two separate blocks of 3 and 2');
+const le = legacy.entries[0];
+ok(le.rounds === 3 && le.legs.length === 1,
+  `repeat: 3 became 3 rounds of one leg (${le.rounds} x ${le.legs.length})`);
+ok(le.legs[0].duration === 30, 'the leg took the entry duration');
+const ls = await store.startSession(legacy.id);
+ok(ls.entries.length === 1 && ls.entries[0].log.legs.length === 3,
+  'and it opens as one entry with three rounds, not three entries');
 await store.discardSession();
-await store.deleteRoutine(noGroup.id);
+await store.deleteRoutine(legacy.id);
+
+section("the README's own examples still import");
+// Documentation that claims a format must be checked against the parser, or it
+// drifts. Every full JSON routine block in the README is imported for real.
+const readme = readFileSync(`${APP}/README.md`, 'utf8');
+const mdBlocks = [...readme.matchAll(/```json\n([\s\S]*?)```/g)]
+  .map((m) => m[1]).filter((b) => b.trim().startsWith('{'));
+ok(mdBlocks.length >= 2, `${mdBlocks.length} routine examples in the README`);
+let mdOk = 0;
+for (const b of mdBlocks) {
+  try { JSON.parse(b); mdOk++; } catch { /* reported below */ }
+}
+ok(mdOk === mdBlocks.length, `all ${mdBlocks.length} are valid JSON (${mdOk} parsed)`);
+const mdRun = mdBlocks.map((b) => JSON.parse(b)).find((o) => /Run with/.test(o.name || ''));
+ok(!!mdRun, 'the running example is there');
+const mdNorm = store.normalizeRoutine(mdRun);
+const mdIv = mdNorm.entries.find((e) => e.legs);
+ok(mdIv && mdIv.legs.length === 2 && mdIv.rounds === 6,
+  `its interval pattern imports as 2 legs x 6 rounds (${mdIv?.legs?.length} x ${mdIv?.rounds})`);
+ok(mdIv.legs[1].label === 'walk', 'with the named recovery leg intact');
+const mdCool = mdNorm.entries.find((e) => /Cooldown/.test(e.name));
+ok(mdCool.targetPace === 440 && mdCool.targetDistance === null,
+  'and the pace-targeted run really does target a pace and no distance');
+
+section('a pre-filled log is a plan, not history');
+// A cardio log now opens pre-filled from its targets. Anything that counts or
+// reports work must therefore look at `done`, never at "has a distance".
+const freshS = await store.startSession(run.id);
+const freshJog = freshS.entries.find((e) => e.name === 'Warmup Jog');
+ok(freshJog.log.distance === 1.2, 'the plan is sitting in the log, ready to confirm');
+ok(store.entryStatus(freshJog) === 'pending', 'but the entry is still pending');
+ok(fmt.logSummary(freshJog) === '', 'and it reports nothing');
+ok(xi.csvRows([freshS]).split('\n').length === 1, 'it produces no CSV row');
+ok(q.lastLogFor('Warmup Jog') === null, 'and does not become a "last time" reference');
+const fpBefore = store.dataFingerprint().loggedSets;
+await store.updateLog(freshJog.id, { done: true, completedAt: Date.now() });
+ok(store.dataFingerprint().loggedSets === fpBefore + 1,
+  'only confirming it counts towards the sync fingerprint');
+await store.discardSession();
+
 
 section('the running sample survives an export/import round trip');
 const runJson = JSON.stringify(xi.routineObject(run));
@@ -609,11 +766,15 @@ for (const [label, needle] of [
   ['that a group does not share rest', 'does NOT share one rest'],
   ['the two set-target shapes', 'A DIFFERENT target per set'],
   ['the bodyweight shorthand', '"x8"'],
-  ['that one cardio entry is one effort', 'one cardio entry logs ONE effort'],
-  ['that intervals use repeat', 'express intervals with "repeat"'],
+  ['that a cardio entry is a run OR a block', 'EITHER one straight run OR one interval block'],
+  ['the interval pattern form', '"<leg> + <leg> x <rounds>"'],
+  ['that a leg is timed, not measured', 'Legs are TIMED'],
+  ['that repeat is no longer the way', 'do NOT use "repeat"'],
   ['that warmups and RIR are logged, not targeted', 'NOT IN THE SCHEMA'],
-  ['the repeat field', '"repeat"'],
-  ['that pace and HR are not targetable', 'NO target fields for pace'],
+  ['the pattern field', '"pattern"'],
+  ['that any two of time/pace/distance suffice', 'give any TWO of these three'],
+  ['that a bare pace means minutes', 'means MINUTES per unit'],
+  ['that HR is not targetable', 'NO target fields for heart rate'],
   ['that a bare duration means minutes', 'means MINUTES here'],
   ['that // keys are ignored', 'starting with "//" is ignored'],
   ['output must be JSON only', 'Output ONLY the JSON'],
@@ -693,8 +854,9 @@ ok(ex1?.name === 'Run with Upper Body' && ex1?.entries?.length === 5,
   `example 1 is the full running routine (${ex1?.entries?.length} entries)`);
 ok(ex2?.name === 'Squat day with Push Movements' && ex2?.entries?.length === 5,
   `example 2 is the full lifting routine (${ex2?.entries?.length} entries)`);
-ok(ex1.entries.some((e) => e.type === 'cardio' && e.rest) && ex1.entries.some((e) => e.repeat === 6),
-  'example 1 still carries cardio rest and the interval repeat after being embedded');
+ok(ex1.entries.some((e) => e.type === 'cardio' && e.rest)
+  && ex1.entries.some((e) => e.pattern?.includes('x 6')),
+  'example 1 still carries cardio rest and the interval pattern after being embedded');
 ok(ex2.entries.some((e) => Array.isArray(e.sets)) && ex2.entries.some((e) => Array.isArray(e.notes)),
   'example 2 still carries a per-set plan and multi-line notes');
 
@@ -781,7 +943,7 @@ const header = wCsv.split('\n')[0].split(',');
 ok(header[0] === 'date' && header[8] === 'weight' && header[11] === 'rpe'
   && header[24] === 'session_notes',
   'existing CSV column positions unchanged');
-ok(header.slice(25).join(',') === 'rir,warmup,set_label,interval_rep,interval_of',
+ok(header.slice(25).join(',') === 'rir,warmup,set_label,interval_rep,interval_of,leg_label,leg_index,pace_seconds',
   `new CSV columns appended after the old ones (${header.slice(25).join(',')})`);
 const rows = wCsv.trim().split('\n').slice(1).map((l) => l.split(','));
 const warmCol = header.indexOf('warmup');

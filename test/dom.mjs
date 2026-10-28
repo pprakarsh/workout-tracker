@@ -612,23 +612,130 @@ await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
-section('intervals appear as separate efforts in the session list');
+section('an interval block is one card, logged in one tap');
 await xi.importFromText(JSON.stringify({
   name: 'Interval Check',
-  entries: [{ type: 'cardio', name: '200m', repeat: 4, duration: '0:40', rest: '1:30' }],
+  entries: [{
+    type: 'cardio', name: 'Treadmill Intervals', rest: '1:30',
+    pattern: '1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6',
+  }],
 }));
 await sleep(60);
 await click('#tabBar .tab[data-tab="now"]');
 const ivR = store.state.routines.find((r) => r.name === 'Interval Check');
 await click(`[data-action="routine-start"][data-id="${ivR.id}"]`, 'Start');
-ok(store.state.active.entries.length === 4, `4 efforts to log (${store.state.active.entries.length})`);
-ok(/1\/4/.test(view()), 'the Now card shows which rep you are on');
-ok($$('.card[data-entry]').length === 4, 'all four appear together as one block');
+ok(store.state.active.entries.length === 1, `one card, not six (${store.state.active.entries.length})`);
+ok($$('.card[data-entry]').length === 1, 'and one card on screen');
+const ivE = store.state.active.entries[0];
+ok(ivE.log.legs.length === 12, `holding 12 legs (${ivE.log.legs.length})`);
+ok(view().includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km'), 'the pattern is shown on the card');
+ok(view().includes('Log all 6 rounds'), 'with a single button for the whole block');
+
+section('the format is explained where the typing happens');
+ok($('[data-action="cardio-pattern"]') !== null, 'the pattern is editable from the card');
+await click('[data-action="cardio-pattern"]');
+const pat = $('#ivPattern');
+ok(pat !== null, 'the pattern editor opened');
+ok(/leg \+ leg/.test($('#modalForm').textContent), 'it states the format');
+ok($('#modalForm').textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6'),
+  'with a worked example');
+ok(/bare leg time is/i.test($('#modalForm').textContent),
+  'and spells out what a bare number means');
+ok($('#ivEcho').textContent.includes('reads as'), 'and echoes how it was understood');
+pat.value = '1 min - 8 mins per km + 1:30 - walk - 6 mins per km x 6';
+pat.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(20);
+ok($('#ivEcho').textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km'),
+  `loose notation echoes the canonical form (${$('#ivEcho').textContent.trim().slice(0, 60)})`);
+pat.value = 'nonsense';
+pat.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(20);
+ok(/not understood/i.test($('#ivEcho').textContent), 'and says so when it cannot read it');
+await click('[data-mclose]');
+
+section('one tap logs every round');
+await click('[data-action="cardio-log-all"]');
+ok(ivE.log.legs.every((lg) => lg.done), 'all 12 legs ticked from one tap');
+ok(view().includes('All 6 rounds logged'), 'and the button says so');
+
+section('a single round can still be corrected');
+await click('[data-action="cardio-rounds"]');
+const legRows = $$('.legrow[data-entry-leg]');
+ok(legRows.length === 12, `all 12 rounds listed on request (${legRows.length})`);
+const target = ivE.log.legs.find((lg) => lg.round === 3 && lg.leg === 0);
+const tInput = $(`.legrow[data-entry-leg="${target.id}"] input[data-lf="duration"]`);
+ok(tInput !== null && tInput.value === '1:00', `round 3 shows its planned time (${tInput?.value})`);
+tInput.focus();
+tInput.value = '1:12';
+tInput.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(30);
+ok(target.duration === 72 && target.edited === true, `just round 3 changed (${target.duration}s)`);
+ok(ivE.log.legs.filter((lg) => lg.leg === 0 && lg.duration === 60).length === 5,
+  'the other five are untouched');
+ok(document.activeElement === tInput, 'and the keyboard stayed in the field');
+await click(`.legrow[data-entry-leg="${target.id}"] [data-action="cardio-leg"]`);
+ok(target.done === false, 'its tick can be cleared on its own');
+
 await click('#tabBar .tab[data-tab="session"]');
-ok($$('.sess-item').length === 4, 'and as four rows in the session list');
+ok($$('.sess-item').length === 1, 'one row in the session list, not six');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
+
+section('a straight run logs a time and a pace, and explains the format there');
+await xi.importFromText(JSON.stringify({
+  name: 'Plain Run Check',
+  entries: [{ type: 'cardio', name: 'Evening Run', duration: '28:30', pace: '6:00' }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const prR = store.state.routines.find((r) => r.name === 'Plain Run Check');
+await click(`[data-action="routine-start"][data-id="${prR.id}"]`, 'Start');
+const runE = store.state.active.entries[0];
+ok($('input[data-f="pace"]') !== null, 'pace is a field you log, not just a derived number');
+ok($('input[data-f="duration"]').value === '28:30', 'the time is pre-filled from the plan');
+ok($('input[data-f="pace"]').value === '6:00', 'and so is the pace');
+ok($('input[data-f="distance"]').value === '4.75', `with the distance derived (${$('input[data-f="distance"]').value})`);
+const runCard = $('.card[data-entry]').textContent;
+ok(/any two/i.test(runCard), 'the card says any two numbers are enough');
+ok(runCard.includes('28:30') && runCard.includes('6:00'),
+  'and gives a worked example of each format');
+ok(/bare/i.test(runCard), 'and spells out what a bare number means');
+const paceIn = $('input[data-f="pace"]');
+paceIn.focus();
+paceIn.value = '5:00';
+paceIn.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(30);
+ok(runE.log.pace === 300 && runE.log.distance === 5.7,
+  `re-pacing moves the distance (${runE.log.distance} km)`);
+ok(document.activeElement === paceIn, 'and the keyboard stays in the field');
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
+section('the routine editor teaches the pattern format too');
+await click('#tabBar .tab[data-tab="routines"]');
+await click(`[data-action="routine-open"][data-id="${prR.id}"]`);
+await openBlankExerciseForm('[data-action="rentry-add"]', '+ Add exercise');
+const form = $('#modalForm');
+ok(form !== null && form.querySelector('[name="pattern"]') !== null,
+  'the exercise form has a pattern field');
+ok(form.querySelector('[name="targetPace"]') !== null, 'and a target pace field');
+// the cardio half is revealed by the type selector, not a separate screen
+const typeSel = form.querySelector('#exType');
+typeSel.value = 'cardio';
+typeSel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+await sleep(20);
+const exCardio = form.querySelector('#exCardio');
+ok(exCardio.hidden === false, 'choosing cardio reveals the cardio fields');
+ok(exCardio.textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6'),
+  'with the worked example beside the field');
+ok(/leg \+ leg/.test(exCardio.textContent), 'the format spelled out');
+ok(/one tap/i.test(exCardio.textContent), 'and what logging it will feel like');
+ok(/bare leg time is/i.test(exCardio.textContent), 'including the bare-number rule');
+ok(/any two/i.test(exCardio.textContent), 'and the any-two rule for a straight run');
+await click('[data-mclose]');
 
 section('a plan with no weight: manual entry, or bodyweight');
 await xi.importFromText(JSON.stringify({

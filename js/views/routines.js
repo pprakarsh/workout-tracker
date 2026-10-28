@@ -220,11 +220,13 @@ export function render() {
 
       <div class="divider"></div>
       <div class="tiny">Targets vs. what you log</div>
-      <p class="hint" style="margin-top:4px">A routine holds <b>targets</b> only. For cardio you can
-        target <code>distance</code>, <code>duration</code> and <code>rest</code>; pace, average and
-        max heart rate, elevation and perceived effort have no target fields — you record them while
-        logging. Put a pace or heart-rate instruction in <code>notes</code> if you want it on screen
-        during the run.</p>
+      <p class="hint" style="margin-top:4px">A routine holds <b>targets</b> only. A cardio entry is
+        either <b>one straight run</b> - give any two of <code>duration</code>, <code>pace</code>
+        and <code>distance</code> and the third is worked out - or <b>one interval block</b>,
+        written as a single <code>pattern</code> such as
+        <code>1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6</code>. The block is logged in one tap, and
+        any single round can still be corrected. Heart rate, elevation and perceived effort have no
+        target fields; you record them while logging.</p>
     </div>
     <p class="hint center" style="margin-top:18px">All data is stored on this device only.<br>
       <span class="dim">build ${esc(APP_VERSION)}</span></p>`;
@@ -258,21 +260,24 @@ export const SAMPLE = `{
 
 export const SAMPLE_RUN = `{
   "//": "Running / mixed day. Shows every field the app understands.",
-  "//2": "One cardio entry logs ONE effort. Use the repeat field for intervals and",
-  "//3": "the app expands it into that many efforts, grouped, logged and rested separately.",
+  "//2": "A cardio entry is EITHER one straight run (time + pace, or time + distance)",
+  "//3": "OR an interval block written as a single \\"pattern\\" string, logged in one tap.",
   "name": "Run with Upper Body",
-  "description": "Zone 2 base, 2 x 400m, then pressing and pulling. ~60 min.",
+  "description": "Zone 2 base, 6 x 400m, then pressing and pulling. ~60 min.",
   "entries": [
     { "type": "cardio", "name": "Warmup Jog",
       "distance": 1.2, "distanceUnit": "km", "duration": "8:00", "rest": "1:30",
       "notes": "Easy, nose breathing only" },
 
-    { "type": "cardio", "name": "400m Repeat", "repeat": 6, "group": "I",
-      "distance": 0.4, "distanceUnit": "km", "duration": "1:35", "rest": "2:30",
-      "notes": ["Target 1:35", "Walk the rest, do not sit down"] },
+    { "//": "Treadmill intervals. One leg + one leg, times six rounds.",
+      "type": "cardio", "name": "400m Repeat", "group": "I",
+      "pattern": "1:35 @ 4:00/km + 1:30 walk @ 9:00/km x 6",
+      "distanceUnit": "km", "rest": "2:30",
+      "notes": ["Target 1:35 per rep", "Walk the rest, do not sit down"] },
 
-    { "type": "cardio", "name": "Cooldown Jog",
-      "distance": 1.5, "distanceUnit": "km", "duration": "11:00" },
+    { "//": "A plain run can target a PACE instead of a distance.",
+      "type": "cardio", "name": "Cooldown Jog",
+      "duration": "11:00", "pace": "7:20", "distanceUnit": "km" },
 
     { "name": "Incline Bench Press", "group": "B", "rest": "2:30",
       "sets": [
@@ -348,18 +353,33 @@ LIFTING entries ("type":"lift", or omit "type") - pick ONE of two shapes:
      Prefer shape B whenever the sets genuinely differ; prefer A when they do not.
 
 CARDIO entries ("type":"cardio"):
+  A cardio entry is EITHER one straight run OR one interval block. Never both.
+
+  ONE STRAIGHT RUN - give any TWO of these three and the app derives the third:
+  "duration"      target time: "28:30" | "1:05:00" | "28m" | "90s". A bare number
+                  with no unit means MINUTES here.
+  "pace"          target pace per unit: "6:00" | "6:00/km" | "6 min/km". A bare
+                  number means MINUTES per unit, so 6 is 6:00/km.
   "distance"      number, expressed in "distanceUnit"
   "distanceUnit"  "km" or "mi"
-  "duration"      target time: "18:00" | "1:05:00" | "20m" | "90s". A bare number
-                  with no unit means MINUTES here.
-  "rest"          rest after this effort - use it between intervals
-  "repeat"        number of intervals, e.g. 6 for 6 x 400m. ONE entry, not six.
-  IMPORTANT: one cardio entry logs ONE effort, so express intervals with "repeat"
-  and the app expands them into that many efforts, grouped together, each logged
-  and rested separately. Do NOT write one entry per repetition, and do NOT use
-  "sets" on a cardio entry - cardio entries have no sets.
-  There are NO target fields for pace, heart rate, elevation or perceived effort; I
-  record those while logging. Put pace or HR targets in "notes" instead.
+
+  AN INTERVAL BLOCK - one string, which the app expands into rounds:
+  "pattern"       "<leg> + <leg> x <rounds>" where a leg is a TIME, an optional
+                  one-word name, then "@ <pace>". Examples:
+                    "1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6"
+                    "400 @ 4:00/km + 2:00 rest x 8"
+                    "1:00 hard + 1:00 easy x 10"
+                  A bare leg time is SECONDS (90 means 1:30); a bare pace is
+                  MINUTES per unit. Legs are TIMED, so write the time a leg takes,
+                  not a distance - "400m" is not understood.
+                  The whole block is logged in ONE tap and any single round can
+                  still be corrected afterwards, so do NOT write one entry per
+                  repetition and do NOT use "repeat".
+
+  "rest"          rest after this entry
+  Do NOT use "sets" on a cardio entry - cardio entries have no sets.
+  There are NO target fields for heart rate, elevation or perceived effort; I
+  record those while logging. Put HR targets in "notes" instead.
 
 GROUP - supersets and circuits:
   "group" is a short label (up to 4 characters) marking a superset or circuit.
@@ -388,7 +408,7 @@ ${SAMPLE}
 - Every entry has a "name".
 - Lifting entries use shape A or shape B, never both.
 - Cardio entries use distance/duration, never "sets".
-- Intervals use "repeat" on a single entry, never one entry per repetition.
+- Intervals use one "pattern" string on a single entry, never one entry per round.
 - Every member of a group has its own "rest".
 - All loads and distances are in the units I specified.
 - Durations and rests use an explicit form such as "2:30", "90s" or "20m".

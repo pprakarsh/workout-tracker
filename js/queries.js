@@ -5,6 +5,7 @@
 // Imports state but never mutates it.
 import { state } from './store.js';
 import { normName } from './util.js';
+import { cardioLogged } from './cardio.js';
 
 /* ------------------------------------------------------------------ */
 /* history lookups                                                    */
@@ -83,7 +84,7 @@ export function exerciseLibrary() {
       const rec = touch(e.name);
       if (!rec) return;
       const logged = e.type === 'cardio'
-        ? !!(e.log && (e.log.done || e.log.distance !== null))
+        ? cardioLogged(e.log)
         : (e.sets || []).some((x) => x.done);
       if (logged) {
         rec.performed++;
@@ -157,7 +158,7 @@ export function lastLogFor(name, excludeSessionId = null) {
       if (normName(e.name) !== key) continue;
       const hasWork = e.type === 'lift'
         ? (e.sets || []).some((x) => x.done || x.reps !== null || x.weight !== null)
-        : !!(e.log && (e.log.done || e.log.distance !== null || e.log.duration !== null));
+        : cardioLogged(e.log);
       if (hasWork) return { session: s, entry: e };
     }
   }

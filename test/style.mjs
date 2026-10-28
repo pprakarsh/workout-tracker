@@ -85,7 +85,7 @@ ok(cacheName === `workout-v${appVersion}`,
   `sw.js CACHE matches APP_VERSION (CACHE="${cacheName}", expected "workout-v${appVersion}")`);
 
 console.log('\n== action registry integrity');
-const viewFiles = ['js/views/entry.js', 'js/views/now.js', 'js/views/session.js',
+const viewFiles = ['js/views/entry.js', 'js/views/cardio.js', 'js/views/now.js', 'js/views/session.js',
   'js/views/history.js', 'js/views/routines.js', 'js/timer.js'];
 const sources = Object.fromEntries(viewFiles.map((f) => [f, readFileSync(`${APP}/${f}`, 'utf8')]));
 const allSource = Object.values(sources).join('\n');
@@ -120,7 +120,7 @@ ok(unreachable.length === 0,
   `every handler is reachable from markup${unreachable.length ? ` — dead: ${unreachable.join(', ')}` : ''}`);
 
 // every actions map must actually be merged into ACTIONS in app.js
-for (const map of ['entryActions', 'nowActions', 'sessionActions', 'historyActions',
+for (const map of ['entryActions', 'cardioActions', 'nowActions', 'sessionActions', 'historyActions',
   'routineActions', 'timerActions']) {
   ok(appSrc.includes(map), `${map} is merged into the ACTIONS registry`);
 }

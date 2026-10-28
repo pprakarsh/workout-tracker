@@ -17,7 +17,9 @@ manifest.webmanifest
 
 js/app.js           boot, render loop, delegated event routing, action registry
 js/store.js         ALL state and persistence; session and routine mutations
+js/model.js         entry/routine SHAPE: normalisation, defaults, plan -> session expansion
 js/queries.js       read-only derived queries: exercise library, history lookups, recent values
+js/cardio.js        run maths: pace arithmetic, the interval pattern, round expansion
 js/db.js            thin promise wrapper over IndexedDB
 js/sync.js          Gist sync: push/pull, conflict guards, device pairing
 js/timer.js         rest timer bar: ticking, beep, audio unlock
@@ -26,6 +28,7 @@ js/util.js          formatting + parsing helpers, APP_VERSION
 js/format.js        entry -> summary strings (targetLine, logSummary, restLine, pace)
 js/exportimport.js  JSON backup, CSV, Markdown, import/normalisation entry point
 js/views/entry.js   the exercise card and set rows, the exercise form, the library picker
+js/views/cardio.js  the cardio card: a straight run, or an interval block and its rounds
 js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
@@ -39,16 +42,21 @@ Dependency direction is one-way and enforced by a test:
 ```
 js/app.js  (composition root — may import anything)
    ↓
-js/views/*  →  store, queries, format, ui, util, timer, sync
+js/views/*  →  store, queries, format, cardio, ui, util, timer, sync
    ↓
-store, sync, exportimport, format, queries  →  db, util
+store, sync, exportimport, format, queries  →  model, cardio, db, util
+   ↓
+model  →  cardio, util            cardio  →  util
 ```
 
 **Nothing outside `js/views/` may import a view**, `js/app.js` excepted. `js/format.js` exists for
 exactly this reason: the exporter needs the same wording as the screen, so the summary builders live
 in a core module that both can import. `js/queries.js` was split out of `store.js` when the
-1000-line cap fired: the seam is **mutations (store) versus read-only derived queries (queries)**. (This rule was broken once — `exportimport.js` imported
-`views/entry.js` — which is why there is now a test for it.)
+1000-line cap fired: the seam is **mutations (store) versus read-only derived queries (queries)**.
+`js/model.js` was split out for the same reason a release later: the seam there is **what is stored
+and when (store) versus what the stored thing looks like (model)**. The shape helpers are
+re-exported from `store.js`, so the store stays the single front door for callers. (This rule was
+broken once — `exportimport.js` imported `views/entry.js` — which is why there is now a test for it.)
 
 Views never talk to `db.js` directly except `routines.js`, which uses `dbPut` for one
 caret-preserving write. `ui.js` imports `emit` from the store so closing a modal repaints the view
@@ -152,23 +160,25 @@ entry = {
   id, type: 'lift'|'cardio', name, group,        // group = superset label
   targetSets, setTargets,                        // setTargets = per-set plan or null
   repsMin, repsMax, weight,                      // uniform target; null when setTargets exists
-  targetDistance, distanceUnit, targetDuration,  // cardio
-  repeat,                                        // cardio intervals; expanded at session start
+  targetDistance, distanceUnit, targetDuration, targetPace,   // cardio, a straight run
+  legs: [{label, duration, pace}]|null, rounds,  // cardio, an interval pattern
   rest, notes, unit,
 }
 
 session = {
   id, routineId, routineName, routineDescription,
   startedAt, finishedAt, updatedAt, unit,
-  entries: [ { ...entry, sourceId, sets: [set]|null, log: cardioLog|null, skipped,
-               repIndex, repTotal } ],          // repIndex/repTotal on expanded intervals
+  entries: [ { ...entry, sourceId, sets: [set]|null, log: cardioLog|null, skipped } ],
   currentIdx, rpe, bodyweight, notes, modified,
 }
 
 set       = { id, weight, unit, reps, rpe, rir, warmup, bodyweight,
               note, done, completedAt, rest }
             // bodyweight: the load is your body; `weight` then means ADDED load
-cardioLog = { distance, distanceUnit, duration, avgHr, maxHr, elevation, rpe, note, done, completedAt }
+cardioLog = { distance, distanceUnit, duration, pace,      // a straight run: any two fix the third
+              legs: [loggedLeg]|null,                      // an interval block, expanded
+              avgHr, maxHr, elevation, rpe, note, done, completedAt }
+loggedLeg = { id, round, leg, label, duration, pace, done, edited }
 ```
 
 Invariants worth knowing:
@@ -187,10 +197,21 @@ Invariants worth knowing:
   Anything added later that aggregates sets (PRs, charts) must use `workingSets(e)`.
 - `rpe` and `rir` are both stored and neither is derived from the other, even though
   RIR ≈ 10 − RPE. `settings.effortScale` decides which columns are shown, not which are stored.
-- A cardio entry holds **one** effort, so `repeat` is expanded by `expandEntry()` at session start
-  into that many entries sharing one group label, carrying `repIndex`/`repTotal` for display.
-  `saveSessionBackToRoutine` collapses them again, or a 6×400m routine would grow to six lines
-  every time it was saved.
+- A cardio entry is **one entry**, whether it is a straight run or a block of 6 intervals. It used
+  to fan out into one entry per round, which meant opening six cards to record one treadmill block;
+  the rounds now live in `log.legs` inside the single entry, so the block logs in one tap
+  (`logAllRounds`) and a single round can still be corrected (`updateLeg`). Old routines written
+  with `repeat: 6` still work — `intervalSpec` turns them into 6 rounds of one leg.
+- A run is the triple `{distance, duration, pace}` of which **any two fix the third**, and
+  `resolveRun` keeps them consistent. **Duration is the anchor**: editing pace or distance
+  recomputes the other from the time, and editing the time holds the *pace* and moves the distance,
+  because on a treadmill pace is the dial you hold while the time changes.
+- A leg marked `edited` was changed by hand, which exempts it from a later edit of the pattern.
+  "Round 4 was slower" has to survive "the plan was actually 1:15 throughout" (`reconcileLegs`).
+- **`cardioLogged(log)` is the only way to ask whether a cardio entry recorded anything.** The log
+  opens pre-filled from its targets, so `log.distance !== null` stopped meaning "was run" — exactly
+  the plan-vs-history trap the lift side already had. Three call sites had to be corrected when the
+  pre-fill landed.
 
 ### Normalisation is the import boundary
 
@@ -206,8 +227,16 @@ Two traps live here:
   as targets — without that check, saving a session back to its routine overwrote the plan with
   whatever you happened to lift.
 - A unitless duration is ambiguous, so `parseDur` takes an explicit `{ bare: 'seconds'|'minutes' }`.
-  `rest` reads a bare number as seconds, cardio `duration` as minutes, and numbers behave the same
-  as numeric strings. Previously `90` meant 90 seconds in JSON but 90 *minutes* when typed.
+  `rest` reads a bare number as seconds, cardio `duration` as minutes, a **pace** as minutes per
+  unit (`6` is 6:00/km) and an **interval leg time** as seconds (`90` is 1:30). Each rule is stated
+  next to the field that uses it, both in the UI and in a test. Previously `90` meant 90 seconds in
+  JSON but 90 *minutes* when typed.
+- **Normalisation must be idempotent.** Entries are re-normalised on every session start and every
+  save back to a routine. The `bare: 'minutes'` fields were being re-parsed each time, so a cardio
+  target of `8:00` became 8 hours, then 20 days. The fix is to separate the field names: `duration`
+  and `pace` are human input and get parsed, `targetDuration` and `targetPace` are our own stored
+  seconds and pass through `storedSeconds` untouched. The same rule covers numbers inside a `legs`
+  array, which is why hand-written routines should use the `pattern` string instead.
 
 ## Flows
 
@@ -338,7 +367,10 @@ Each of these was a real bug. They are cheap to reintroduce.
 7. **Undefined tie-breaks.** The exercise library picked a definition by iteration order
    (alphabetical by routine name) when two routines shared a timestamp. Sorts that can tie need an
    explicit second key.
-8. **Modal submit didn't repaint.** A modal that changes the tab or data must repaint the view
+8. **Re-parsing your own stored values.** See normalisation above: a value that was parsed on the
+   way in must not be parsed again on the way back through. It cost a 60× inflation of every cardio
+   target, twice — once for `duration`, once for `pace`.
+9. **Modal submit didn't repaint.** A modal that changes the tab or data must repaint the view
    behind it; `closeModal()` calls `emit()` for this.
 
 ## What the platform will not allow

@@ -10,7 +10,9 @@ import {
 } from '../store.js';
 import { exerciseLibrary, findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
-import { planLine, targetLine, pace, logSummary, restLine, loadLabel } from '../format.js';
+import { parsePace, patternText, parseIntervals } from '../cardio.js';
+import { planLine, targetLine, logSummary, restLine, loadLabel } from '../format.js';
+import { cardioBody, cardioStatic, handleLegInput } from './cardio.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { unlockAudio } from '../timer.js';
 
@@ -211,41 +213,6 @@ function liftBody(e, allowRest) {
     ${restEditLine(e)}`;
 }
 
-function cardioBody(e, allowRest) {
-  const l = e.log || {};
-  const du = l.distanceUnit || state.settings.distanceUnit;
-  const p = pace(l.distance, l.duration, du);
-  return `
-    <div class="sets" data-entry="${e.id}" data-log="1">
-      <div class="grid2">
-        <label class="field"><span>Distance (${esc(du)})</span>
-          <input inputmode="decimal" data-f="distance" value="${esc(fmtNum(l.distance))}"></label>
-        <label class="field"><span>Duration (mm:ss)</span>
-          <input inputmode="numeric" data-f="duration" placeholder="24:30" value="${l.duration ? esc(fmtClock(l.duration)) : ''}"></label>
-      </div>
-      <div class="grid3">
-        <label class="field"><span>Avg HR</span>
-          <input inputmode="numeric" data-f="avgHr" value="${esc(fmtNum(l.avgHr))}"></label>
-        <label class="field"><span>Max HR</span>
-          <input inputmode="numeric" data-f="maxHr" value="${esc(fmtNum(l.maxHr))}"></label>
-        <label class="field"><span>Elev (m)</span>
-          <input inputmode="numeric" data-f="elevation" value="${esc(fmtNum(l.elevation))}"></label>
-      </div>
-      <div class="grid2">
-        <label class="field"><span>Perceived effort (RPE 1–10)</span>
-          <input inputmode="decimal" data-f="rpe" value="${esc(fmtNum(l.rpe))}"></label>
-        <label class="field"><span>Note</span>
-          <input type="text" data-f="note" value="${esc(l.note || '')}"></label>
-      </div>
-      ${p ? `<p class="hint" style="margin-top:-2px">Pace: <b class="strong">${esc(p)}</b></p>` : ''}
-    </div>
-    <div class="set-foot">
-      <button type="button" class="btn sm ${l.done ? 'ok' : 'primary'}" data-action="cardio-done" data-entry="${e.id}">
-        ${l.done ? '✓ Logged' : 'Mark done'}</button>
-      ${allowRest ? `<button type="button" class="btn sm ghost" data-action="rest-start" data-entry="${e.id}">⏱ Rest</button>` : ''}
-    </div>`;
-}
-
 /** Read-only version for History. */
 export function renderEntryStatic(e) {
   const sum = logSummary(e);
@@ -257,6 +224,7 @@ export function renderEntryStatic(e) {
     ${targetLine(e) ? `<div class="ex-target">target: ${esc(targetLine(e))}</div>` : ''}
     ${sum ? `<div class="loglines" style="margin-top:7px">${sum.split('  ').map((x) => `<code>${esc(x)}</code>`).join('')}</div>`
     : '<div class="loglines dim" style="margin-top:7px">nothing logged</div>'}
+    ${cardioStatic(e)}
     ${rest ? `<div class="small dim" style="margin-top:5px">${esc(rest)}</div>` : ''}
     ${e.notes ? `<div class="ex-notes">${esc(e.notes)}</div>` : ''}
     ${e.type === 'cardio' && e.log?.note ? `<div class="small dim" style="margin-top:5px">${esc(e.log.note)}</div>` : ''}
@@ -314,19 +282,34 @@ export function exerciseFormHtml(e = {}) {
     </div>
 
     <div id="exCardio" ${type === 'lift' ? 'hidden' : ''}>
-      <div class="grid2">
-        <label class="field"><span>Target distance</span>
-          <input name="targetDistance" inputmode="decimal" value="${esc(fmtNum(e.targetDistance))}"></label>
-        <label class="field"><span>Target duration</span>
-          <input name="targetDuration" inputmode="text" placeholder="30:00"
+      <div class="grid3">
+        <label class="field"><span>Target time</span>
+          <input name="targetDuration" inputmode="text" placeholder="28:30"
                  value="${e.targetDuration ? esc(fmtClock(e.targetDuration)) : ''}"></label>
+        <label class="field"><span>Target pace</span>
+          <input name="targetPace" inputmode="text" placeholder="6:00"
+                 value="${e.targetPace ? esc(fmtClock(e.targetPace)) : ''}"></label>
+        <label class="field"><span>Target distance</span>
+          <input name="targetDistance" inputmode="decimal" placeholder="5"
+                 value="${esc(fmtNum(e.targetDistance))}"></label>
       </div>
-      <label class="field"><span>Repeat (intervals)</span>
-        <input name="repeat" inputmode="numeric" placeholder="1"
-               value="${esc(fmtNum(e.repeat))}"></label>
-      <p class="hint" style="margin-top:-4px">A cardio entry logs one effort. Set this to 6 for
-        6 × 400m and starting a workout creates six efforts, grouped together, each logged and
-        rested separately.</p>
+      <p class="hint" style="margin-top:-4px">Give <b>any two</b>; the third follows.
+        <b>Time</b> <code>28:30</code> or <code>28m</code>. <b>Pace</b> <code>6:00</code>, or a
+        bare <code>6</code> meaning 6 min/km.</p>
+
+      <label class="field"><span>Interval pattern - leave empty for one straight run</span>
+        <input name="pattern" autocapitalize="off" autocomplete="off" spellcheck="false"
+               placeholder="1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6"
+               value="${esc(patternText(e.legs, e.rounds, e.distanceUnit || 'km'))}"></label>
+      <p class="hint" style="margin-top:-4px"><b>Format</b>
+        <code>leg + leg &times; rounds</code>; a leg is a <b>time</b>, an optional name, then
+        <code>@ pace</code>. The whole block is then logged in <b>one tap</b>, and any single
+        round can still be changed afterwards.
+        <br><b>Example</b> <code>1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6</code>
+        <br><span class="dim">A bare leg time is <b>seconds</b> (<code>90</code> = 1:30); a bare
+        pace is <b>minutes</b> per km. <code>min</code>, <code>mins per km</code>, <code>-</code>
+        for <code>@</code> and brackets all work. Legs are timed, so write the time rather than
+        <code>400m</code>.</span></p>
     </div>
 
     <label class="field"><span>Rest between sets - 2:30, 90s, or a number of seconds</span>
@@ -409,6 +392,7 @@ export function readExerciseForm(v, modal = null) {
     name: (v.name || '').trim(),
     targetDistance: num(v.targetDistance),
     targetDuration: parseDur(v.targetDuration, { bare: 'minutes' }),
+    targetPace: parsePace(v.targetPace),
     rest: parseDur(v.rest),
     bodyweight: v.bodyweight === '1',
     group: (v.group || '').trim() || null,
@@ -416,9 +400,12 @@ export function readExerciseForm(v, modal = null) {
   };
 
   if (base.type === 'cardio' || !modal) {
+    const spec = base.type === 'cardio'
+      ? parseIntervals(v.pattern || '') || { legs: null, rounds: null }
+      : { legs: null, rounds: null };
     return {
       ...base, setTargets: null, targetSets: null, repsMin: null, repsMax: null, weight: null,
-      repeat: base.type === 'cardio' ? num(v.repeat) : null,
+      legs: spec.legs, rounds: spec.legs ? spec.rounds : null,
     };
   }
 
@@ -668,12 +655,6 @@ export const entryActions = {
 
   'set-done': async ({ entry, set }) => { await toggleSetDone(entry, set); },
 
-  'cardio-done': async ({ entry }) => {
-    const e = findEntry(entry);
-    if (!e) return;
-    await updateLog(entry, { done: !e.log.done, completedAt: e.log.done ? null : Date.now() });
-  },
-
   // You press this when the set ends; it marks the set done and starts the clock.
   'rest-start': async ({ entry, set }) => {
     if (editingPast()) return;   // no sense timing rest on a workout already done
@@ -764,6 +745,8 @@ export const entryActions = {
 
 /** Field edits inside set rows / cardio forms. Called from app.js. */
 export async function handleFieldInput(target) {
+  // an interval leg row owns its own parsing rules
+  if (target.dataset.lf) { await handleLegInput(target); return; }
   const field = target.dataset.f;
   if (!field) return;
   const row = target.closest('[data-set]');
@@ -778,7 +761,8 @@ export async function handleFieldInput(target) {
     const patch = {};
     patch[field] = field === 'note' ? target.value
       : field === 'duration' ? parseDur(target.value, { bare: 'minutes' })
-        : num(target.value);
+        : field === 'pace' ? parsePace(target.value)
+          : num(target.value);
     await updateLog(logBox.dataset.entry, patch, { silent: true });
   }
 }
