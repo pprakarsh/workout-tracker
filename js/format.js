@@ -25,7 +25,9 @@ export function targetLine(e) {
       const reps = fmtReps(e.repsMin, e.repsMax);
       const sets = e.targetSets ? `${fmtNum(e.targetSets)} ×` : '';
       if (sets || reps) bits.push(`${sets} ${reps || '?'}`.trim());
-      if (e.weight !== null && e.weight !== undefined) {
+      if (e.bodyweight) {
+        bits.push(e.weight ? `BW + ${fmtNum(e.weight)} ${e.unit || state.settings.unit}` : 'bodyweight');
+      } else if (e.weight !== null && e.weight !== undefined) {
         bits.push(`@ ${fmtNum(e.weight)} ${e.unit || state.settings.unit}`);
       }
     }
@@ -44,6 +46,20 @@ export function targetLine(e) {
 export function pace(distance, seconds, unit) {
   if (!distance || !seconds) return '';
   return `${fmtClock(seconds / distance)}/${unit || 'km'}`;
+}
+
+/**
+ * How a set's load reads: "BW", "BW+10kg", "102.5kg", or an em dash when nothing
+ * has been entered yet. A bodyweight set's `weight` is ADDED load.
+ */
+export function loadLabel(s, { spaced = false } = {}) {
+  if (!s) return '—';
+  const gap = spaced ? ' ' : '';
+  if (s.bodyweight) {
+    return s.weight ? `BW + ${fmtNum(s.weight)}${gap}${s.unit || ''}` : 'BW';
+  }
+  return s.weight !== null && s.weight !== undefined
+    ? `${fmtNum(s.weight)}${gap}${s.unit || ''}` : '—';
 }
 
 /** The effort suffix for a set: "@8" for RPE, "r2" for reps-in-reserve. */
@@ -73,13 +89,13 @@ export function logSummary(e, { workingOnly = false } = {}) {
     if (l.rpe) bits.push(`RPE ${fmtNum(l.rpe)}`);
     return bits.join(' · ');
   }
-  const sets = (e.sets || []).filter((s) => (s.done || s.reps !== null || s.weight !== null)
-    && !(workingOnly && s.warmup));
+  // Only ticked sets. Since the plan is pre-materialised, an unticked row is
+  // intent, not history -- showing it would report the plan as if it happened.
+  const sets = (e.sets || []).filter((s) => s.done && !(workingOnly && s.warmup));
   if (!sets.length) return '';
   return sets.map((s) => {
-    const w = s.weight !== null ? `${fmtNum(s.weight)}${s.unit || ''}` : '—';
     const r = s.reps !== null ? fmtNum(s.reps) : '—';
-    return `${s.warmup ? 'W ' : ''}${w}×${r}${effortTag(s)}`;
+    return `${s.warmup ? 'W ' : ''}${loadLabel(s)}×${r}${effortTag(s)}`;
   }).join('  ');
 }
 
@@ -93,9 +109,9 @@ export function restLine(e) {
   const labels = setLabels(sets);
   const logged = sets
     .map((s, i) => ({ s, label: labels[i] }))
-    .filter(({ s }) => s.done || s.weight !== null || s.reps !== null);
+    .filter(({ s }) => s.done);
   if (!logged.length) return '';
-  if (!sets.some((s) => s.rest)) return 'Rest: no rest logged for any set';
+  if (!logged.some(({ s }) => s.rest)) return 'Rest: no rest logged for any set';
   return `Rest after sets: ${logged
     .map(({ s, label }) => `${label}) ${s.rest ? fmtClock(s.rest) : 'no rest logged'}`)
     .join(' · ')}`;

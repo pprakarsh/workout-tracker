@@ -1,5 +1,6 @@
 // Bootstrap: load state, render the active tab, route delegated events.
-import { state, init, subscribe, exerciseNames } from './store.js';
+import { state, init, subscribe } from './store.js';
+import { exerciseNames } from './queries.js';
 import { renderRestBar, timerActions, unlockAudio } from './timer.js';
 import {
   initSync, autoPullOnLaunch, autoPullOnForeground, watchRoutines, setSyncNotifier,
@@ -146,7 +147,7 @@ document.addEventListener('pointerdown', (ev) => {
 });
 
 document.addEventListener('click', (ev) => {
-  const btn = ev.target.closest?.('.stepbar button');
+  const btn = ev.target.closest?.('.stepbar button[data-step]');
   if (!btn) return;
   ev.preventDefault();
   const field = btn.dataset.step;
@@ -159,10 +160,14 @@ document.addEventListener('click', (ev) => {
   }
   if (!input) { toast('Add a set first'); return; }
 
-  const step = Number(btn.dataset.delta);
-  const current = Number(String(input.value).replace(',', '.'));
-  const base = Number.isFinite(current) ? current : 0;
-  const next = Math.round((base + step) * 1000) / 1000;
+  let next;
+  if (btn.dataset.setTo !== undefined) {
+    next = Number(btn.dataset.setTo);          // a recent-value chip
+  } else {
+    const current = Number(String(input.value).replace(',', '.'));
+    const base = Number.isFinite(current) ? current : 0;
+    next = Math.round((base + Number(btn.dataset.delta)) * 1000) / 1000;
+  }
   input.value = next > 0 ? String(next) : '';
   // Reuse the normal silent-save path; no re-render, so focus and caret survive.
   // Build the event from the element's own window rather than the ambient global,
@@ -213,6 +218,35 @@ document.addEventListener('visibilitychange', () => {
 
 // A queued routine push may have been scheduled while offline.
 window.addEventListener('online', () => { flushPendingPush(); });
+
+/* ------------------------------------------------------------------ */
+/* screen wake lock                                                   */
+/* ------------------------------------------------------------------ */
+
+// Supported in iOS Safari 16.4+ and Android. Without it the phone locks between
+// sets and every set starts with unlocking it.
+let wakeLock = null;
+
+async function refreshWakeLock() {
+  const want = !!state.active && state.settings.keepAwake !== false;
+  if (!want) {
+    if (wakeLock) { try { await wakeLock.release(); } catch { /* already gone */ } wakeLock = null; }
+    return;
+  }
+  if (wakeLock || !navigator.wakeLock || document.hidden) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener?.('release', () => { wakeLock = null; });
+  } catch {
+    wakeLock = null;    // refused (low battery, no support) -- not worth a toast
+  }
+}
+
+subscribe(refreshWakeLock);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } }
+  else refreshWakeLock();
+});
 
 /* ------------------------------------------------------------------ */
 /* start                                                              */

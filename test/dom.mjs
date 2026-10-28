@@ -49,6 +49,7 @@ async function openBlankExerciseForm(trigger, label) {
 async function type(sel, value) {
   const el = $(sel);
   if (!el) { failures++; console.log(`  FAIL no input: ${sel}`); return; }
+  el.focus();                       // as a user would, so blur fires on leaving
   el.value = value;
   el.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   await sleep(25);
@@ -76,21 +77,26 @@ ok(store.state.active !== null, 'session started by the button');
 ok(/Back Squat/.test(view()), 'Now shows the first exercise');
 ok(/No previous log for this exercise/.test(view()), 'shows the last-session reference slot');
 
-section('log a set through the UI');
-await click('[data-action="set-add"]', '+ Add set');
-ok($$('.set-row').length === 1, 'a set row appeared');
-const row = $('.set-row');
-ok($('.set-row input[data-f="weight"]').value === '100', 'weight prefilled from the routine target');
+section('the plan is already on screen: confirming, not creating');
+ok($$('.set-row').length === 5, `Back Squat opens with its 5 planned rows (${$$('.set-row').length})`);
+ok($('.set-row input[data-f="weight"]').value === '100', 'each row pre-filled from the plan');
+ok($('[data-action="set-confirm"]') !== null, 'one confirm button is offered');
+ok(/100kg . 5/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
+  `it states exactly what will be logged: "${$('.confirm .big').textContent.trim()}"`);
+ok(/set 1/.test($('.confirm .sub').textContent), 'and which set that is');
+ok($('[data-action="set-add"]').textContent.includes('Extra set'),
+  'adding a set is demoted to the exception it is');
+
+section('typing still works, and still does not re-render');
 await type('.set-row input[data-f="weight"]', '102.5');
 await type('.set-row input[data-f="reps"]', '5');
 await type('.set-row input[data-f="rpe"]', '8');
 const liveSet = store.state.active.entries[0].sets[0];
 ok(liveSet.weight === 102.5 && liveSet.reps === 5 && liveSet.rpe === 8,
   `typing persisted: ${liveSet.weight} x ${liveSet.reps} @ ${liveSet.rpe}`);
-ok($('.set-row input[data-f="weight"]') === $('.set-row input[data-f="weight"]'), 'row not re-rendered mid-typing');
+ok($$('.set-row').length === 5, 'no re-render, so the rows are untouched');
 
 section('moving between fields must not destroy the keyboard');
-await click('[data-action="set-add"]', '+ Add set (second)');
 const wA = $$('.set-row input[data-f="weight"]')[1];
 const rA = $$('.set-row input[data-f="reps"]')[1];
 wA.focus();
@@ -98,20 +104,34 @@ rA.focus();                       // fires blur on wA
 await sleep(40);
 ok(rA.isConnected, 'the newly focused input survived the blur of the previous one');
 ok(document.activeElement === rA, 'focus stayed where the user put it');
-rA.blur();                        // leaving the fields entirely may re-render
+rA.blur();
 await sleep(40);
-ok($$('.set-row').length === 2, 'both set rows still present after a full blur');
-await click('[data-action="set-del-last"]', '− Remove last');
-ok($$('.set-row').length === 1, 'removed the extra set');
+ok($$('.set-row').length === 5, 'all rows still present after a full blur');
 
-section('rest timer through the UI');
+section('one tap logs the set and starts the clock');
 ok($('#restBar').hidden, 'rest bar hidden before starting');
-await click('.set-row .rest-btn', 'Rest ⏱');
-ok(!$('#restBar').hidden, 'rest bar is visible');
+await click('[data-action="set-confirm"]', 'confirm set 1');
+ok($$('.set-row')[0].classList.contains('done'), 'the set was ticked');
+ok(!$('#restBar').hidden, 'and the rest bar is running');
 ok(/Rest after Back Squat set 1/.test($('#restBar').textContent), 'bar names the set it follows');
-ok(/target 3:00/.test($('#restBar').textContent), `target from routine: ${$('#restBar').querySelector('#restSub').textContent}`);
-ok($('.set-row').classList.contains('done'), 'the set was marked done');
+ok(/target 3:00/.test($('#restBar').textContent), 'target came from the routine');
 ok(store.state.timer !== null, 'timer running in state');
+ok(/set 2/.test($('.confirm .sub').textContent), 'and the confirm button has advanced to set 2');
+
+section('the rest panel is where effort and corrections live');
+ok(/102.5kg/.test($('#restBar').textContent), 'it shows what was just logged');
+const rpeChip = [...$$('#restBar [data-action="set-effort"]')].find((b) => b.textContent.trim() === '9');
+ok(!!rpeChip, `effort chips are offered (${$$('#restBar [data-action="set-effort"]').length} of them)`);
+rpeChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(50);
+ok(store.state.active.entries[0].sets[0].rpe === 9, 'tapping a chip records the effort');
+const rpeChip9 = [...$$('#restBar [data-action="set-effort"]')].find((b) => b.textContent.trim() === '9');
+ok(rpeChip9?.classList.contains('on'), 'and shows as selected');
+rpeChip9.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(50);
+ok(store.state.active.entries[0].sets[0].rpe === null, 'tapping it again clears it, so a mis-tap is one tap to fix');
+ok($('#restBar [data-action="set-undo"]') !== null, 'undo is reachable while resting');
+ok($('#restBar [data-action="set-rest-edit"]') !== null, 'and so is editing the rest');
 
 section('the app stays usable while resting');
 await click('#tabBar .tab[data-tab="session"]', 'Session tab');
@@ -130,21 +150,42 @@ store.state.timer.startedAt -= 95_000;
 await click('#restBar [data-action="rest-stop"]', 'Stop');
 ok($('#restBar').hidden, 'rest bar hidden again');
 ok(store.state.timer === null, 'timer cleared');
+let restChip2;
 const restedSet = store.state.active.entries.find((e) => e.name === firstName).sets[0];
 ok(restedSet.rest === 95, `actual rest recorded: ${restedSet.rest}s`);
 await click('#tabBar .tab[data-tab="now"]', 'Now tab');
-ok(/Rest after sets: 1\) 1:35/.test(view()), 'the card reports the rest that was timed');
-await click('[data-action="set-add"]', '+ Add set');
-ok(/no rest logged/.test(view()), 'a set with no timed rest says so instead of showing a default');
-ok(!/Rest after sets: 1\) 2:00/.test(view()), 'the routine target is not passed off as logged rest');
-await click('[data-action="set-del-last"]', '- Remove last');
+ok(/1\) 1:35/.test(view()), 'the card reports the rest that was timed');
+ok(!/2:00/.test($('.restedit')?.textContent || ''),
+  'the routine target is not passed off as logged rest');
+
+section('a recorded rest is editable, for a missed or mis-tapped timer');
+const restChip = $('.restedit [data-action="set-rest-edit"]');
+ok(!!restChip, 'each rest reading is tappable');
+restChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(50);
+ok($('#modalRoot').hidden === false, 'the rest editor opened');
+ok($('[name="rest"]').value === '1:35', `pre-filled with what was recorded (${$('[name="rest"]').value})`);
+$('[name="rest"]').value = '2:45';
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+const fixed = store.state.active.entries.find((e) => e.name === firstName).sets[0];
+ok(fixed.rest === 165, `corrected to 2:45 = 165s (${fixed.rest})`);
+ok(/2:45/.test(view()), 'and the card shows the corrected value');
+
+restChip2 = $('.restedit [data-action="set-rest-edit"]');
+restChip2.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(50);
+await click('[data-action="set-rest-clear"]', 'Clear - no rest logged');
+await sleep(60);
+ok(store.state.active.entries.find((e) => e.name === firstName).sets[0].rest === null,
+  'clearing records no rest rather than a zero');
+ok(/not logged/.test(view()), 'and it reads as not logged');
 await click('#tabBar .tab[data-tab="session"]', 'back to Session');
 
 section('nudging the target');
 await click('.sess-item [data-action="sess-jump"]', 'jump to an exercise');
 ok(store.state.tab === 'now', 'jumping switches to Now');
-await click('[data-action="set-add"]', '+ Add set');
-await click('.set-row .rest-btn', 'Rest');
+await click('[data-action="set-confirm"]', 'confirm the next set');
 const t0 = store.state.timer.target;
 await click('#restBar [data-action="rest-nudge"]', '+30s');
 ok(store.state.timer.target === t0 + 30, `target nudged ${t0} -> ${store.state.timer.target}`);
@@ -327,23 +368,22 @@ await click(`[data-action="routine-start"][data-id="${planRoutine.id}"]`, 'Start
 ok(store.state.active?.routineName === 'Plan Test', 'plan-test workout started');
 ok(/Ladder Press/.test(view()), 'Now shows the planned exercise');
 ok(/40×10 · 45×8 · 50×5-6/.test(view()), 'the card shows the per-set plan');
-await click('[data-action="set-add"]', '+ Add set');
-ok($('.set-row input[data-f="weight"]').value === '40', 'set 1 prefilled with the first planned weight');
-await click('[data-action="set-add"]', '+ Add set');
-ok($$('.set-row input[data-f="weight"]')[1].value === '45', 'set 2 prefilled with the second planned weight');
-ok($$('.set-row input[data-f="reps"]')[1].value === '8', 'set 2 prefilled with the second planned reps');
-await click('[data-action="set-add"]', '+ Add set');
-ok($$('.set-row input[data-f="weight"]')[2].value === '50'
-  && $$('.set-row input[data-f="reps"]')[2].value === '5', 'set 3 prefilled 50 x 5 from the range');
-await click('[data-action="set-del-last"]', '- Remove last');
-await click('[data-action="set-del-last"]', '- Remove last');
-await click('[data-action="set-del-last"]', '- Remove last');
-ok($$('.set-row').length === 0, 'cleared the rows');
-ok($('[data-action="set-fill"]') !== null, 'offers to add the whole plan at once');
-await click('[data-action="set-fill"]', '+ All planned');
-ok($$('.set-row').length === 3, `the plan filled 3 rows (${$$('.set-row').length})`);
+ok($$('.set-row').length === 3, `all 3 planned rows are already on screen (${$$('.set-row').length})`);
 ok($$('.set-row input[data-f="weight"]').map((i) => i.value).join(',') === '40,45,50',
-  `filled rows carry the planned weights (${$$('.set-row input[data-f="weight"]').map((i) => i.value).join(',')})`);
+  `each row carries its own planned weight (${$$('.set-row input[data-f="weight"]').map((i) => i.value).join(',')})`);
+ok($$('.set-row input[data-f="reps"]').map((i) => i.value).join(',') === '10,8,5',
+  'and its own planned reps, with the range taking the bottom');
+ok(/40kg . 10/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
+  'the confirm button offers plan row 1');
+await click('[data-action="set-confirm"]', 'confirm set 1');
+await click('#restBar [data-action="rest-stop"]', 'Stop');
+ok(/45kg . 8/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
+  'and then advances to plan row 2, not a copy of row 1');
+await click('[data-action="set-del-last"]', '- Remove last');
+ok($$('.set-row').length === 2, 'a row can still be removed');
+ok($('[data-action="set-fill"]') !== null, 'and the missing planned row can be restored');
+await click('[data-action="set-fill"]', '+ 1 planned');
+ok($$('.set-row').length === 3, `back to 3 rows (${$$('.set-row').length})`);
 await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard this workout');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -509,21 +549,21 @@ await click('#tabBar .tab[data-tab="now"]');
 const stepRoutine = store.state.routines.find((r) => r.name === 'Stepper Check');
 await click(`[data-action="routine-start"][data-id="${stepRoutine.id}"]`, 'Start');
 
+ok($$('.set-row').length === 2, 'the 2-set plan is already materialised');
 ok($('[data-action="set-add-warmup"]') !== null, 'a + Warmup button is offered');
 await click('[data-action="set-add-warmup"]', '+ Warmup');
-await click('[data-action="set-add"]', '+ Add set');
-ok($$('.set-row').length === 2, 'two rows');
-ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === 'W1,1',
-  `rows labelled W1 and 1 (${[...$$('.set-row .idx')].map((b) => b.textContent).join(',')})`);
+ok($$('.set-row').length === 3, 'three rows');
+ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === 'W1,1,2',
+  `the warmup lands FIRST, not appended (${[...$$('.set-row .idx')].map((b) => b.textContent).join(',')})`);
 ok($$('.set-row')[0].classList.contains('warm'), 'the warmup row is styled as one');
 ok($$('.set-row')[1].querySelector('input[data-f="weight"]').value === '50',
-  'the working set prefilled from the target, not the warmup');
+  'the working rows keep the plan, unshifted by the warmup');
 
 await click('.set-row .idx', 'tap the set label to toggle warmup');
-ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === '1,2',
+ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === '1,2,3',
   'tapping the label promotes it to a working set and renumbers');
 await click('.set-row .idx', 'tap again');
-ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === 'W1,1', 'and back again');
+ok([...$$('.set-row .idx')].map((b) => b.textContent).join(',') === 'W1,1,2', 'and back again');
 
 section('the stepper changes the focused field without losing focus');
 ok($('.stepbar') !== null, 'a stepper strip exists in the card');
@@ -548,7 +588,7 @@ minus.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelab
 await sleep(40);
 ok(rIn.value === '9', `-1 rep applied to reps, not weight (${rIn.value})`);
 ok(store.state.active.entries[0].sets[1].reps === 9, 'reps persisted');
-ok($$('.set-row').length === 2, 'no re-render happened, so the rows are untouched');
+ok($$('.set-row').length === 3, 'no re-render happened, so the rows are untouched');
 
 section('the effort columns follow the setting');
 ok($('.set-row input[data-f="rpe"]') !== null, 'RPE column shown by default');
@@ -586,6 +626,83 @@ ok(/1\/4/.test(view()), 'the Now card shows which rep you are on');
 ok($$('.card[data-entry]').length === 4, 'all four appear together as one block');
 await click('#tabBar .tab[data-tab="session"]');
 ok($$('.sess-item').length === 4, 'and as four rows in the session list');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
+section('a plan with no weight: manual entry, or bodyweight');
+await xi.importFromText(JSON.stringify({
+  name: 'No Weight Check',
+  entries: [
+    { name: 'Machine Row', sets: 2, reps: 10 },
+    { name: 'Pull-up', sets: 3, reps: 8, bodyweight: true },
+  ],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const nwR = store.state.routines.find((r) => r.name === 'No Weight Check');
+await click(`[data-action="routine-start"][data-id="${nwR.id}"]`, 'Start');
+
+ok($$('.set-row').length === 2, 'rows still materialise without a planned weight');
+ok($('.set-row input[data-f="weight"]').value === '', 'the weight field is empty');
+ok($('[data-action="set-confirm"]') === null, 'confirm is NOT offered for a set with no load');
+ok($('[data-action="set-needs"]') !== null, 'it asks for the number instead');
+ok(/Enter a weight for set 1/.test($('.confirm .big').textContent),
+  `and says which (${$('.confirm .big').textContent.trim()})`);
+await click('[data-action="set-needs"]', 'tap the prompt');
+ok(document.activeElement === $('.set-row input[data-f="weight"]'),
+  'tapping it focuses the weight field, ready to type');
+
+await type('.set-row input[data-f="weight"]', '42.5');
+$('.set-row input[data-f="weight"]').blur();
+await sleep(60);
+ok(store.state.active.entries[0].sets[0].weight === 42.5, 'hand-entered weight persisted');
+ok($('[data-action="set-confirm"]') !== null, 'and confirm is now offered');
+ok(/42.5kg . 10/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
+  'showing the weight that was typed');
+await click('[data-action="set-confirm"]', 'confirm it');
+ok(store.state.active.entries[0].sets[0].done === true, 'logged');
+await click('#restBar [data-action="rest-stop"]', 'Stop');
+
+section('a bodyweight exercise needs no weight at all');
+await store.setCurrent(1);
+await click('#tabBar .tab[data-tab="now"]');
+ok(/Pull-up/.test(view()), 'on the bodyweight exercise');
+ok(/bodyweight/.test(view()), 'the target line says so');
+ok($('.set-hdr').textContent.includes('Added'), 'the weight column is relabelled Added');
+ok($('.set-row input[data-f="weight"]').placeholder === 'BW', 'and the field hints BW');
+ok($('[data-action="set-confirm"]') !== null, 'confirm is offered with no weight entered');
+ok(/BW . 8/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
+  `reading as BW x 8 (${$('.confirm .big').textContent.trim()})`);
+await click('[data-action="set-confirm"]', 'confirm the BW set');
+const bwSet = store.state.active.entries[1].sets[0];
+ok(bwSet.done === true && bwSet.bodyweight === true && bwSet.weight === null,
+  'logged as bodyweight with no load');
+await click('#restBar [data-action="rest-stop"]', 'Stop');
+
+// row 2 is now the active set; adding load to it must read as BW + added
+const bwRow2 = $$('.set-row input[data-f="weight"]')[1];
+bwRow2.focus();
+bwRow2.value = '10';
+bwRow2.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+bwRow2.blur();
+await sleep(60);
+ok(store.state.active.entries[1].sets[1].weight === 10, 'added load persisted');
+ok(/BW \+ 10kg . 8/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
+  `confirm reads as BW + added load (${$('.confirm .big').textContent.trim()})`);
+
+section('BW can be toggled per set from the stepper');
+const w2 = $$('.set-row input[data-f="weight"]')[1];
+w2.focus();
+await sleep(30);
+const bwChip = $('.stepbar [data-action="set-bw"]');
+ok(!!bwChip, 'a BW chip is offered next to the steppers');
+bwChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(60);
+ok(store.state.active.entries[1].sets[1].bodyweight === false,
+  'tapping it switches that one set to a weighted set');
+
+await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);

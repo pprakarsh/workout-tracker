@@ -1,7 +1,8 @@
 // "Now" — the single exercise (or superset block) you are working on.
 import {
-  state, blockAt, stepBlock, startSession, sessionProgress, lastSessionForRoutine,
+  state, blockAt, stepBlock, startSession, sessionProgress,
 } from '../store.js';
+import { lastSessionForRoutine } from '../queries.js';
 import { esc, fmtDur, relDay } from '../util.js';
 import { renderEntry } from './entry.js';
 import { toast } from '../ui.js';

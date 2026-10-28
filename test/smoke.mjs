@@ -38,6 +38,7 @@ const historyView = await import(`${APP}/js/views/history.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
 const entry = await import(`${APP}/js/views/entry.js`);
 const fmt = await import(`${APP}/js/format.js`);
+const q = await import(`${APP}/js/queries.js`);
 const { state } = store;
 const util = await import(`${APP}/js/util.js`);
 const parseDurCheck = (v, bare) => (bare ? util.parseDur(v, { bare }) : util.parseDur(v));
@@ -90,17 +91,54 @@ await store.stepBlock(1);
 ok(s.currentIdx === 3, 'next skips past the whole superset block');
 await store.setCurrent(0);
 
-section('log sets');
+section('the plan is pre-materialised: logging is confirming, not creating');
 const e0 = s.entries[0];
-const set1 = await store.addSet(e0.id);
-ok(e0.sets.length === 1, 'set added');
-ok(set1.weight === 100 && set1.reps === 5, `prefilled from target: ${set1.weight}x${set1.reps}`);
+ok(e0.sets.length === 5, `Back Squat opens with its 5 planned rows (${e0.sets.length})`);
+ok(e0.sets.every((x) => x.weight === 100 && x.reps === 5), 'each row pre-filled from the plan');
+ok(e0.sets.every((x) => !x.done), 'and none ticked yet');
+ok(store.activeSet(e0).id === e0.sets[0].id, 'the active set is the first unticked row');
+ok(store.setIsLoggable(e0.sets[0]) === true, 'it is loggable, so confirm can act');
+
+const set1 = e0.sets[0];
 await store.updateSet(e0.id, set1.id, { weight: 102.5, reps: 5, rpe: 8 });
-const set2 = await store.addSet(e0.id);
-ok(set2.weight === 102.5, 'second set prefills from the previous set');
-ok(store.entryStatus(e0) === 'pending', 'status pending before anything is ticked');
 await store.toggleSetDone(e0.id, set1.id);
-ok(store.entryStatus(e0) === 'partial', 'status partial after one set');
+ok(store.activeSet(e0).id === e0.sets[1].id, 'confirming one advances the active set');
+ok(store.entryStatus(e0) === 'partial', 'status partial after one of five');
+const set2 = e0.sets[1];
+
+section('a set with no weight is not loggable, so confirm must not log it');
+const noWeight = await store.addSessionEntry({ name: 'Mystery Machine', sets: 2, reps: 10 });
+ok(noWeight.sets.length === 2, 'rows still materialise without a weight');
+ok(noWeight.sets[0].weight === null, 'but carry no weight');
+ok(store.setIsLoggable(noWeight.sets[0]) === false,
+  'so it is flagged as needing a number rather than logged blank');
+await store.updateSet(noWeight.id, noWeight.sets[0].id, { weight: 25 });
+ok(store.setIsLoggable(noWeight.sets[0]) === true, 'entering one by hand makes it loggable');
+await store.removeSessionEntry(noWeight.id);
+
+section('bodyweight sets');
+const bw = await store.addSessionEntry({ name: 'Pull-up', sets: 3, reps: 8, bodyweight: true });
+ok(bw.bodyweight === true, 'the entry is marked bodyweight');
+ok(bw.sets.every((x) => x.bodyweight === true), 'and every materialised set inherits it');
+ok(store.setIsLoggable(bw.sets[0]) === true, 'loggable with no weight at all');
+ok(fmt.loadLabel(bw.sets[0]) === 'BW', `reads as BW (${fmt.loadLabel(bw.sets[0])})`);
+await store.updateSet(bw.id, bw.sets[0].id, { weight: 10 });
+ok(fmt.loadLabel(bw.sets[0]) === 'BW + 10kg', `added load reads as BW + 10kg (${fmt.loadLabel(bw.sets[0])})`);
+ok(fmt.loadLabel(bw.sets[0], { spaced: true }) === 'BW + 10 kg', 'the spaced form is used in exports');
+await store.toggleBodyweight(bw.id, bw.sets[1].id);
+ok(bw.sets[1].bodyweight === false, 'a single set can be switched back to weighted');
+ok(fmt.loadLabel(bw.sets[1]) === '—', 'and then reads as nothing entered');
+await store.toggleBodyweight(bw.id, bw.sets[1].id);
+await store.updateSet(bw.id, bw.sets[0].id, { reps: 8, done: true });
+ok(store.sessionVolume(s) > 0, 'volume is non-zero from the weighted work');
+const volNoBw = store.sessionVolume(s);
+await store.updateSessionMeta({ bodyweight: 75 });
+ok(store.sessionVolume(s) > volNoBw,
+  'recording a bodyweight makes BW sets count towards volume');
+await store.updateSessionMeta({ bodyweight: null });
+ok(store.sessionVolume(s) === volNoBw,
+  'without it they contribute nothing rather than a guessed number');
+await store.removeSessionEntry(bw.id);
 
 section('rest timer: manual start, manual stop');
 ok(state.timer === null, 'no timer initially');
@@ -158,7 +196,7 @@ ok(state.timer === null, 'timer cleared on finish');
 renderAll('after-finish');
 
 section('last-session reference (no auto-progression)');
-const hit = store.lastLogFor('Back Squat');
+const hit = q.lastLogFor('Back Squat');
 ok(hit !== null, 'previous Back Squat found');
 ok(/102.5/.test(fmt.logSummary(hit.entry)), `summary: ${fmt.logSummary(hit.entry)}`);
 const s2 = await store.startSession(r.id);
@@ -281,21 +319,16 @@ ok(sq.notes.includes('Warmup: 2x5 @ 40%') && sq.notes.includes('Tempo 3-1-1'), '
 section('logging against a per-set plan');
 const ws = await store.startSession(pr.id);
 const wsq = ws.entries[0];
-const a1 = await store.addSet(wsq.id);
-ok(a1.weight === 60 && a1.reps === 10, `set 1 prefilled 60x10 (got ${a1.weight}x${a1.reps})`);
-const a2 = await store.addSet(wsq.id);
-ok(a2.weight === 70 && a2.reps === 8, `set 2 prefilled from the plan, not set 1 (got ${a2.weight}x${a2.reps})`);
-const a3 = await store.addSet(wsq.id);
-ok(a3.weight === 80 && a3.reps === 5, `set 3 prefilled 80x5 (bottom of the range) (got ${a3.weight}x${a3.reps})`);
+ok(wsq.sets.length === 3, `the wave plan materialised 3 rows (${wsq.sets.length})`);
+ok(wsq.sets.map((x) => `${x.weight}x${x.reps}`).join(',') === '60x10,70x8,80x5',
+  `each row carries its own planned load: ${wsq.sets.map((x) => `${x.weight}x${x.reps}`).join(',')}`);
 const a4 = await store.addSet(wsq.id);
-ok(a4.weight === 80 && a4.reps === 5, 'an extra set beyond the plan carries the last set forward');
+ok(a4.weight === 80 && a4.reps === 5, 'an extra set beyond the plan carries the last one forward');
 ok(store.plannedSet(wsq, 1).weight === 70, 'plannedSet exposes the per-set target');
 ok(store.plannedSet(ws.entries[3], 0).weight === 15, 'plannedSet falls back to the uniform target');
-const made = await store.fillPlannedSets(ws.entries[1].id);
-ok(made === 3, `fillPlannedSets created the whole plan at once (${made})`);
 ok(ws.entries[1].sets.map((x) => `${x.weight}x${x.reps}`).join(',') === '40x10,45x8,50x6',
-  `rows match the plan: ${ws.entries[1].sets.map((x) => `${x.weight}x${x.reps}`).join(',')}`);
-ok(await store.fillPlannedSets(ws.entries[1].id) === 0, 'filling twice adds nothing');
+  `the string-form plan materialised too: ${ws.entries[1].sets.map((x) => `${x.weight}x${x.reps}`).join(',')}`);
+ok(await store.fillPlannedSets(ws.entries[1].id) === 0, 'nothing left to fill');
 
 section('per-set plan survives an export/import round trip');
 const psJson = JSON.stringify(xi.routineObject(pr));
@@ -311,7 +344,7 @@ ok(/Back Squat/.test(xi.sessionMarkdown(ws)) && /60×10 · 70×8/.test(xi.sessio
 ok(/> Tempo 3-1-1/.test(xi.sessionMarkdown(ws)), 'markdown quotes the exercise notes');
 
 section('logged sets must never be read back as targets');
-await store.updateSet(wsq.id, a1.id, { weight: 62.5, reps: 9 });
+await store.updateSet(wsq.id, wsq.sets[0].id, { weight: 62.5, reps: 9, done: true });
 await store.saveSessionBackToRoutine();
 const pr3 = store.getRoutine(pr.id);
 ok(JSON.stringify(pr3.entries[0].setTargets) === JSON.stringify(sq.setTargets),
@@ -325,12 +358,13 @@ await store.setEditing(finishedWave.id);
 ok(store.editingPast() === true, 'edit mode flagged');
 ok(store.working().id === finishedWave.id, 'the store now targets the finished session');
 const editEntry = store.working().entries[0];
+const rowsBefore = editEntry.sets.length;
 await store.updateSet(editEntry.id, editEntry.sets[0].id, { weight: 65, reps: 8, rpe: 9 });
 ok(store.getSession(finishedWave.id).entries[0].sets[0].weight === 65, 'corrected a logged set');
 const extra = await store.addSet(editEntry.id);
-ok(store.getSession(finishedWave.id).entries[0].sets.length === 5, 'added a forgotten set');
+ok(store.getSession(finishedWave.id).entries[0].sets.length === rowsBefore + 1, 'added a forgotten set');
 await store.deleteSet(editEntry.id, extra.id);
-ok(store.getSession(finishedWave.id).entries[0].sets.length === 4, 'removed it again');
+ok(store.getSession(finishedWave.id).entries[0].sets.length === rowsBefore, 'removed it again');
 const lateEntry = await store.addSessionEntry({ name: 'Forgotten Calf Raise', sets: 2, reps: '15' });
 ok(store.getSession(finishedWave.id).entries.some((e) => e.name === 'Forgotten Calf Raise'),
   'added an exercise that was missed');
@@ -353,19 +387,20 @@ await store.updateSessionTiming(finishedWave.id, { startedAt: target, finishedAt
 ok(store.getSession(finishedWave.id).finishedAt === target, 'a finish before the start is clamped');
 
 section('edit mode isolates the session being corrected');
-ok(store.lastLogFor('Back Squat', finishedWave.id)?.session.id !== finishedWave.id,
+ok(q.lastLogFor('Back Squat', finishedWave.id)?.session.id !== finishedWave.id,
   'the edited session is excluded from its own "last time" reference');
 await store.setEditing(null);
 ok(store.working() === null && store.editingPast() === false, 'edit mode cleared');
 const live2 = await store.startSession(pr.id);
 await store.setEditing(finishedWave.id);
 ok(store.working().id === finishedWave.id, 'edit mode wins over the live workout');
+const liveRows = live2.entries[3].sets.length;
 await store.addSet(store.working().entries[3].id);
-ok(live2.entries[3].sets.length === 0, 'the live workout was not touched');
+ok(live2.entries[3].sets.length === liveRows, 'the live workout was not touched');
 await store.setEditing(null);
 ok(store.working().id === live2.id, 'leaving edit mode returns to the live workout');
 await store.addSet(live2.entries[3].id);
-ok(live2.entries[3].sets.length === 1, 'the live workout is editable again');
+ok(live2.entries[3].sets.length === liveRows + 1, 'the live workout is editable again');
 await store.discardSession();
 
 section('unlogged rest is named, never defaulted');
@@ -374,7 +409,8 @@ const restR = await store.createRoutine({
 });
 const rs = await store.startSession(restR.id);
 const re = rs.entries[0];
-const rsets = [await store.addSet(re.id), await store.addSet(re.id), await store.addSet(re.id)];
+const rsets = re.sets;
+ok(rsets.length === 3, `the 3-set plan materialised (${rsets.length})`);
 for (const x of rsets) await store.updateSet(re.id, x.id, { done: true });
 ok(fmt.restLine(re) === 'Rest: no rest logged for any set',
   `all three unrested: "${fmt.restLine(re)}"`);
@@ -407,7 +443,7 @@ const libR = await store.createRoutine({
     { name: 'Standing Calf Raise', sets: 4, reps: '12-15', weight: 60, rest: '1:00' },
   ],
 });
-const lib = store.exerciseLibrary();
+const lib = q.exerciseLibrary();
 ok(lib.length > 2, `library spans every routine and session (${lib.length} exercises)`);
 const hack = lib.find((x) => x.key === 'hack squat');
 ok(!!hack, 'a newly added routine exercise appears in the library');
@@ -433,7 +469,7 @@ const sled = adhocS.entries.find((e) => e.name === 'Sled Push');
 const sledSet = await store.addSet(sled.id);
 await store.updateSet(sled.id, sledSet.id, { done: true });
 await store.finishSession();
-const lib2 = store.exerciseLibrary();
+const lib2 = q.exerciseLibrary();
 const sledRec = lib2.find((x) => x.key === 'sled push');
 ok(!!sledRec, 'an exercise that never belonged to a routine is still offered');
 ok(sledRec.routines === 0 && sledRec.performed === 1, 'shown as performed once, in no routine');
@@ -445,16 +481,16 @@ const dupR = await store.createRoutine({
 });
 await new Promise((r) => setTimeout(r, 5));
 await store.saveRoutine(dupR);                   // make it unambiguously the newer one
-const hack2 = store.findInLibrary('HACK SQUAT');
+const hack2 = q.findInLibrary('HACK SQUAT');
 ok(hack2.routines === 2, 'counted in both routines');
 ok(hack2.def.weight === 120 && hack2.def.rest === 180,
   `definition taken from the more recently updated routine (${hack2.def.weight}kg, ${hack2.def.rest}s)`);
 ok(hack2.fromRoutine === 'Later Routine', `names the source routine (${hack2.fromRoutine})`);
 await new Promise((r) => setTimeout(r, 5));
 await store.saveRoutine(store.getRoutine(libR.id));   // now the other one is newest
-ok(store.findInLibrary('hack squat').fromRoutine === 'Library Source',
+ok(q.findInLibrary('hack squat').fromRoutine === 'Library Source',
   'editing the older routine makes its definition the current one');
-ok(store.findInLibrary('does not exist') === null, 'unknown keys return null');
+ok(q.findInLibrary('does not exist') === null, 'unknown keys return null');
 await store.deleteRoutine(dupR.id);
 await store.deleteRoutine(adhocR.id);
 await store.deleteRoutine(libR.id);
@@ -685,22 +721,23 @@ await store.updateSet(wE.id, w2.id, { weight: 85, reps: 3, done: true });
 ok(store.entryStatus(wE) === 'pending', 'two completed warmups leave the exercise pending');
 ok(store.sessionVolume(wS) === 0, `warmups contribute no volume (${store.sessionVolume(wS)})`);
 
-const k1 = await store.addSet(wE.id);
+const k1 = store.workingSets(wE)[0];
 ok(k1.weight === 100 && k1.reps === 5,
-  `the first working set still prefills from the target, not the warmup (${k1.weight}x${k1.reps})`);
+  `the first working set carries the plan, not the warmup (${k1.weight}x${k1.reps})`);
 await store.updateSet(wE.id, k1.id, { done: true });
 ok(store.entryStatus(wE) === 'partial', 'one working set of three = partial');
 ok(store.sessionVolume(wS) === 500, `volume counts working sets only (${store.sessionVolume(wS)})`);
-const k2 = await store.addSet(wE.id);
-const k3 = await store.addSet(wE.id);
+const [, k2, k3] = store.workingSets(wE);
 await store.updateSet(wE.id, k2.id, { done: true });
 await store.updateSet(wE.id, k3.id, { done: true });
 ok(store.entryStatus(wE) === 'done', 'three working sets completes a 3-set target despite the warmups');
-ok(store.workingSets(wE).length === 3 && wE.sets.length === 5, '3 working sets of 5 logged');
+ok(store.workingSets(wE).length === 3 && wE.sets.length === 5, '3 working sets, 5 rows');
 
 section('set labels number warmups separately');
 ok(store.setLabels(wE.sets).join(',') === 'W1,W2,1,2,3',
-  `labels read W1,W2,1,2,3 (${store.setLabels(wE.sets).join(',')})`);
+  `warmups sort first and number separately (${store.setLabels(wE.sets).join(',')})`);
+ok(wE.sets.indexOf(w1) === 0 && wE.sets.indexOf(w2) === 1,
+  'a warmup is inserted before the working sets, not appended after them');
 await store.toggleWarmup(wE.id, w2.id);
 ok(store.setLabels(wE.sets).join(',') === 'W1,1,2,3,4',
   `promoting a warmup renumbers (${store.setLabels(wE.sets).join(',')})`);
@@ -723,6 +760,8 @@ ok(fmt.effortTag({ rpe: 0, rir: 0 }) === ' @0 r0', 'zero is a value, not a blank
 section('warmups and RIR in summaries and exports');
 const sum = fmt.logSummary(wE);
 ok(sum.startsWith('W 60'), `warmups marked W in the summary (${sum.slice(0, 20)})`);
+ok(fmt.logSummary({ type: 'lift', sets: [{ done: false, weight: 100, reps: 5 }] }) === '',
+  'an unticked pre-materialised row is NOT reported as logged');
 ok(fmt.logSummary(wE, { workingOnly: true }).includes('W') === false,
   'the "last time" reference hides warmups');
 ok(fmt.logSummary(wE, { workingOnly: true }).includes('@8 r2'), 'and shows both effort values');
@@ -747,6 +786,7 @@ const rows = wCsv.trim().split('\n').slice(1).map((l) => l.split(','));
 const warmCol = header.indexOf('warmup');
 ok(rows.map((r) => r[warmCol]).join(',') === 'yes,yes,no,no,no',
   `CSV marks which rows are warmups (${rows.map((r) => r[warmCol]).join(',')})`);
+ok(rows.length === 5, `CSV carries only the 5 ticked rows (${rows.length})`);
 ok(rows[2][header.indexOf('rir')] === '2', 'CSV carries RIR');
 await store.finishSession();
 await store.deleteSession(wS.id);
@@ -759,13 +799,15 @@ const pw = await store.createRoutine({
 });
 const pwS = await store.startSession(pw.id);
 const pwE = pwS.entries[0];
+ok(pwE.sets.length === 2, 'the 2-row plan materialised');
 await store.addSet(pwE.id, { warmup: true });
-const pk1 = await store.addSet(pwE.id);
-const pk2 = await store.addSet(pwE.id);
-ok(pk1.weight === 40 && pk1.reps === 10, `working set 1 took plan row 1 (${pk1.weight}x${pk1.reps})`);
+ok(store.setLabels(pwE.sets).join(',') === 'W1,1,2',
+  `a warmup lands before the planned rows (${store.setLabels(pwE.sets).join(',')})`);
+const [pk1, pk2] = store.workingSets(pwE);
+ok(pk1.weight === 40 && pk1.reps === 10, `working set 1 still has plan row 1 (${pk1.weight}x${pk1.reps})`);
 ok(pk2.weight === 45 && pk2.reps === 8,
-  `working set 2 took plan row 2, unshifted by the warmup (${pk2.weight}x${pk2.reps})`);
-await store.addSet(pwE.id, { warmup: true });
+  `working set 2 still has plan row 2, unshifted by the warmup (${pk2.weight}x${pk2.reps})`);
+ok(store.plannedSet(pwE, 0).weight === 40, 'plannedSet is indexed by working set');
 const filled = await store.fillPlannedSets(pwE.id);
 ok(filled === 0, 'fillPlannedSets counts working sets, so the plan is already complete');
 await store.discardSession();

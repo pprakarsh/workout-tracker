@@ -3,8 +3,9 @@
 // Elapsed time is derived from a stored start timestamp, never accumulated by a
 // tick, so locking the screen / backgrounding the app / reloading the page all
 // still show the true elapsed time.
-import { state, stopRest, setRestTarget, markBeeped } from './store.js';
-import { fmtClock, esc } from './util.js';
+import { state, stopRest, setRestTarget, markBeeped, findEntry, setLabels } from './store.js';
+import { loadLabel } from './format.js';
+import { fmtClock, fmtNum, esc } from './util.js';
 
 let bar, tickHandle = null, lastKey = '';
 
@@ -55,24 +56,69 @@ export function renderRestBar() {
     stopTicking();
     return;
   }
-  const key = `${t.startedAt}|${t.target}|${t.label}`;
+  const e = t.entryId ? findEntry(t.entryId) : null;
+  const set = e && t.setId ? (e.sets || []).find((x) => x.id === t.setId) : null;
+  const label = set ? setLabels(e.sets)[e.sets.indexOf(set)] : null;
+  const key = `${t.startedAt}|${t.target}|${t.label}|${set ? `${set.weight}/${set.reps}/${set.rpe}/${set.rir}/${set.bodyweight}` : ''}`;
+
   if (key !== lastKey) {
     lastKey = key;
     bar.hidden = false;
+    // Resting is the only time there is attention to spare, so this is where
+    // effort, corrections and undo live -- not on the row mid-set.
     bar.innerHTML = `
-      <div class="clock" id="restClock">0:00</div>
-      <div class="meta">
-        <div class="t1">${esc(t.label || 'Rest')}</div>
-        <div id="restSub"></div>
+      <div class="restbar-top">
+        <div class="clock" id="restClock">0:00</div>
+        <div class="meta">
+          <div class="t1">${esc(t.label || 'Rest')}</div>
+          <div id="restSub"></div>
+        </div>
+        <div class="nudge">
+          <button type="button" data-action="rest-nudge" data-by="30">+30s</button>
+          <button type="button" data-action="rest-nudge" data-by="-30">&minus;30s</button>
+        </div>
       </div>
-      <div class="nudge">
-        <button type="button" data-action="rest-nudge" data-by="30">+30s</button>
-        <button type="button" data-action="rest-nudge" data-by="-30">−30s</button>
+      ${set ? `
+      <div class="restbar-logged">
+        <span class="tiny">Logged</span>
+        <b>${esc(loadLabel(set))} &times; ${esc(fmtNum(set.reps))}</b>
+        <span class="spacer"></span>
+        <button type="button" class="chip" data-action="set-rest-edit"
+                data-entry="${e.id}" data-set="${set.id}">edit rest</button>
+        <button type="button" class="chip warn" data-action="set-undo"
+                data-entry="${e.id}" data-set="${set.id}">undo</button>
       </div>
-      <button class="btn primary" data-action="rest-stop" type="button">Stop</button>`;
+      ${effortRow(e, set)}` : ''}
+      <button class="btn primary block" data-action="rest-stop" type="button">
+        I'm starting my set</button>`;
   }
   paint();
   startTicking();
+}
+
+/** Effort as fat chips: a tap, not a 50px numeric field. */
+function effortRow(e, set) {
+  const scale = state.settings.effortScale;
+  const rows = [];
+  if (scale !== 'rir') {
+    rows.push(`
+      <div class="restbar-effort">
+        <span class="tiny">RPE</span>
+        ${[6, 7, 8, 9, 10].map((n) => `<button type="button"
+          class="chip ${set.rpe === n ? 'on' : ''}" data-action="set-effort"
+          data-entry="${e.id}" data-set="${set.id}" data-field="rpe" data-value="${n}">${n}</button>`).join('')}
+      </div>`);
+  }
+  if (scale === 'rir' || scale === 'both') {
+    rows.push(`
+      <div class="restbar-effort">
+        <span class="tiny">RIR</span>
+        ${[0, 1, 2, 3, 4].map((n) => `<button type="button"
+          class="chip ${set.rir === n ? 'on' : ''}" data-action="set-effort"
+          data-entry="${e.id}" data-set="${set.id}" data-field="rir" data-value="${n}">${n}</button>`).join('')}
+      </div>`);
+  }
+  return rows.join('');
 }
 
 function paint() {

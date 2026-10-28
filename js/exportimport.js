@@ -6,7 +6,7 @@ import {
 import {
   download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, fmtReps, uid,
 } from './util.js';
-import { pace, targetLine } from './format.js';
+import { pace, targetLine, loadLabel } from './format.js';
 
 export const SCHEMA = 'workout-tracker/v1';
 
@@ -180,7 +180,9 @@ export function csvRows(sessions) {
           '', '', '', e.repIndex ?? '', e.repTotal ?? ''].map(csvCell).join(','));
       } else {
         const labels = setLabels(e.sets || []);
+        // only ticked sets: an unticked pre-materialised row is plan, not log
         (e.sets || []).forEach((x, i) => {
+          if (!x.done) return;
           rows.push([...base, e.name, 'lift', e.group || '',
             i + 1, fmtNum(x.weight), x.unit || '', fmtNum(x.reps), fmtNum(x.rpe), x.rest ?? '',
             '', '', '', '', '', '', '',
@@ -224,15 +226,16 @@ export function sessionMarkdown(s) {
     L.push('');
 
     if (e.type === 'lift') {
-      const sets = e.sets || [];
+      const allRows = e.sets || [];
+      const labels = setLabels(allRows);
+      const sets = allRows.filter((x) => x.done);
       if (!sets.length) { L.push('_nothing logged_'); return; }
       const anyRir = sets.some((x) => x.rir !== null && x.rir !== undefined);
-      const labels = setLabels(sets);
       L.push(`| Set | Weight | Reps | RPE |${anyRir ? ' RIR |' : ''} Rest | Done |`);
       L.push(`|---:|---:|---:|---:|${anyRir ? '---:|' : ''}---:|:--:|`);
-      sets.forEach((x, n) => {
+      sets.forEach((x) => {
         const rir = anyRir ? ` ${x.rir !== null && x.rir !== undefined ? fmtNum(x.rir) : '—'} |` : '';
-        L.push(`| ${labels[n]} | ${x.weight !== null ? `${fmtNum(x.weight)} ${x.unit || s.unit}` : '—'} | ${x.reps !== null ? fmtNum(x.reps) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} |${rir} ${x.rest ? fmtClock(x.rest) : 'no rest logged'} | ${x.done ? '✓' : ''} |`);
+        L.push(`| ${labels[allRows.indexOf(x)]} | ${loadLabel({ ...x, unit: x.unit || s.unit }, { spaced: true })} | ${x.reps !== null ? fmtNum(x.reps) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} |${rir} ${x.rest ? fmtClock(x.rest) : 'no rest logged'} | ${x.done ? '✓' : ''} |`);
       });
       if (sets.some((x) => x.warmup)) L.push('');
       if (sets.some((x) => x.warmup)) L.push('_W = warmup set; excluded from volume._');

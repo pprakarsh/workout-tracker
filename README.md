@@ -108,6 +108,53 @@ One limitation to be aware of: a PWA on iOS cannot reliably play a sound or fire
 while fully backgrounded, so the target beep only plays if the app is open. The clock itself is
 always correct when you come back. (Android and desktop also vibrate; iOS Safari ignores vibration.)
 
+### Logging a set: one tap
+
+The plan is already on screen. Starting a workout materialises the rows the routine calls for,
+pre-filled with their planned load, so logging is **confirming** rather than creating:
+
+```
+Set   Weight   Reps  RPE
+ 1    102.5     5     8    ✓
+ 2    102.5     5           ← active
+ 3    102.5     5
+
+      ┌────────────────────────────┐
+      │   ✓  102.5kg  ×  5         │
+      │   set 2 — logs it and      │
+      │   starts rest              │
+      └────────────────────────────┘
+```
+
+One tap ticks the set and starts the rest clock, because those are the same moment. Adjust first
+with the − / + buttons or a recent-weight chip if the day calls for it. *+ Extra set* covers an
+unplanned set; the planned ones are already there.
+
+**If the plan has no weight**, the button refuses and reads *"Enter a weight for set 1"* instead —
+tapping it focuses the field so you can type one. A set logged with no load recorded is worse than
+one extra tap.
+
+**Bodyweight exercises** (pull-ups, dips, push-ups) are set in the exercise form under *Load*. Their
+sets log as `BW` with no weight needed, the weight column becomes **Added**, and anything you enter
+there counts as added load — `BW + 10 kg`. The `BW` chip next to the steppers toggles a single set.
+Bodyweight sets count towards session volume only when the session records your bodyweight; without
+it they contribute nothing rather than a guessed number.
+
+### Rest: recorded, and correctable
+
+The rest panel is where everything other than the confirm tap lives, because resting is the only
+time you have attention to spare. It shows what you just logged, offers RPE/RIR as fat chips, and
+carries **undo** (which discards the rest it started) and **edit rest**.
+
+Every recorded rest is tappable from the exercise card — `1) 2:05 · 2) not logged` — so a timer you
+forgot to start, stopped late, or triggered by a mis-tap can be fixed now or days later. Clearing it
+records *no rest*, not zero.
+
+### Keeping the screen on
+
+The app holds a screen wake lock while a workout is running (iOS 16.4+ and Android), so the phone
+does not lock between sets. Switch it off in Settings.
+
 ### Warmup sets
 
 Tap a set's number to toggle it between a warmup and a working set, or use **+ Warmup** to add one

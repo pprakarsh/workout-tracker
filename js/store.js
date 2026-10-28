@@ -1,12 +1,13 @@
 // Application state + persistence. Everything lives on this device: IndexedDB only.
 import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
-import { uid, num, parseReps, parseDur, normName } from './util.js';
+import { uid, num, parseReps, parseDur } from './util.js';
 
 export const DEFAULT_SETTINGS = {
   unit: 'kg',            // default load unit for new sets
   distanceUnit: 'km',
   defaultRest: 120,      // seconds, used when a routine entry has no rest target
   beep: true,            // sound when the rest target is reached
+  keepAwake: true,       // hold a screen wake lock while a workout is running
   weightStep: 2.5,       // the +/- stepper increment for weight
   effortScale: 'rpe',    // 'rpe' | 'rir' | 'both' -- which effort column(s) to log
 };
@@ -125,6 +126,9 @@ export function normalizeEntry(raw = {}) {
     repsMax: setTargets ? null : reps.max,
     weight: setTargets ? null : num(raw.weight ?? raw.targetWeight),
     unit: raw.unit || null,
+    // a bodyweight movement: pull-ups, dips, push-ups. Sets default to BW and
+    // any `weight` logged is treated as ADDED load.
+    bodyweight: !!(raw.bodyweight ?? raw.bw),
     // cardio targets
     targetDistance: num(raw.distance ?? raw.targetDistance),
     distanceUnit: raw.distanceUnit || null,
@@ -159,6 +163,9 @@ export function normalizeRoutine(raw = {}) {
 
 const blankSet = (unit, warmup = false) => ({
   id: uid('s'), weight: null, unit, reps: null, rpe: null, rir: null,
+  // bodyweight: the load is your own body. `weight` then means ADDED load
+  // (a belt, a dumbbell between the feet) and may stay null for plain BW.
+  bodyweight: false,
   warmup, note: '', done: false, completedAt: null, rest: null,
 });
 
@@ -203,7 +210,7 @@ function toSessionEntry(entry, settings) {
 function expandEntry(entry, settings, groupSeq) {
   const base = normalizeEntry(entry);
   if (base.type !== 'cardio' || !base.repeat || base.repeat < 2) {
-    return [toSessionEntry(base, settings)];
+    return [materializePlan(toSessionEntry(base, settings))];
   }
   const group = base.group || `R${groupSeq()}`;
   return Array.from({ length: base.repeat }, (_, i) => ({
@@ -211,6 +218,27 @@ function expandEntry(entry, settings, groupSeq) {
     repIndex: i + 1,
     repTotal: base.repeat,
   }));
+}
+
+/**
+ * Create the rows the plan calls for, so a session opens as a checklist to tick
+ * off rather than an empty form with an "add set" button. Logging a set is
+ * confirming one, not creating one.
+ */
+function materializePlan(entry) {
+  if (entry.type !== 'lift') return entry;
+  const want = entry.setTargets ? entry.setTargets.length : (entry.targetSets ?? 0);
+  for (let i = entry.sets.length; i < want; i++) {
+    const plan = entry.setTargets?.[i]
+      || (entry.weight !== null || entry.repsMin !== null
+        ? { weight: entry.weight, repsMin: entry.repsMin, repsMax: entry.repsMax } : null);
+    const set = blankSet(entry.unit);
+    set.bodyweight = !!entry.bodyweight;
+    set.weight = plan ? (plan.weight ?? null) : null;
+    set.reps = plan ? (plan.repsMin ?? plan.repsMax ?? null) : null;
+    entry.sets.push(set);
+  }
+  return entry;
 }
 
 /** Counter for auto-generated interval group labels within one session. */
@@ -526,6 +554,16 @@ export async function toggleSkip(entryId) {
 /* live session: sets                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The set the confirm button acts on: the first working set not yet done.
+ * Warmups are included only if they come before it, so a warmup you have not
+ * ticked is offered first.
+ */
+export function activeSet(e) {
+  if (!e || e.type !== 'lift') return null;
+  return (e.sets || []).find((s) => !s.done) || null;
+}
+
 /** The planned target for set number i (0-based), per-set plan first. */
 export function plannedSet(e, i) {
   if (!e || e.type !== 'lift') return null;
@@ -541,12 +579,17 @@ export async function addSet(entryId, { warmup = false } = {}) {
   if (!e || e.type !== 'lift') return null;
   const prev = e.sets[e.sets.length - 1];
   const set = blankSet(e.unit || state.settings.unit, warmup);
+  set.bodyweight = !!e.bodyweight;
   if (warmup) {
     // a warmup has no planned target; start from the previous set or the first target
-    const ref = prev || plannedSet(e, 0);
+    const ref = plannedSet(e, 0) || prev;
     set.weight = ref ? (ref.weight ?? null) : null;
     set.reps = ref ? (ref.reps ?? ref.repsMin ?? null) : null;
-    e.sets.push(set);
+    // Warmups come first. With the plan pre-materialised, appending would put a
+    // warmup after the working sets it precedes in reality.
+    let at = 0;
+    while (at < e.sets.length && e.sets[at].warmup) at++;
+    e.sets.splice(at, 0, set);
     await touch();
     return set;
   }
@@ -564,6 +607,48 @@ export async function addSet(entryId, { warmup = false } = {}) {
   e.sets.push(set);
   await touch();
   return set;
+}
+
+/**
+ * Correct the recorded rest for a set. Rest is normally written when you stop
+ * the timer, so this covers forgetting to start it, stopping it late, or fixing
+ * it days later. Pass null to mark it as not logged again.
+ */
+export async function setRestFor(entryId, setId, seconds) {
+  const e = findEntry(entryId);
+  const set = e?.sets?.find((x) => x.id === setId);
+  if (!set) return;
+  set.rest = seconds === null || seconds === undefined ? null : Math.max(0, Math.round(seconds));
+  await touch();
+}
+
+/**
+ * Undo a confirmed set: un-tick it and, if the rest timer was started by that
+ * same tap, cancel it without recording any rest. For a mis-tap, nothing
+ * should be left behind.
+ */
+export async function undoSet(entryId, setId) {
+  const e = findEntry(entryId);
+  const set = e?.sets?.find((x) => x.id === setId);
+  if (!set) return null;
+  set.done = false;
+  set.completedAt = null;
+  const t = state.timer;
+  if (t && t.entryId === entryId && t.setId === setId) {
+    set.rest = null;
+    state.timer = null;
+    await metaSet('timer', null);
+  }
+  await touch();
+  return set;
+}
+
+export async function toggleBodyweight(entryId, setId) {
+  const e = findEntry(entryId);
+  const set = e?.sets?.find((x) => x.id === setId);
+  if (!set) return;
+  set.bodyweight = !set.bodyweight;
+  await touch();
 }
 
 export async function toggleWarmup(entryId, setId) {
@@ -736,7 +821,11 @@ export async function restoreAll({ routines = [], sessions = [], settings = null
 export function dataFingerprint() {
   let sets = 0;
   state.sessions.forEach((s) => s.entries.forEach((e) => {
-    sets += e.type === 'cardio' ? (e.log && (e.log.done || e.log.distance !== null) ? 1 : 0) : (e.sets || []).length;
+    // ticked sets only: pre-materialised rows are plan, and counting them would
+    // inflate the number both devices compare after a restore
+    sets += e.type === 'cardio'
+      ? (e.log && (e.log.done || e.log.distance !== null) ? 1 : 0)
+      : (e.sets || []).filter((x) => x.done).length;
   }));
   const oldest = state.sessions.length ? Math.min(...state.sessions.map((s) => s.startedAt)) : null;
   const newest = state.sessions.length ? Math.max(...state.sessions.map((s) => s.startedAt)) : null;
@@ -748,149 +837,6 @@ export function dataFingerprint() {
     newest,
   };
 }
-
-/* ------------------------------------------------------------------ */
-/* history lookups                                                    */
-/* ------------------------------------------------------------------ */
-
-/** Every exercise name ever used, for the autocomplete datalist. */
-export function exerciseNames() {
-  const out = new Map();
-  const add = (n) => { const k = normName(n); if (k && !out.has(k)) out.set(k, n.trim()); };
-  state.routines.forEach((r) => r.entries.forEach((e) => add(e.name)));
-  state.sessions.forEach((s) => s.entries.forEach((e) => add(e.name)));
-  return [...out.values()].sort((a, b) => a.localeCompare(b));
-}
-
-/** An entry reduced to a reusable definition: targets and notes, no logged data. */
-function definitionOf(e) {
-  return {
-    type: e.type,
-    name: e.name,
-    // The superset letter describes one routine's arrangement, so it is
-    // deliberately not carried into another routine.
-    group: null,
-    targetSets: e.targetSets ?? null,
-    setTargets: e.setTargets ?? null,
-    repsMin: e.repsMin ?? null,
-    repsMax: e.repsMax ?? null,
-    weight: e.weight ?? null,
-    targetDistance: e.targetDistance ?? null,
-    distanceUnit: e.distanceUnit ?? null,
-    targetDuration: e.targetDuration ?? null,
-    rest: e.rest ?? null,
-    notes: e.notes || '',
-  };
-}
-
-/**
- * The global exercise library: one record per distinct exercise name across all
- * routines and all logged sessions, carrying the most recent definition of it
- * plus how often and when it was actually performed.
- *
- * Routine definitions win over session snapshots (a routine is the intent; a
- * session is one instance of it), newest routine first. An exercise that only
- * ever existed as an ad-hoc session addition still shows up, defined from that.
- */
-export function exerciseLibrary() {
-  const byKey = new Map();
-  const touch = (name) => {
-    const key = normName(name);
-    if (!key) return null;
-    if (!byKey.has(key)) {
-      byKey.set(key, {
-        key,
-        name: String(name).trim(),
-        def: null,
-        fromRoutine: null,
-        candidates: [],
-        routines: 0,
-        performed: 0,
-        lastPerformed: null,
-      });
-    }
-    return byKey.get(key);
-  };
-
-  state.routines.forEach((r) => {
-    r.entries.forEach((e) => {
-      const rec = touch(e.name);
-      if (!rec) return;
-      rec.routines++;
-      rec.candidates.push({ entry: e, routine: r });
-    });
-  });
-
-  state.sessions.forEach((s) => {
-    s.entries.forEach((e) => {
-      const rec = touch(e.name);
-      if (!rec) return;
-      const logged = e.type === 'cardio'
-        ? !!(e.log && (e.log.done || e.log.distance !== null))
-        : (e.sets || []).some((x) => x.done);
-      if (logged) {
-        rec.performed++;
-        if (!rec.lastPerformed || s.startedAt > rec.lastPerformed) rec.lastPerformed = s.startedAt;
-      }
-      if (!rec.sessionDef || s.startedAt > rec.sessionDefAt) {
-        rec.sessionDef = e;
-        rec.sessionDefAt = s.startedAt;
-      }
-    });
-  });
-
-  return [...byKey.values()].map((rec) => {
-    // Most recently updated routine wins; then the more recently created one.
-    // Spelling the tie-break out matters: without it, iteration order (which is
-    // alphabetical by routine name) silently decided which definition you got.
-    const best = rec.candidates.sort((a, b) => (
-      (b.routine.updatedAt || 0) - (a.routine.updatedAt || 0)
-      || (b.routine.createdAt || 0) - (a.routine.createdAt || 0)
-    ))[0];
-    const source = best ? best.entry : rec.sessionDef;
-    return {
-      key: rec.key,
-      name: rec.name,
-      def: source ? definitionOf(source) : null,
-      fromRoutine: best ? best.routine.name : null,
-      routines: rec.routines,
-      performed: rec.performed,
-      lastPerformed: rec.lastPerformed,
-    };
-  }).sort(
-    (a, b) => (b.lastPerformed || 0) - (a.lastPerformed || 0) || a.name.localeCompare(b.name),
-  );
-}
-
-export const findInLibrary = (key) => exerciseLibrary().find((x) => x.key === normName(key)) || null;
-
-/**
- * The most recent logged instance of an exercise, for the "last time" reference.
- * Returns { session, entry } or null. Skips the live session.
- */
-export function lastLogFor(name, excludeSessionId = null) {
-  const key = normName(name);
-  if (!key) return null;
-  for (const s of state.sessions) {
-    if (s.id === excludeSessionId) continue;
-    if (!s.finishedAt) continue;        // only completed sessions count as "last time"
-    for (const e of s.entries) {
-      if (normName(e.name) !== key) continue;
-      const hasWork = e.type === 'lift'
-        ? (e.sets || []).some((x) => x.done || x.reps !== null || x.weight !== null)
-        : !!(e.log && (e.log.done || e.log.distance !== null || e.log.duration !== null));
-      if (hasWork) return { session: s, entry: e };
-    }
-  }
-  return null;
-}
-
-/** Previous session for a routine (most recent finished one). */
-export function lastSessionForRoutine(routineId) {
-  return state.sessions.find((s) => s.routineId === routineId && s.finishedAt) || null;
-}
-
-export const completedSessions = () => state.sessions.filter((s) => s.finishedAt);
 
 /* ------------------------------------------------------------------ */
 /* progress helpers                                                   */
@@ -913,10 +859,28 @@ export function sessionProgress(s) {
   return { done, total: live.length };
 }
 
+/**
+ * Load moved, in the session's unit. A bodyweight set counts your bodyweight
+ * plus any added load, but only when the session records a bodyweight -- we will
+ * not invent a number. Without it, bodyweight sets contribute nothing rather
+ * than guessing, which is why logging bodyweight is worth doing.
+ */
 export function sessionVolume(s) {
   let v = 0;
   s.entries.forEach((e) => workingSets(e).forEach((x) => {
-    if (x.done && x.weight !== null && x.reps !== null) v += x.weight * x.reps;
+    if (!x.done || x.reps === null) return;
+    if (x.bodyweight) {
+      if (s.bodyweight) v += (s.bodyweight + (x.weight || 0)) * x.reps;
+      return;
+    }
+    if (x.weight !== null) v += x.weight * x.reps;
   }));
   return Math.round(v);
+}
+
+/** Can this set be confirmed, or does it still need a number? */
+export function setIsLoggable(set) {
+  if (!set) return false;
+  if (set.reps === null) return false;
+  return set.bodyweight || set.weight !== null;
 }

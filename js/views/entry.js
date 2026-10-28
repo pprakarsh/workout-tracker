@@ -3,12 +3,14 @@
 import {
   state, findEntry, addSet, deleteSet, updateSet, toggleSetDone, toggleSkip,
   removeSessionEntry, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
-  lastLogFor, addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
-  parseSetTargets, exerciseLibrary, findInLibrary, getRoutine, saveRoutine, normalizeEntry,
-  setLabels, workingSets, toggleWarmup,
+  addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
+  parseSetTargets, getRoutine, saveRoutine, normalizeEntry,
+  setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
+  setIsLoggable,
 } from '../store.js';
+import { exerciseLibrary, findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
-import { planLine, targetLine, pace, logSummary, restLine } from '../format.js';
+import { planLine, targetLine, pace, logSummary, restLine, loadLabel } from '../format.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
 import { unlockAudio } from '../timer.js';
 
@@ -22,6 +24,29 @@ function lastRefHtml(e) {
   const sum = logSummary(hit.entry, { workingOnly: true });
   if (!sum) return '';
   return `<div class="lastref">Last (${esc(relDay(hit.session.startedAt))}): <b>${esc(sum)}</b></div>`;
+}
+
+/**
+ * Per-set rest, with every entry tappable so a rest that was never started,
+ * stopped late, or started by a mis-tap can be corrected -- now or days later.
+ */
+function restEditLine(e) {
+  const sets = e.sets || [];
+  const labels = setLabels(sets);
+  const shown = sets
+    .map((s, i) => ({ s, label: labels[i] }))
+    .filter(({ s }) => s.done || s.weight !== null || s.reps !== null);
+  if (!shown.length) return '';
+  return `
+    <div class="restedit">
+      <span class="tiny">Rest</span>
+      ${shown.map(({ s, label }) => `
+        <button type="button" class="chip ${s.rest ? '' : 'none'}" data-action="set-rest-edit"
+                data-entry="${e.id}" data-set="${s.id}"
+                title="Edit the rest recorded after set ${esc(label)}">
+          ${esc(label)}) ${s.rest ? esc(fmtClock(s.rest)) : 'not logged'}
+        </button>`).join('')}
+    </div>`;
 }
 
 /**
@@ -67,7 +92,8 @@ function rowClass() {
 function setRow(e, s, label, workingIdx, allowRest) {
   const unit = s.unit || e.unit || state.settings.unit;
   const plan = s.warmup ? null : plannedSet(e, workingIdx);
-  const wPh = plan && plan.weight !== null && plan.weight !== undefined ? fmtNum(plan.weight) : esc(unit);
+  const wPh = s.bodyweight ? 'BW'
+    : (plan && plan.weight !== null && plan.weight !== undefined ? fmtNum(plan.weight) : esc(unit));
   const rPh = plan && fmtReps(plan.repsMin, plan.repsMax) ? fmtReps(plan.repsMin, plan.repsMax) : 'reps';
   return `
     <div class="set-row ${rowClass()} ${s.done ? 'done' : ''} ${s.warmup ? 'warm' : ''}"
@@ -83,12 +109,39 @@ function setRow(e, s, label, workingIdx, allowRest) {
              value="${esc(fmtNum(s.rpe))}" aria-label="RPE set ${esc(label)}">` : ''}
       ${showRir() ? `<input inputmode="decimal" enterkeyhint="done" data-f="rir" placeholder="RIR"
              value="${esc(fmtNum(s.rir))}" aria-label="Reps in reserve, set ${esc(label)}">` : ''}
-      <button type="button" class="chk ${s.done ? 'on' : ''}" title="Mark set done"
+      <button type="button" class="chk ${s.done ? 'on' : ''}"
+              title="${s.done ? 'Un-tick this set' : 'Tick without starting rest'}"
               data-action="set-done" data-entry="${e.id}" data-set="${s.id}">✓</button>
-      ${allowRest ? `<button type="button" class="rest-btn" title="Finish set and start rest"
-              data-action="rest-start" data-entry="${e.id}" data-set="${s.id}">⏱</button>`
-    : '<div></div>'}
     </div>`;
+}
+
+/**
+ * The one action that matters during a set: confirm what you just did. It ticks
+ * the set and starts the rest clock in a single tap, because those are the same
+ * moment. If the plan carries no weight it refuses and sends you to the field
+ * instead -- a set with no load recorded is worse than one extra tap.
+ */
+function confirmBar(e, allowRest) {
+  const s = activeSet(e);
+  if (!s) {
+    return `<div class="confirm done-all">All ${workingSets(e).length} sets done
+      <span class="dim small">&mdash; tap a row to correct it</span></div>`;
+  }
+  const labels = setLabels(e.sets || []);
+  const label = labels[(e.sets || []).indexOf(s)];
+  const needsWeight = !setIsLoggable(s);
+  if (needsWeight) {
+    return `
+      <button type="button" class="confirm needs" data-action="set-needs" data-entry="${e.id}" data-set="${s.id}">
+        <span class="big">Enter ${s.reps === null ? 'reps' : 'a weight'} for set ${esc(label)}</span>
+        <span class="sub">the plan does not set one &mdash; tap to fill it in</span>
+      </button>`;
+  }
+  return `
+    <button type="button" class="confirm" data-action="set-confirm" data-entry="${e.id}" data-set="${s.id}">
+      <span class="big">&#10003;&nbsp; ${esc(loadLabel(s))} &times; ${esc(fmtNum(s.reps))}</span>
+      <span class="sub">set ${esc(label)}${allowRest ? ' &mdash; logs it and starts rest' : ' &mdash; log it'}</span>
+    </button>`;
 }
 
 /**
@@ -99,12 +152,23 @@ function setRow(e, s, label, workingIdx, allowRest) {
  */
 function stepBar(e) {
   const w = fmtNum(state.settings.weightStep);
+  const recent = recentWeights(e.name);
+  const active = activeSet(e);
   return `
     <div class="stepbar" data-stepbar="${e.id}" hidden>
-      <button type="button" data-step="weight" data-delta="-${w}">−${w}</button>
-      <button type="button" data-step="weight" data-delta="${w}">+${w}</button>
-      <button type="button" data-step="reps" data-delta="-1">−1 rep</button>
-      <button type="button" data-step="reps" data-delta="1">+1 rep</button>
+      <div class="steprow">
+        <button type="button" data-step="weight" data-delta="-${w}">&minus;${w}</button>
+        <button type="button" data-step="weight" data-delta="${w}">+${w}</button>
+        <button type="button" data-step="reps" data-delta="-1">&minus;1 rep</button>
+        <button type="button" data-step="reps" data-delta="1">+1 rep</button>
+      </div>
+      <div class="steprow chips">
+        <button type="button" class="chip bw" data-action="set-bw"
+                data-entry="${e.id}" data-set="${active ? active.id : ''}"
+                title="Log this set as bodyweight">BW</button>
+        ${recent.map((v) => `<button type="button" class="chip" data-step="weight" data-set-to="${v}">${esc(fmtNum(v))}</button>`).join('')}
+        ${recent.length ? '<span class="tiny dim" style="align-self:center">recent</span>' : ''}
+      </div>
     </div>`;
 }
 
@@ -122,20 +186,21 @@ function liftBody(e, allowRest) {
   return `
     <div class="sets">
       <div class="set-hdr ${rowClass()}">
-        <div>Set</div><div>Weight</div><div>Reps</div>
+        <div>Set</div><div>${e.bodyweight ? 'Added' : 'Weight'}</div><div>Reps</div>
         ${showRpe() ? '<div>RPE</div>' : ''}${showRir() ? '<div>RIR</div>' : ''}
-        <div></div><div></div>
+        <div></div>
       </div>
-      ${rows || '<p class="hint" style="margin:2px 0 8px">No sets logged yet.</p>'}
+      ${rows || '<p class="hint" style="margin:2px 0 8px">No sets planned. Add one below.</p>'}
     </div>
     ${stepBar(e)}
+    ${confirmBar(e, allowRest)}
     <div class="set-foot">
-      <button type="button" class="btn sm primary" data-action="set-add" data-entry="${e.id}">+ Add set</button>
+      <button type="button" class="btn sm ghost" data-action="set-add" data-entry="${e.id}">+ Extra set</button>
       <button type="button" class="btn sm ghost" data-action="set-add-warmup" data-entry="${e.id}">+ Warmup</button>
-      ${missing > 1 ? `<button type="button" class="btn sm" data-action="set-fill" data-entry="${e.id}">+ All ${missing} planned</button>` : ''}
+      ${missing > 0 ? `<button type="button" class="btn sm" data-action="set-fill" data-entry="${e.id}">+ ${missing} planned</button>` : ''}
       ${sets.length ? `<button type="button" class="btn sm ghost" data-action="set-del-last" data-entry="${e.id}">− Remove last</button>` : ''}
     </div>
-    ${rest ? `<div class="small dim" style="margin-top:6px">${esc(rest)}</div>` : ''}`;
+    ${restEditLine(e)}`;
 }
 
 function cardioBody(e, allowRest) {
@@ -258,6 +323,14 @@ export function exerciseFormHtml(e = {}) {
 
     <label class="field"><span>Rest between sets - 2:30, 90s, or a number of seconds</span>
       <input name="rest" inputmode="text" placeholder="2:00" value="${e.rest ? esc(fmtClock(e.rest)) : ''}"></label>
+    <label class="field"><span>Load</span>
+      <select name="bodyweight">
+        <option value="0" ${e.bodyweight ? '' : 'selected'}>External weight (barbell, machine, dumbbells)</option>
+        <option value="1" ${e.bodyweight ? 'selected' : ''}>Bodyweight (pull-ups, dips, push-ups)</option>
+      </select></label>
+    <p class="hint" style="margin-top:-4px">For a bodyweight exercise every set logs as
+      <b>BW</b>, and any weight you enter counts as <b>added</b> load.</p>
+
     <label class="field"><span>Superset / circuit group — same label on consecutive exercises</span>
       <input name="group" maxlength="4" placeholder="e.g. A — leave blank for a normal exercise"
              value="${esc(e.group || '')}"></label>
@@ -329,6 +402,7 @@ export function readExerciseForm(v, modal = null) {
     targetDistance: num(v.targetDistance),
     targetDuration: parseDur(v.targetDuration, { bare: 'minutes' }),
     rest: parseDur(v.rest),
+    bodyweight: v.bodyweight === '1',
     group: (v.group || '').trim() || null,
     notes: (v.notes || '').trim(),
   };
@@ -476,6 +550,97 @@ export const entryActions = {
   'set-add-warmup': async ({ entry }) => { await addSet(entry, { warmup: true }); },
 
   'set-warmup': async ({ entry, set }) => { await toggleWarmup(entry, set); },
+
+  'set-bw': async ({ entry, set }) => {
+    const e = findEntry(entry);
+    const target = set ? e?.sets?.find((x) => x.id === set) : activeSet(e);
+    if (!target) { toast('No set to change'); return; }
+    await toggleBodyweight(entry, target.id);
+    toast(target.bodyweight ? 'Logged as bodyweight' : 'Back to a weighted set', 1800);
+  },
+
+  // The one action during a set: tick it and start the clock in a single tap.
+  'set-confirm': async ({ entry, set }) => {
+    unlockAudio();
+    const e = findEntry(entry);
+    if (!e) return;
+    const target = set ? e.sets.find((x) => x.id === set) : activeSet(e);
+    if (!target) return;
+    if (!setIsLoggable(target)) { toast('Enter a weight or reps first'); return; }
+    if (!target.done) await toggleSetDone(entry, target.id);
+    if (editingPast()) return;            // no clock on a workout already done
+    const idx = e.sets.indexOf(target);
+    const labels = setLabels(e.sets);
+    await startRest({
+      target: e.rest ?? state.settings.defaultRest,
+      entryId: entry,
+      setId: target.id,
+      label: `Rest after ${e.name} set ${labels[idx]}`,
+    });
+  },
+
+  // The plan had no weight: send the user to the field rather than logging a blank.
+  // Deferred, because the click handler re-renders right after this returns and
+  // would destroy the element we just focused.
+  'set-needs': ({ set }) => {
+    setTimeout(() => {
+      const row = document.querySelector(`.set-row[data-set="${set}"]`);
+      const field = row?.querySelector('input[data-f="weight"]')
+        || row?.querySelector('input[data-f="reps"]');
+      if (field) { field.focus(); field.select?.(); }
+    }, 0);
+    toast('Type it, use the +/- buttons, or tap BW for bodyweight', 3200);
+  },
+
+  'set-undo': async ({ entry, set }) => {
+    const e = findEntry(entry);
+    const labels = setLabels(e?.sets || []);
+    const idx = (e?.sets || []).findIndex((x) => x.id === set);
+    await undoSet(entry, set);
+    toast(`Undid set ${labels[idx] || ''} — rest discarded`, 2600);
+  },
+
+  'set-rest-edit': ({ entry, set }) => {
+    const e = findEntry(entry);
+    const target = e?.sets?.find((x) => x.id === set);
+    if (!target) return;
+    const labels = setLabels(e.sets);
+    const label = labels[e.sets.indexOf(target)];
+    openModal({
+      title: `Rest after set ${label}`,
+      bodyHtml: `
+        <label class="field"><span>Rest taken &mdash; 2:30, 90s, or a number of seconds</span>
+          <input name="rest" inputmode="text" placeholder="not logged"
+                 value="${target.rest ? esc(fmtClock(target.rest)) : ''}"></label>
+        <p class="hint">Use this if you forgot to start the timer, stopped it late, or started it by
+          mistake. Leave it empty to record no rest for this set.</p>
+        <button type="button" class="btn block ghost" data-action="set-rest-clear"
+                data-entry="${e.id}" data-set="${target.id}">Clear &mdash; no rest logged</button>`,
+      onSubmit: async (v) => {
+        const raw = String(v.rest || '').trim();
+        if (!raw) { await setRestFor(entry, target.id, null); toast('Rest cleared'); return true; }
+        const secs = parseDur(raw);
+        if (secs === null) { toast('Could not read that as a time'); return false; }
+        await setRestFor(entry, target.id, secs);
+        toast(`Rest for set ${label} set to ${fmtClock(secs)}`, 2600);
+        return true;
+      },
+    });
+  },
+
+  'set-effort': async ({ entry, set, field, value }) => {
+    const e = findEntry(entry);
+    const target = e?.sets?.find((x) => x.id === set);
+    if (!target) return;
+    const n = Number(value);
+    // tapping the same chip clears it, so a mis-tap is one tap to fix
+    await updateSet(entry, set, { [field]: target[field] === n ? null : n });
+  },
+
+  'set-rest-clear': async ({ entry, set }) => {
+    await setRestFor(entry, set, null);
+    toast('Rest cleared');
+  },
 
   'set-fill': async ({ entry }) => {
     const n = await fillPlannedSets(entry);

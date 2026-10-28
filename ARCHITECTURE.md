@@ -16,7 +16,8 @@ sw.js               service worker: network-first with a cache fallback
 manifest.webmanifest
 
 js/app.js           boot, render loop, delegated event routing, action registry
-js/store.js         ALL state and persistence; session/routine logic; the exercise library
+js/store.js         ALL state and persistence; session and routine mutations
+js/queries.js       read-only derived queries: exercise library, history lookups, recent values
 js/db.js            thin promise wrapper over IndexedDB
 js/sync.js          Gist sync: push/pull, conflict guards, device pairing
 js/timer.js         rest timer bar: ticking, beep, audio unlock
@@ -38,14 +39,15 @@ Dependency direction is one-way and enforced by a test:
 ```
 js/app.js  (composition root — may import anything)
    ↓
-js/views/*  →  store, format, ui, util, timer, sync
+js/views/*  →  store, queries, format, ui, util, timer, sync
    ↓
-store, sync, exportimport, format  →  db, util
+store, sync, exportimport, format, queries  →  db, util
 ```
 
 **Nothing outside `js/views/` may import a view**, `js/app.js` excepted. `js/format.js` exists for
 exactly this reason: the exporter needs the same wording as the screen, so the summary builders live
-in a core module that both can import. (This rule was broken once — `exportimport.js` imported
+in a core module that both can import. `js/queries.js` was split out of `store.js` when the
+1000-line cap fired: the seam is **mutations (store) versus read-only derived queries (queries)**. (This rule was broken once — `exportimport.js` imported
 `views/entry.js` — which is why there is now a test for it.)
 
 Views never talk to `db.js` directly except `routines.js`, which uses `dbPut` for one
@@ -163,7 +165,9 @@ session = {
   currentIdx, rpe, bodyweight, notes, modified,
 }
 
-set       = { id, weight, unit, reps, rpe, rir, warmup, note, done, completedAt, rest }
+set       = { id, weight, unit, reps, rpe, rir, warmup, bodyweight,
+              note, done, completedAt, rest }
+            // bodyweight: the load is your body; `weight` then means ADDED load
 cardioLog = { distance, distanceUnit, duration, avgHr, maxHr, elevation, rpe, note, done, completedAt }
 ```
 
@@ -222,6 +226,21 @@ Now: tap ⏱       → marks the set done, startRest({target: entry.rest ?? sett
 restBar: Stop     → stopRest() writes the elapsed seconds onto that set
 Session: Finish   → finishSession() stamps finishedAt, clears active + timer, autoPushIfEnabled()
 ```
+
+### Logging is confirming, not creating
+
+`startSession()` runs `materializePlan()` on every lift entry, so the rows the plan calls for exist
+before you log anything. That changes several things, and all of them are load-bearing:
+
+- **`activeSet(e)`** is the first unticked row — what the confirm button acts on.
+- **`setIsLoggable(set)`** gates it: a set needs reps and either a weight or `bodyweight`. When it
+  fails, the UI asks for the number instead of logging a blank.
+- **Summaries and exports must filter on `done`.** An unticked pre-materialised row is *plan*, not
+  history; before this, `logSummary` and the CSV/Markdown exporters reported it as if it had
+  happened. `dataFingerprint` counts ticked sets only for the same reason.
+- **Warmups splice in before the working sets** rather than appending, or a warmup added to a
+  pre-materialised exercise would sort after the sets it precedes.
+- **`plannedSet` is indexed by working set**, so a warmup never shifts the planned loads.
 
 ### The +/- stepper — the one deliberate exception to the render loop
 

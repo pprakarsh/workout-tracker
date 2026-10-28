@@ -1,8 +1,9 @@
 // "Routines" — your library of routines, the routine editor, and data/settings.
 import {
   state, getRoutine, saveRoutine, createRoutine, deleteRoutine, duplicateRoutine,
-  normalizeEntry, lastSessionForRoutine, updateSettings, dataFingerprint,
-} from '../store.js';import { dbPut } from '../db.js';
+  normalizeEntry, updateSettings, dataFingerprint,
+} from '../store.js';
+import { lastSessionForRoutine } from '../queries.js';import { dbPut } from '../db.js';
 import {
   esc, fmtDate, fmtClock, fmtTimeOfDay, fmtNum, relDay, parseDur, APP_VERSION,
 } from '../util.js';
@@ -169,6 +170,7 @@ export function render() {
       <div class="kv"><span>Beep at rest target</span><span>${state.settings.beep ? 'on' : 'off'}</span></div>
       <div class="kv"><span>Weight step</span><span>± ${esc(fmtNum(state.settings.weightStep))}</span></div>
       <div class="kv"><span>Effort per set</span><span>${esc(state.settings.effortScale.toUpperCase())}</span></div>
+      <div class="kv"><span>Keep screen awake</span><span>${state.settings.keepAwake !== false ? 'on' : 'off'}</span></div>
       <button type="button" class="btn block ghost" style="margin-top:10px" data-action="settings-open">Change settings</button>
     </div>
 
@@ -692,6 +694,11 @@ export const routineActions = {
         <div class="grid2">
           <label class="field"><span>Weight step for the +/- buttons</span>
             <input name="weightStep" inputmode="decimal" value="${esc(fmtNum(s.weightStep))}"></label>
+          <label class="field"><span>Keep the screen awake while training</span>
+            <select name="keepAwake">
+              <option value="1" ${s.keepAwake !== false ? 'selected' : ''}>On</option>
+              <option value="0" ${s.keepAwake === false ? 'selected' : ''}>Off</option>
+            </select></label>
           <label class="field"><span>Effort logged per set</span>
             <select name="effortScale">
               <option value="rpe" ${s.effortScale === 'rpe' ? 'selected' : ''}>RPE only</option>
@@ -709,6 +716,7 @@ export const routineActions = {
           unit: v.unit, distanceUnit: v.distanceUnit,
           defaultRest: parseDur(v.defaultRest) ?? 120,
           beep: v.beep === '1',
+          keepAwake: v.keepAwake === '1',
           weightStep: Math.abs(Number(v.weightStep)) || 2.5,
           effortScale: ['rpe', 'rir', 'both'].includes(v.effortScale) ? v.effortScale : 'rpe',
         });
