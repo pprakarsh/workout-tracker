@@ -107,9 +107,11 @@ export function logSummary(e, { workingOnly = false } = {}) {
 export function restLine(e) {
   const sets = e.sets || [];
   const labels = setLabels(sets);
+  // include a set that has a rest recorded but is not ticked yet: the timer can
+  // be started for a set whose numbers have not been entered
   const logged = sets
     .map((s, i) => ({ s, label: labels[i] }))
-    .filter(({ s }) => s.done);
+    .filter(({ s }) => s.done || s.rest !== null);
   if (!logged.length) return '';
   if (!logged.some(({ s }) => s.rest)) return 'Rest: no rest logged for any set';
   return `Rest after sets: ${logged

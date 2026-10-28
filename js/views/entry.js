@@ -6,7 +6,7 @@ import {
   addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
   parseSetTargets, getRoutine, saveRoutine, normalizeEntry,
   setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
-  setIsLoggable,
+  setIsLoggable, startRestForSet, stopRest,
 } from '../store.js';
 import { exerciseLibrary, findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
@@ -90,6 +90,8 @@ function rowClass() {
 }
 
 function setRow(e, s, label, workingIdx, allowRest) {
+  const t = state.timer;
+  const running = !!(t && t.entryId === e.id && t.setId === s.id);
   const unit = s.unit || e.unit || state.settings.unit;
   const plan = s.warmup ? null : plannedSet(e, workingIdx);
   const wPh = s.bodyweight ? 'BW'
@@ -112,6 +114,10 @@ function setRow(e, s, label, workingIdx, allowRest) {
       <button type="button" class="chk ${s.done ? 'on' : ''}"
               title="${s.done ? 'Un-tick this set' : 'Tick without starting rest'}"
               data-action="set-done" data-entry="${e.id}" data-set="${s.id}">✓</button>
+      ${allowRest ? `<button type="button" class="rest-btn ${running ? 'running' : ''}"
+              title="${running ? 'Stop resting and record the time' : 'Start resting after this set'}"
+              data-action="set-rest-toggle" data-entry="${e.id}" data-set="${s.id}"
+              >${running ? '■' : '⏱'}</button>` : '<div></div>'}
     </div>`;
 }
 
@@ -129,12 +135,14 @@ function confirmBar(e, allowRest) {
   }
   const labels = setLabels(e.sets || []);
   const label = labels[(e.sets || []).indexOf(s)];
-  const needsWeight = !setIsLoggable(s);
-  if (needsWeight) {
+  if (!setIsLoggable(s)) {
+    // No numbers yet. Start the clock anyway: the rest is time-critical and the
+    // weight is not -- it can be typed during the rest.
     return `
-      <button type="button" class="confirm needs" data-action="set-needs" data-entry="${e.id}" data-set="${s.id}">
-        <span class="big">Enter ${s.reps === null ? 'reps' : 'a weight'} for set ${esc(label)}</span>
-        <span class="sub">the plan does not set one &mdash; tap to fill it in</span>
+      <button type="button" class="confirm needs" data-action="set-rest-toggle"
+              data-entry="${e.id}" data-set="${s.id}">
+        <span class="big">&#9201;&nbsp; Start rest after set ${esc(label)}</span>
+        <span class="sub">no ${s.reps === null ? 'reps' : 'weight'} yet &mdash; enter it while you rest</span>
       </button>`;
   }
   return `
@@ -188,7 +196,7 @@ function liftBody(e, allowRest) {
       <div class="set-hdr ${rowClass()}">
         <div>Set</div><div>${e.bodyweight ? 'Added' : 'Weight'}</div><div>Reps</div>
         ${showRpe() ? '<div>RPE</div>' : ''}${showRir() ? '<div>RIR</div>' : ''}
-        <div></div>
+        <div></div><div></div>
       </div>
       ${rows || '<p class="hint" style="margin:2px 0 8px">No sets planned. Add one below.</p>'}
     </div>
@@ -566,30 +574,35 @@ export const entryActions = {
     if (!e) return;
     const target = set ? e.sets.find((x) => x.id === set) : activeSet(e);
     if (!target) return;
-    if (!setIsLoggable(target)) { toast('Enter a weight or reps first'); return; }
     if (!target.done) await toggleSetDone(entry, target.id);
     if (editingPast()) return;            // no clock on a workout already done
-    const idx = e.sets.indexOf(target);
-    const labels = setLabels(e.sets);
-    await startRest({
-      target: e.rest ?? state.settings.defaultRest,
-      entryId: entry,
-      setId: target.id,
-      label: `Rest after ${e.name} set ${labels[idx]}`,
-    });
+    await startRestForSet(entry, target.id);
   },
 
-  // The plan had no weight: send the user to the field rather than logging a blank.
-  // Deferred, because the click handler re-renders right after this returns and
-  // would destroy the element we just focused.
-  'set-needs': ({ set }) => {
-    setTimeout(() => {
-      const row = document.querySelector(`.set-row[data-set="${set}"]`);
-      const field = row?.querySelector('input[data-f="weight"]')
-        || row?.querySelector('input[data-f="reps"]');
-      if (field) { field.focus(); field.select?.(); }
-    }, 0);
-    toast('Type it, use the +/- buttons, or tap BW for bodyweight', 3200);
+  /**
+   * Start or stop resting after one specific set. Never gated on data: if the
+   * timer is running for this set it stops and records, otherwise it starts.
+   * A timer running for a different set is stopped first, not discarded.
+   */
+  'set-rest-toggle': async ({ entry, set }) => {
+    unlockAudio();
+    if (editingPast()) { toast('No timer on a workout already finished'); return; }
+    const t = state.timer;
+    if (t && t.entryId === entry && t.setId === set) {
+      const res = await stopRest();
+      toast(res?.pending
+        ? 'Rest saved. That set still needs a weight to count as logged.'
+        : 'Rest recorded', res?.pending ? 4200 : 1800);
+      return;
+    }
+    const switching = !!t;
+    await startRestForSet(entry, set);
+    const e = findEntry(entry);
+    const labels = setLabels(e?.sets || []);
+    const idx = (e?.sets || []).findIndex((x) => x.id === set);
+    toast(switching
+      ? `Previous rest saved — now resting after set ${labels[idx]}`
+      : `Resting after set ${labels[idx]}`, switching ? 3200 : 1800);
   },
 
   'set-undo': async ({ entry, set }) => {

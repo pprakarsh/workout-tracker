@@ -153,8 +153,9 @@ const timerMod = await import(`${APP}/js/timer.js`);
 ok(timerMod.restElapsed() === 65, `elapsed derived from timestamp (${timerMod.restElapsed()}s)`);
 await store.setRestTarget(120);
 ok(state.timer.target === 120, 'target editable mid-rest');
-const elapsed = await store.stopRest();
-ok(elapsed === 65, `stop returns elapsed (${elapsed}s)`);
+const stopped = await store.stopRest();
+ok(stopped.elapsed === 65, `stop returns elapsed (${stopped.elapsed}s)`);
+ok(stopped.pending === null, 'the set had numbers, so nothing is left pending');
 ok(state.timer === null, 'timer cleared');
 ok(e0.sets[1].rest === 65, `actual rest recorded on the set (${e0.sets[1].rest}s)`);
 
@@ -813,6 +814,55 @@ ok(filled === 0, 'fillPlannedSets counts working sets, so the plan is already co
 await store.discardSession();
 await store.deleteRoutine(pw.id);
 
+
+section('the rest clock is never gated on data entry');
+const freeR = await store.createRoutine({
+  name: 'Clock First', entries: [{ name: 'Mystery Lift', sets: 3, reps: 8, rest: '1:30' }],
+});
+const fs = await store.startSession(freeR.id);
+const fe = fs.entries[0];
+ok(fe.sets.every((x) => x.weight === null), 'the plan sets no weight');
+ok(store.setIsLoggable(fe.sets[0]) === false, 'so the set is not loggable yet');
+
+const started = await store.startRestForSet(fe.id, fe.sets[0].id);
+ok(started.started === true, 'the clock still starts — time is not recoverable, a number is');
+ok(state.timer.setId === fe.sets[0].id, 'and it is attached to that specific set');
+ok(state.timer.target === 90, 'using the exercise rest target');
+ok(fe.sets[0].done === false, 'the set is NOT marked done just because rest started');
+
+section('the numbers can be entered during the rest, and the set then ticks on stop');
+await store.updateSet(fe.id, fe.sets[0].id, { weight: 40 });
+ok(store.setIsLoggable(fe.sets[0]) === true, 'typing the weight mid-rest makes it loggable');
+state.timer.startedAt -= 95_000;
+const r1 = await store.stopRest();
+ok(r1.elapsed === 95, `rest recorded (${r1.elapsed}s)`);
+ok(r1.pending === null, 'nothing pending');
+ok(fe.sets[0].done === true, 'and stopping ticks the set now that it has numbers');
+ok(fe.sets[0].rest === 95, 'with the measured rest attached');
+
+section('stopping with still no numbers keeps the rest but says the set is unlogged');
+await store.startRestForSet(fe.id, fe.sets[1].id);
+state.timer.startedAt -= 60_000;
+const r2 = await store.stopRest();
+ok(r2.elapsed === 60, 'rest measured');
+ok(r2.pending && r2.pending.setId === fe.sets[1].id, 'the caller is told which set is still unlogged');
+ok(fe.sets[1].done === false, 'it is not ticked with no load');
+ok(fe.sets[1].rest === 60, 'but the rest is kept, not thrown away');
+ok(fmt.restLine(fe).includes('2) 1:00'),
+  `and it shows in the rest line despite being unticked (${fmt.restLine(fe)})`);
+
+section('starting rest for another set banks the running one first');
+await store.startRestForSet(fe.id, fe.sets[1].id);
+state.timer.startedAt -= 30_000;
+const sw = await store.startRestForSet(fe.id, fe.sets[2].id);
+ok(sw.started === true, 'the new rest started');
+ok(fe.sets[1].rest === 30, `the previous set kept what it measured (${fe.sets[1].rest}s), not discarded`);
+ok(state.timer.setId === fe.sets[2].id, 'and the clock moved to the new set');
+ok((await store.startRestForSet(fe.id, fe.sets[2].id)).already === true,
+  'tapping the same set again is a no-op, not a restart');
+await store.stopRest();
+await store.discardSession();
+await store.deleteRoutine(freeR.id);
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

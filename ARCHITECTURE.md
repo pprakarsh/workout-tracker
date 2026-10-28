@@ -242,6 +242,21 @@ before you log anything. That changes several things, and all of them are load-b
   pre-materialised exercise would sort after the sets it precedes.
 - **`plannedSet` is indexed by working set**, so a warmup never shifts the planned loads.
 
+### The rest clock is never gated
+
+`startRestForSet(entryId, setId)` is deliberately independent of whether the set has a weight, reps
+or a tick. Rest is time-critical; the numbers are not, and can be typed during the rest. An earlier
+design refused to start the clock without a weight, which was backwards.
+
+Consequences:
+
+- `stopRest()` returns `{ elapsed, pending }`. It records the rest, and ticks the set **if it has
+  become loggable**; otherwise `pending` names the set so the caller can say it is still unlogged.
+- Starting rest for a different set calls `stopRest()` first, so the running measurement is banked
+  rather than discarded. Re-tapping the same set returns `{ already: true }`.
+- `restLine` includes a set with a recorded rest even when unticked, since that state is now
+  reachable.
+
 ### The +/- stepper — the one deliberate exception to the render loop
 
 Tapping a stepper button must not re-render, or the keyboard closes and the caret is lost. So the

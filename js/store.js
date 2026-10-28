@@ -610,6 +610,33 @@ export async function addSet(entryId, { warmup = false } = {}) {
 }
 
 /**
+ * Start resting after a specific set, whatever state that set is in.
+ *
+ * Deliberately independent of whether a weight or reps have been entered: the
+ * clock is time-critical and the numbers are not. If a timer is already running
+ * for another set it is stopped first, recording what it measured, rather than
+ * silently discarded.
+ */
+export async function startRestForSet(entryId, setId) {
+  const e = findEntry(entryId);
+  const set = e?.sets?.find((x) => x.id === setId);
+  if (!set) return null;
+  const t = state.timer;
+  if (t) {
+    if (t.entryId === entryId && t.setId === setId) return { already: true };
+    await stopRest();                 // records the previous set's rest first
+  }
+  const labels = setLabels(e.sets);
+  await startRest({
+    target: e.rest ?? state.settings.defaultRest,
+    entryId,
+    setId,
+    label: `Rest after ${e.name} set ${labels[e.sets.indexOf(set)]}`,
+  });
+  return { started: true };
+}
+
+/**
  * Correct the recorded rest for a set. Rest is normally written when you stop
  * the timer, so this covers forgetting to start it, stopping it late, or fixing
  * it days later. Pass null to mark it as not logged again.
@@ -764,11 +791,25 @@ export async function stopRest() {
   state.timer = null;
   await metaSet('timer', null);
   const s = working();
+  let pending = null;
   if (t.entryId && t.setId && s && s.id === t.sessionId) {
     await updateSet(t.entryId, t.setId, { rest: elapsed }, { silent: true });
+    // The numbers may have been typed during the rest. If the set is complete
+    // now, tick it; if not, say so rather than silently leaving it unlogged.
+    const e = findEntry(t.entryId);
+    const set = e?.sets?.find((x) => x.id === t.setId);
+    if (set && !set.done) {
+      if (setIsLoggable(set)) {
+        set.done = true;
+        set.completedAt = Date.now();
+        await touch({ silent: true });
+      } else {
+        pending = { entryId: t.entryId, setId: t.setId };
+      }
+    }
   }
   emit();
-  return elapsed;
+  return { elapsed, pending };
 }
 
 export async function markBeeped() {

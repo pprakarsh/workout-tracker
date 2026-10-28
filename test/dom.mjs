@@ -645,24 +645,30 @@ await click(`[data-action="routine-start"][data-id="${nwR.id}"]`, 'Start');
 
 ok($$('.set-row').length === 2, 'rows still materialise without a planned weight');
 ok($('.set-row input[data-f="weight"]').value === '', 'the weight field is empty');
-ok($('[data-action="set-confirm"]') === null, 'confirm is NOT offered for a set with no load');
-ok($('[data-action="set-needs"]') !== null, 'it asks for the number instead');
-ok(/Enter a weight for set 1/.test($('.confirm .big').textContent),
-  `and says which (${$('.confirm .big').textContent.trim()})`);
-await click('[data-action="set-needs"]', 'tap the prompt');
-ok(document.activeElement === $('.set-row input[data-f="weight"]'),
-  'tapping it focuses the weight field, ready to type');
+ok($('[data-action="set-confirm"]') === null, 'the confirm-as-planned path is not offered with no load');
+ok($('.confirm [data-action="set-rest-toggle"]') !== null
+  || $('.confirm').dataset.action === 'set-rest-toggle', 'but the clock is still offered');
+ok(/Start rest after set 1/.test($('.confirm .big').textContent),
+  `it offers to start the clock (${$('.confirm .big').textContent.trim()})`);
+ok(/enter it while you rest/.test($('.confirm .sub').textContent),
+  'and says the number can come later');
+
+await click('.confirm', 'start rest with no weight entered');
+ok(!$('#restBar').hidden, 'the clock started despite no weight -- time is not recoverable');
+ok(store.state.timer.setId === store.state.active.entries[0].sets[0].id,
+  'attached to that specific set');
+ok(store.state.active.entries[0].sets[0].done === false,
+  'and the set was NOT ticked just because rest began');
 
 await type('.set-row input[data-f="weight"]', '42.5');
 $('.set-row input[data-f="weight"]').blur();
 await sleep(60);
-ok(store.state.active.entries[0].sets[0].weight === 42.5, 'hand-entered weight persisted');
-ok($('[data-action="set-confirm"]') !== null, 'and confirm is now offered');
-ok(/42.5kg . 10/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
-  'showing the weight that was typed');
-await click('[data-action="set-confirm"]', 'confirm it');
-ok(store.state.active.entries[0].sets[0].done === true, 'logged');
-await click('#restBar [data-action="rest-stop"]', 'Stop');
+ok(store.state.active.entries[0].sets[0].weight === 42.5, 'weight typed during the rest persisted');
+store.state.timer.startedAt -= 70_000;
+await click('#restBar [data-action="rest-stop"]', "I'm starting my set");
+const caught = store.state.active.entries[0].sets[0];
+ok(caught.done === true, 'stopping ticks the set now that it has numbers');
+ok(caught.rest === 70, `with the measured rest kept (${caught.rest}s)`);
 
 section('a bodyweight exercise needs no weight at all');
 await store.setCurrent(1);
@@ -702,6 +708,68 @@ await sleep(60);
 ok(store.state.active.entries[1].sets[1].bodyweight === false,
   'tapping it switches that one set to a weighted set');
 
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
+section('a per-set timer button, so a missed set can still be timed');
+await xi.importFromText(JSON.stringify({
+  name: 'Per-Set Clock',
+  entries: [{ name: 'Row Machine', sets: 3, reps: 10, weight: 50, rest: '1:30' }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const psR = store.state.routines.find((r) => r.name === 'Per-Set Clock');
+await click(`[data-action="routine-start"][data-id="${psR.id}"]`, 'Start');
+const clockEntry = () => store.state.active.entries[0];
+ok($$('.set-row').length === 3, `3 rows (${$$('.set-row').length})`);
+ok($$('.set-row .rest-btn').length === 3, 'every row has its own timer button');
+ok($('#restBar').hidden, 'nothing running');
+
+$$('.set-row')[2].querySelector('.rest-btn')
+  .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(60);
+ok(!$('#restBar').hidden, 'tapping row 3 started the clock');
+ok(store.state.timer.setId === clockEntry().sets[2].id,
+  'for row 3 specifically, not the active set');
+ok(/set 3/.test($('#restBar').textContent), `the bar names it (${$('#restBar .t1').textContent.trim()})`);
+ok($$('.set-row')[2].querySelector('.rest-btn').classList.contains('running'),
+  'and that row shows as running');
+
+section('the same button stops it');
+store.state.timer.startedAt -= 45_000;
+$$('.set-row')[2].querySelector('.rest-btn')
+  .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(60);
+ok($('#restBar').hidden, 'stopped');
+ok(clockEntry().sets[2].rest === 45,
+  `and recorded 45s against row 3 (${clockEntry().sets[2].rest})`);
+
+section('starting another set banks the running rest rather than losing it');
+$$('.set-row')[0].querySelector('.rest-btn')
+  .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(60);
+store.state.timer.startedAt -= 20_000;
+$$('.set-row')[1].querySelector('.rest-btn')
+  .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(70);
+ok(clockEntry().sets[0].rest === 20,
+  `row 1 kept its 20s (${clockEntry().sets[0].rest})`);
+ok(store.state.timer.setId === clockEntry().sets[1].id, 'and the clock moved to row 2');
+
+section('the plan can be changed from the rest panel');
+ok($('#restBar [data-action="rest-target"]') !== null, 'rest target is editable there');
+ok($('#restBar [data-action="entry-add"]') !== null, 'a new exercise can be added there');
+ok($('#restBar [data-action="entry-edit"]') !== null, 'and this exercise edited');
+ok($('#restBar [data-action="go-session"]') !== null, 'with reorder one tap away');
+await click('#restBar [data-action="rest-target"]', 'rest target');
+ok($('[name="target"]') !== null, 'the target editor opened');
+$('[name="target"]').value = '3:15';
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(80);
+ok(store.state.timer.target === 195, `target set precisely to 3:15 (${store.state.timer.target}s)`);
+await click('#restBar [data-action="rest-stop"]', 'Stop');
 await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));

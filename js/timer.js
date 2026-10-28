@@ -5,7 +5,8 @@
 // still show the true elapsed time.
 import { state, stopRest, setRestTarget, markBeeped, findEntry, setLabels } from './store.js';
 import { loadLabel } from './format.js';
-import { fmtClock, fmtNum, esc } from './util.js';
+import { toast, openModal } from './ui.js';
+import { fmtClock, fmtNum, esc, parseDur } from './util.js';
 
 let bar, tickHandle = null, lastKey = '';
 
@@ -89,6 +90,13 @@ export function renderRestBar() {
                 data-entry="${e.id}" data-set="${set.id}">undo</button>
       </div>
       ${effortRow(e, set)}` : ''}
+      <div class="restbar-edit">
+        <span class="tiny">Change the plan</span>
+        <button type="button" class="chip" data-action="rest-target">rest target</button>
+        ${e ? `<button type="button" class="chip" data-action="entry-edit" data-entry="${e.id}">this exercise</button>` : ''}
+        <button type="button" class="chip" data-action="entry-add">+ exercise</button>
+        <button type="button" class="chip" data-action="go-session">reorder</button>
+      </div>
       <button class="btn primary block" data-action="rest-stop" type="button">
         I'm starting my set</button>`;
   }
@@ -152,7 +160,35 @@ window.addEventListener('focus', paint);
 
 /* ---------------- actions (wired by app.js) ---------------- */
 export const timerActions = {
-  'rest-stop': async () => { await stopRest(); },
+  /** Set the rest target precisely, rather than only nudging it by 30s. */
+  'rest-target': () => {
+    const t = state.timer;
+    if (!t) return;
+    openModal({
+      title: 'Rest target',
+      bodyHtml: `
+        <label class="field"><span>Target for this rest &mdash; 2:30, 90s, or seconds</span>
+          <input name="target" inputmode="text" value="${esc(fmtClock(t.target))}"></label>
+        <p class="hint">Changes this rest only. To change it for every set of the exercise, use
+          <b>this exercise</b> and set its rest there.</p>`,
+      onSubmit: async (v) => {
+        const secs = parseDur(String(v.target || '').trim());
+        if (secs === null) { toast('Could not read that as a time'); return false; }
+        await setRestTarget(secs);
+        toast(`Target set to ${fmtClock(secs)}`);
+        return true;
+      },
+    });
+  },
+
+  'rest-stop': async () => {
+    const res = await stopRest();
+    if (res && res.pending) {
+      // the rest was timed but the set still has no numbers -- say so instead of
+      // quietly leaving it out of the log
+      toast('Rest saved. That set still needs a weight to count as logged.', 4200);
+    }
+  },
   'rest-nudge': async ({ by }) => {
     if (!state.timer) return;
     await setRestTarget(Math.max(0, state.timer.target + Number(by)));

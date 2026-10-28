@@ -140,6 +140,41 @@ there counts as added load — `BW + 10 kg`. The `BW` chip next to the steppers 
 Bodyweight sets count towards session volume only when the session records your bodyweight; without
 it they contribute nothing rather than a guessed number.
 
+### The clock is never blocked
+
+**Every set row has its own ⏱ button.** Tap it to start resting after *that* set, tap it again to
+stop. It works whatever state the set is in — no weight, no reps, not ticked — because the clock is
+time-critical and the numbers are not. Type the weight while you rest.
+
+Stopping the timer ticks the set if it has numbers by then. If it still doesn't, the rest is kept
+and the app says the set is not logged yet, rather than silently dropping either.
+
+Starting rest on a different set **banks** the running one first, recording what it measured,
+instead of discarding it. Tapping the same row again is a no-op, not a restart.
+
+The big confirm button is the fast path for a set that matches the plan. When the plan carries no
+weight it changes to **"Start rest after set 1 — no weight yet, enter it while you rest"**, so the
+one-tap flow never costs you the clock.
+
+### Changing the plan mid-workout
+
+Everything is editable during a session, and the rest panel puts it one tap away while you are sat
+down anyway:
+
+| Want | Where |
+|---|---|
+| Fewer or more sets | *+ Extra set* / *− Remove last* on the exercise |
+| Shuffle the order | ↑ ↓ on the Session tab, or *reorder* from the rest panel |
+| An exercise not in the routine | *+ exercise* — from the exercise card or the rest panel |
+| Skip one entirely | ⋯ → *Mark as skipped* |
+| Change weight or reps | Type in any row, any time — or ± and the recent-weight chips |
+| Change this rest's target | *rest target* on the rest panel, or ±30s |
+| Change the exercise's rest for every set | *this exercise* on the rest panel |
+| Fix a rest that was missed or mis-tapped | Tap its reading under the sets |
+
+All of it affects **this session only**. *Save order to routine* on the Session tab is the explicit
+way to make a change stick.
+
 ### Rest: recorded, and correctable
 
 The rest panel is where everything other than the confirm tap lives, because resting is the only

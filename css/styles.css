@@ -137,8 +137,8 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 
 .sets{margin-top:10px}
 .set-hdr,.set-row{display:grid;gap:6px;align-items:center}
-.set-hdr.cols-1eff,.set-row.cols-1eff{grid-template-columns:32px 1fr 1fr 54px 36px}
-.set-hdr.cols-2eff,.set-row.cols-2eff{grid-template-columns:32px 1fr 1fr 46px 46px 36px}
+.set-hdr.cols-1eff,.set-row.cols-1eff{grid-template-columns:30px 1fr 1fr 48px 34px 34px}
+.set-hdr.cols-2eff,.set-row.cols-2eff{grid-template-columns:28px 1fr 1fr 42px 42px 32px 32px}
 .set-hdr{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg3);font-weight:700;padding:0 2px 4px}
 .set-row{margin-bottom:6px}
 .set-row input{padding:9px 6px;text-align:center;border-radius:9px}
@@ -318,3 +318,9 @@ details pre.code{max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch}
 .restbar-logged b{font-variant-numeric:tabular-nums}
 .restbar-effort .tiny{min-width:26px}
 #restBar .btn.block{width:100%}
+
+.rest-btn.running{background:var(--accent);border-color:var(--accent);color:#fff}
+.confirm.needs .big{font-size:17px}
+
+.restbar-edit{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  padding-top:7px;border-top:1px solid var(--line)}
