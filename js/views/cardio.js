@@ -54,7 +54,7 @@ function runBody(e, allowRest) {
   return `
     <div class="sets" data-entry="${e.id}" data-log="1">
       <div class="grid3">
-        <label class="field"><span>Time</span>
+        <label class="field"><span>Time (m:ss)</span>
           <input inputmode="numeric" data-f="duration" placeholder="28:30"
                  value="${l.duration ? esc(fmtClock(l.duration)) : ''}"></label>
         <label class="field"><span>Pace (/${esc(du)})</span>
@@ -66,16 +66,16 @@ function runBody(e, allowRest) {
       </div>
       ${RUN_HINT}
       <div class="grid3">
-        <label class="field"><span>Avg HR</span>
-          <input inputmode="numeric" data-f="avgHr" value="${esc(fmtNum(l.avgHr))}"></label>
-        <label class="field"><span>Max HR</span>
-          <input inputmode="numeric" data-f="maxHr" value="${esc(fmtNum(l.maxHr))}"></label>
+        <label class="field"><span>Avg HR (bpm)</span>
+          <input inputmode="numeric" data-f="avgHr" placeholder="152" value="${esc(fmtNum(l.avgHr))}"></label>
+        <label class="field"><span>Max HR (bpm)</span>
+          <input inputmode="numeric" data-f="maxHr" placeholder="171" value="${esc(fmtNum(l.maxHr))}"></label>
         <label class="field"><span>Elev (m)</span>
-          <input inputmode="numeric" data-f="elevation" value="${esc(fmtNum(l.elevation))}"></label>
+          <input inputmode="numeric" data-f="elevation" placeholder="24" value="${esc(fmtNum(l.elevation))}"></label>
       </div>
       <div class="grid2">
-        <label class="field"><span>Perceived effort (RPE 1-10)</span>
-          <input inputmode="decimal" data-f="rpe" value="${esc(fmtNum(l.rpe))}"></label>
+        <label class="field"><span>Perceived effort (RPE)</span>
+          <input inputmode="decimal" data-f="rpe" placeholder="1-10" value="${esc(fmtNum(l.rpe))}"></label>
         <label class="field"><span>Note</span>
           <input type="text" data-f="note" value="${esc(l.note || '')}"></label>
       </div>
@@ -99,11 +99,11 @@ const legRow = (lg, label, du) => `
             aria-label="Log round ${label}">${lg.done ? '\u2713' : ''}</button>
     <div class="idx">${esc(label)}</div>
     <input inputmode="numeric" data-leg="${lg.id}" data-entry="${lg.entryId}" data-lf="duration"
-           placeholder="time" value="${lg.duration ? esc(fmtClock(lg.duration)) : ''}"
-           aria-label="Time for round ${label}">
+           placeholder="1:00" value="${lg.duration ? esc(fmtClock(lg.duration)) : ''}"
+           aria-label="Time in minutes and seconds for round ${label}">
     <input inputmode="numeric" data-leg="${lg.id}" data-entry="${lg.entryId}" data-lf="pace"
-           placeholder="pace" value="${lg.pace ? esc(fmtClock(lg.pace)) : ''}"
-           aria-label="Pace for round ${label}">
+           placeholder="8:00" value="${lg.pace ? esc(fmtClock(lg.pace)) : ''}"
+           aria-label="Pace per ${du} for round ${label}">
     <div class="legd dim">${lg.duration && lg.pace ? esc(`${fmtNum(Math.round((lg.duration / lg.pace) * 1000) / 1000)} ${du}`) : ''}</div>
     ${lg.edited ? `<button type="button" class="chk" data-action="cardio-leg-reset"
             data-entry="${lg.entryId}" data-leg="${lg.id}" title="Back to the planned numbers">\u21ba</button>`
@@ -116,7 +116,8 @@ function roundsTable(e, du) {
   const multi = (e.legs || []).length > 1;
   return `
     <div class="legs">
-      <div class="legrow hdr"><div></div><div>#</div><div>Time</div><div>Pace</div><div>Dist</div><div></div></div>
+      <div class="legrow hdr"><div></div><div>#</div><div>Time (m:ss)</div>
+        <div>Pace (/${esc(du)})</div><div>Dist (${esc(du)})</div><div></div></div>
       ${rounds.map((group, r) => group.map((lg, i) => legRow(
     lg,
     multi ? `${r + 1}${String.fromCharCode(97 + i)}` : String(r + 1),
@@ -162,12 +163,12 @@ function intervalBody(e, allowRest) {
 
       <div class="sets" data-entry="${e.id}" data-log="1">
         <div class="grid3">
-          <label class="field"><span>Avg HR</span>
-            <input inputmode="numeric" data-f="avgHr" value="${esc(fmtNum(l.avgHr))}"></label>
-          <label class="field"><span>Max HR</span>
-            <input inputmode="numeric" data-f="maxHr" value="${esc(fmtNum(l.maxHr))}"></label>
+          <label class="field"><span>Avg HR (bpm)</span>
+            <input inputmode="numeric" data-f="avgHr" placeholder="152" value="${esc(fmtNum(l.avgHr))}"></label>
+          <label class="field"><span>Max HR (bpm)</span>
+            <input inputmode="numeric" data-f="maxHr" placeholder="171" value="${esc(fmtNum(l.maxHr))}"></label>
           <label class="field"><span>Effort (RPE)</span>
-            <input inputmode="decimal" data-f="rpe" value="${esc(fmtNum(l.rpe))}"></label>
+            <input inputmode="decimal" data-f="rpe" placeholder="1-10" value="${esc(fmtNum(l.rpe))}"></label>
         </div>
         <label class="field"><span>Note</span>
           <input type="text" data-f="note" value="${esc(l.note || '')}"></label>
@@ -193,51 +194,182 @@ export function cardioStatic(e) {
 /* actions                                                            */
 /* ------------------------------------------------------------------ */
 
-/** The pattern editor. Echoes the parse back so a mis-typed pattern is visible. */
-function openPatternEditor(entryId) {
+/* ------------------------------------------------------------------ */
+/* the pattern builder: tap, don't type                               */
+/* ------------------------------------------------------------------ */
+
+/** Starting points, so the common blocks need no typing at all. */
+const PRESETS = [
+  { name: '30/30', pattern: '0:30 hard + 0:30 easy x 10' },
+  { name: '1:1 min', pattern: '1:00 hard + 1:00 easy x 8' },
+  { name: 'Tabata', pattern: '0:20 hard + 0:10 rest x 8' },
+  { name: '400m reps', pattern: '1:35 @ 4:00/km + 1:30 walk @ 9:00/km x 6' },
+  { name: 'Pyramid up', pattern: '1:00 hard + 1:00 easy + 2:00 hard + 1:00 easy + 3:00 hard x 1' },
+];
+
+/** Time steps in seconds; pace steps in seconds per unit. */
+const T_STEPS = [-30, -15, -5, 5, 15, 30];
+const P_STEPS = [-30, -15, -5, 5, 15, 30];
+
+const bRow = (lg, i, du) => `
+  <div class="bleg" data-bleg="${i}">
+    <div class="bleg-hd">
+      <b>Leg ${i + 1}</b>
+      <input class="bleg-name" data-b="label" placeholder="name, e.g. walk"
+             value="${esc(lg.label || '')}" aria-label="Name for leg ${i + 1}" maxlength="16">
+      <button type="button" class="chk" data-b-del title="Remove this leg">✕</button>
+    </div>
+    <div class="bleg-f">
+      <span class="tiny">Time (m:ss)</span>
+      <output data-b-out="duration">${esc(lg.duration ? fmtClock(lg.duration) : '0:00')}</output>
+      ${T_STEPS.map((d) => `<button type="button" class="chip" data-b-step="duration" data-d="${d}"
+        >${d > 0 ? '+' : '\u2212'}${Math.abs(d)}s</button>`).join('')}
+    </div>
+    <div class="bleg-f">
+      <span class="tiny">Pace (/${esc(du)})</span>
+      <output data-b-out="pace">${lg.pace ? esc(fmtClock(lg.pace)) : '\u2014'}</output>
+      ${P_STEPS.map((d) => `<button type="button" class="chip" data-b-step="pace" data-d="${d}"
+        >${d > 0 ? '+' : '\u2212'}${Math.abs(d)}s</button>`).join('')}
+      <button type="button" class="chip" data-b-step="pace" data-d="clear">none</button>
+    </div>
+  </div>`;
+
+/**
+ * Build a pattern by tapping. Typing `1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6`
+ * on a phone keyboard means hunting for a colon, a slash and an at-sign nine
+ * times; every one of those characters is a chance to get it wrong. Steppers
+ * move in the units the thing is measured in, so the only typing left is an
+ * optional name. The text field is still there for anyone who prefers it.
+ */
+function openPatternBuilder(entryId) {
   const e = findEntry(entryId);
   if (!e) return;
   const du = e.distanceUnit || state.settings.distanceUnit;
-  const current = patternText(e.legs, e.rounds, du);
+
+  // working copy: nothing is committed until Save
+  let legs = isIntervals(e)
+    ? e.legs.map((lg) => ({ ...lg }))
+    : [{ label: '', duration: 60, pace: null }, { label: 'easy', duration: 60, pace: null }];
+  let rounds = Math.max(1, e.rounds || 6);
+
   const modal = openModal({
     title: isIntervals(e) ? 'Interval pattern' : 'Make it intervals',
+    wide: true,
     bodyHtml: `
-      <label class="field"><span>Pattern</span>
-        <input name="pattern" id="ivPattern" autocapitalize="off" autocomplete="off" spellcheck="false"
-               placeholder="1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6"
-               value="${esc(current)}"></label>
-      <div class="small" id="ivEcho" aria-live="polite"></div>
-      ${PATTERN_HINT}
-      <p class="hint">Leave it empty to go back to logging one straight run.</p>`,
+      <div class="bpresets">
+        <span class="tiny">Start from</span>
+        ${PRESETS.map((p, i) => `<button type="button" class="chip" data-b-preset="${i}">${esc(p.name)}</button>`).join('')}
+      </div>
+      <div id="bLegs"></div>
+      <div class="btn-row" style="margin:2px 0 10px">
+        <button type="button" class="btn sm" id="bAdd">+ Add leg</button>
+        <button type="button" class="btn sm ghost" id="bDup">Duplicate last</button>
+      </div>
+      <div class="bleg-f" style="margin-bottom:10px">
+        <span class="tiny">Rounds</span>
+        <output id="bRounds">${rounds}</output>
+        ${[-5, -1, 1, 5].map((d) => `<button type="button" class="chip" data-b-rounds="${d}"
+          >${d > 0 ? '+' : '\u2212'}${Math.abs(d)}</button>`).join('')}
+      </div>
+      <div class="bpreview" id="bPreview" aria-live="polite"></div>
+      <details id="bRaw">
+        <summary>Or type it instead</summary>
+        <label class="field"><span>Pattern</span>
+          <input name="pattern" id="ivPattern" autocapitalize="off" autocomplete="off" spellcheck="false"
+                 placeholder="1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6" value=""></label>
+        <div class="small" id="ivEcho" aria-live="polite"></div>
+        ${PATTERN_HINT}
+        <p class="hint">Typing here overrides the builder above. Leave it empty to use the builder.</p>
+      </details>`,
     okText: 'Save pattern',
     onSubmit: async (v) => {
-      const text = (v.pattern || '').trim();
-      if (!text) { await setIntervalPlan(entryId, { legs: null, rounds: null }); return true; }
-      const spec = parseIntervals(text);
-      if (!spec) { toast('Could not read that pattern'); return false; }
-      await setIntervalPlan(entryId, spec);
-      toast(`Pattern set: ${patternText(spec.legs, spec.rounds, du)}`);
+      const typed = (v.pattern || '').trim();
+      if (typed) {
+        const spec = parseIntervals(typed);
+        if (!spec) { toast('Could not read that pattern'); return false; }
+        await setIntervalPlan(entryId, spec);
+        toast(`Pattern set: ${patternText(spec.legs, spec.rounds, du)}`);
+        return true;
+      }
+      const usable = legs.filter((lg) => lg.duration || lg.pace);
+      if (!usable.length) { toast('Give at least one leg a time'); return false; }
+      await setIntervalPlan(entryId, { legs: usable, rounds });
+      toast(`Pattern set: ${patternText(usable, rounds, du)}`);
       return true;
     },
   });
 
-  // Live echo of the parse. This is the real safety net for a forgiving
-  // parser: you see what the app understood before you commit to it.
-  const input = modal.querySelector('#ivPattern');
-  const echo = modal.querySelector('#ivEcho');
-  const show = () => {
-    if (!input.value.trim()) { echo.innerHTML = '<span class="dim">one straight run</span>'; return; }
-    const spec = parseIntervals(input.value);
-    if (!spec) {
-      echo.innerHTML = '<span class="warnmsg">Not understood yet - check the format below.</span>';
+  const legBox = modal.querySelector('#bLegs');
+  const preview = modal.querySelector('#bPreview');
+  const raw = modal.querySelector('#ivPattern');
+
+  const paint = () => {
+    legBox.innerHTML = legs.map((lg, i) => bRow(lg, i, du)).join('');
+    modal.querySelector('#bRounds').textContent = String(rounds);
+    const usable = legs.filter((lg) => lg.duration || lg.pace);
+    const t = totalsText(usable, rounds, du);
+    preview.innerHTML = usable.length
+      ? `<code>${esc(patternText(usable, rounds, du))}</code>${t ? `<div class="dim small">${esc(t)}</div>` : ''}`
+      : '<span class="warnmsg">Give at least one leg a time.</span>';
+  };
+
+  legBox.addEventListener('click', (ev) => {
+    const row = ev.target.closest('[data-bleg]');
+    if (!row) return;
+    const i = Number(row.dataset.bleg);
+    if (ev.target.closest('[data-b-del]')) {
+      if (legs.length > 1) legs.splice(i, 1);
+      paint();
       return;
     }
+    const step = ev.target.closest('[data-b-step]');
+    if (!step) return;
+    const field = step.dataset.bStep;
+    if (step.dataset.d === 'clear') { legs[i].pace = null; paint(); return; }
+    const by = Number(step.dataset.d);
+    const base = legs[i][field] ?? (field === 'pace' ? 360 : 0);
+    // a pace of nothing means "not set"; a time of nothing means zero
+    const next = Math.max(field === 'pace' ? 60 : 0, base + by);
+    legs[i][field] = next;
+    paint();
+  });
+
+  legBox.addEventListener('input', (ev) => {
+    const row = ev.target.closest('[data-bleg]');
+    if (!row || ev.target.dataset.b !== 'label') return;
+    legs[Number(row.dataset.bleg)].label = ev.target.value.trim().slice(0, 16);
+    // repaint only the preview: redrawing the rows would steal the caret
+    const usable = legs.filter((lg) => lg.duration || lg.pace);
+    preview.innerHTML = usable.length
+      ? `<code>${esc(patternText(usable, rounds, du))}</code>` : '';
+  });
+
+  modal.addEventListener('click', (ev) => {
+    const r = ev.target.closest('[data-b-rounds]');
+    if (r) { rounds = Math.min(50, Math.max(1, rounds + Number(r.dataset.bRounds))); paint(); return; }
+    const p = ev.target.closest('[data-b-preset]');
+    if (p) {
+      const spec = parseIntervals(PRESETS[Number(p.dataset.bPreset)].pattern);
+      if (spec) { legs = spec.legs.map((lg) => ({ ...lg })); rounds = spec.rounds; paint(); }
+      return;
+    }
+    if (ev.target.closest('#bAdd')) { legs.push({ label: '', duration: 60, pace: null }); paint(); return; }
+    if (ev.target.closest('#bDup')) { legs.push({ ...legs[legs.length - 1] }); paint(); }
+  });
+
+  // the raw field still echoes its parse, and wins when it has anything in it
+  const echo = modal.querySelector('#ivEcho');
+  const showEcho = () => {
+    if (!raw.value.trim()) { echo.innerHTML = '<span class="dim">using the builder above</span>'; return; }
+    const spec = parseIntervals(raw.value);
+    if (!spec) { echo.innerHTML = '<span class="warnmsg">Not understood yet - check the format below.</span>'; return; }
     const t = totalsText(spec.legs, spec.rounds, du);
     echo.innerHTML = `reads as <code>${esc(patternText(spec.legs, spec.rounds, du))}</code>${
       t ? ` <span class="dim">- ${esc(t)}</span>` : ''}`;
   };
-  input.addEventListener('input', show);
-  show();
+  raw.addEventListener('input', showEcho);
+  showEcho();
+  paint();
 }
 
 export const cardioActions = {
@@ -258,7 +390,7 @@ export const cardioActions = {
 
   'cardio-rounds': async ({ entry }) => { await toggleRounds(entry); },
 
-  'cardio-pattern': async ({ entry }) => { openPatternEditor(entry); },
+  'cardio-pattern': async ({ entry }) => { openPatternBuilder(entry); },
 };
 
 /**

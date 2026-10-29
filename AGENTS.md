@@ -234,6 +234,7 @@ Honest list, with the trigger for paying it off rather than a vague "someday":
 | ~~Volume counts warmup sets~~ | **Done.** `workingSets(e)` is the accessor; any new aggregate must use it |
 | ~~Cardio intervals are expanded entries~~ | **Done.** One entry holds a `pattern` and expands into `log.legs`; `cardioLogged(log)` is the only way to ask whether a cardio entry recorded anything |
 | Interval legs are timed, never measured | When you want `400m @ 4:00/km` on a track. `parseLeg` currently refuses `400m` rather than guess |
+| A set's amount is stored in `reps` for every measure | If a set ever needs reps *and* a time together. Until then `measure` plus `fmtAmount`/`parseAmount` is cheaper than parallel fields and a migration |
 | `store.js` and `routines.js` are the largest modules | When either passes ~900 lines |
 | No charts, so years of logs stay a list | When you have enough history to want a trend |
 | Exercises have no muscle-group tags | When you want weekly volume per muscle |

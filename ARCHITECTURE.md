@@ -20,6 +20,7 @@ js/store.js         ALL state and persistence; session and routine mutations
 js/model.js         entry/routine SHAPE: normalisation, defaults, plan -> session expansion
 js/queries.js       read-only derived queries: exercise library, history lookups, recent values
 js/cardio.js        run maths: pace arithmetic, the interval pattern, round expansion
+js/measure.js       what a set is measured in: reps, time (holds) or distance (carries)
 js/db.js            thin promise wrapper over IndexedDB
 js/sync.js          Gist sync: push/pull, conflict guards, device pairing
 js/timer.js         rest timer bar: ticking, beep, audio unlock
@@ -46,7 +47,7 @@ js/views/*  →  store, queries, format, cardio, ui, util, timer, sync
    ↓
 store, sync, exportimport, format, queries  →  model, cardio, db, util
    ↓
-model  →  cardio, util            cardio  →  util
+model  →  cardio, measure, util        cardio  →  util        measure  →  util
 ```
 
 **Nothing outside `js/views/` may import a view**, `js/app.js` excepted. `js/format.js` exists for
@@ -158,6 +159,7 @@ routine = { id, name, description, entries: [entry], createdAt, updatedAt }
 
 entry = {
   id, type: 'lift'|'cardio', name, group,        // group = superset label
+  measure: 'reps'|'time'|'distance',             // lift: what the per-set number means
   targetSets, setTargets,                        // setTargets = per-set plan or null
   repsMin, repsMax, weight,                      // uniform target; null when setTargets exists
   targetDistance, distanceUnit, targetDuration, targetPace,   // cardio, a straight run
@@ -197,6 +199,18 @@ Invariants worth knowing:
   Anything added later that aggregates sets (PRs, charts) must use `workingSets(e)`.
 - `rpe` and `rir` are both stored and neither is derived from the other, even though
   RIR ≈ 10 − RPE. `settings.effortScale` decides which columns are shown, not which are stored.
+- **A plank is a lift, not cardio.** `measure` on a lift entry says what the per-set number means:
+  `reps` (the default), `time` (seconds — planks, hangs) or `distance` (metres — loaded carries).
+  Everything built for lifts then applies unchanged: sets, warmups, RPE, rest, per-set targets,
+  the pre-materialised plan. See `js/measure.js`.
+- **The amount lives in `set.reps` and the target range in `repsMin`/`repsMax` whatever the
+  measure.** Those names are historical. The alternative — parallel `seconds`/`distance` fields —
+  meant branching every reader, exporter, stepper and target parser, plus a migration for data
+  already on the phone. Nothing reinterprets an existing entry, because an entry with no `measure`
+  is `reps`, exactly as before. Read through `fmtAmount`, write through `parseAmount`, and ask
+  `setIsLoggableFor` rather than testing `reps` and `weight` yourself. A timed or carried set needs
+  **no load** to be logged, and contributes nothing to `sessionVolume` — weight × seconds is not
+  tonnage.
 - A cardio entry is **one entry**, whether it is a straight run or a block of 6 intervals. It used
   to fan out into one entry per round, which meant opening six cards to record one treadmill block;
   the rounds now live in `log.legs` inside the single entry, so the block logs in one tap
@@ -367,10 +381,13 @@ Each of these was a real bug. They are cheap to reintroduce.
 7. **Undefined tie-breaks.** The exercise library picked a definition by iteration order
    (alphabetical by routine name) when two routines shared a timestamp. Sorts that can tie need an
    explicit second key.
-8. **Re-parsing your own stored values.** See normalisation above: a value that was parsed on the
+8. **Units only in placeholders.** A placeholder vanishes the moment a value is typed, so a unit
+   shown only there cannot be checked while reading your own numbers back. Units belong in the
+   column header or the field label; placeholders carry the *format*. Both are tested.
+9. **Re-parsing your own stored values.** See normalisation above: a value that was parsed on the
    way in must not be parsed again on the way back through. It cost a 60× inflation of every cardio
    target, twice — once for `duration`, once for `pace`.
-9. **Modal submit didn't repaint.** A modal that changes the tab or data must repaint the view
+10. **Modal submit didn't repaint.** A modal that changes the tab or data must repaint the view
    behind it; `closeModal()` calls `emit()` for this.
 
 ## What the platform will not allow

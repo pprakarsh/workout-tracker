@@ -196,6 +196,37 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 .legrow.edited .idx::after{content:"\2022";color:var(--warn);margin-left:1px}
 .warnmsg{color:var(--warn)}
 
+/* interval pattern builder -------------------------------------------- */
+.bpresets{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.bleg{
+  border:1px solid var(--line);border-radius:11px;
+  padding:8px 9px;margin-bottom:8px;background:var(--bg2);
+}
+.bleg-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.bleg-hd b{font-size:12px;color:var(--fg3);min-width:42px}
+.bleg-name{flex:1;min-width:0;padding:7px 9px!important}
+.bleg-f{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:5px}
+.bleg-f .tiny{min-width:74px}
+.bleg-f output{
+  font-variant-numeric:tabular-nums;font-weight:700;font-size:15px;
+  min-width:46px;text-align:center;color:var(--fg);
+}
+.bpreview{
+  border:1px solid var(--line);border-radius:10px;padding:9px 10px;
+  background:var(--bg3);margin-bottom:10px;font-size:12.5px;line-height:1.5;
+}
+
+/* session progress ---------------------------------------------------- */
+.progress{
+  height:6px;border-radius:999px;background:var(--bg3);
+  overflow:hidden;margin-top:9px;
+}
+.progress .bar{
+  height:100%;border-radius:999px;background:var(--accent);
+  transition:width .25s ease;min-width:0;
+}
+.progress .bar.full{background:var(--ok)}
+
 /* ---------- session list ---------- */
 .sess-item{
   display:flex;align-items:center;gap:10px;padding:11px 12px;

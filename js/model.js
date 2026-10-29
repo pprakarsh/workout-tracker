@@ -8,6 +8,7 @@
 // this function and must come out valid.
 import { uid, num, parseReps, parseDur } from './util.js';
 import { parsePace, intervalSpec, isIntervals, plannedLegs, resolveRun, storedSeconds } from './cardio.js';
+import { parseMeasure, parseAmountRange } from './measure.js';
 
 /**
  * Per-set targets: a plan with a different load/reps for each set.
@@ -15,7 +16,7 @@ import { parsePace, intervalSpec, isIntervals, plannedLegs, resolveRun, storedSe
  * Reps may be a range ("8-12"); the weight may be omitted ("x10") for bodyweight.
  * Returns [{weight, repsMin, repsMax}] or null.
  */
-export function parseSetTargets(raw) {
+export function parseSetTargets(raw, measure = 'reps') {
   if (raw === null || raw === undefined || raw === '') return null;
 
   const one = (str) => {
@@ -23,7 +24,7 @@ export function parseSetTargets(raw) {
     if (!s) return null;
     const m = s.match(/^([\d.]*)\s*(?:x|@|\*)\s*(.+)$/);
     if (m) {
-      const reps = parseReps(m[2]);
+      const reps = parseAmountRange(m[2], measure);
       return { weight: num(m[1]), repsMin: reps.min, repsMax: reps.max };
     }
     // a bare number is a weight with no rep target
@@ -37,8 +38,9 @@ export function parseSetTargets(raw) {
       ? raw.map((item) => {
         if (item === null || item === undefined) return null;
         if (typeof item === 'string' || typeof item === 'number') return one(item);
-        const reps = parseReps(
+        const reps = parseAmountRange(
           item.reps !== undefined ? item.reps : { min: item.repsMin, max: item.repsMax },
+          measure,
         );
         return { weight: num(item.weight), repsMin: reps.min, repsMax: reps.max };
       })
@@ -60,14 +62,21 @@ export function normalizeEntry(raw = {}) {
     // must never be mistaken for targets
     && !raw.sets.some((x) => x && typeof x === 'object' && ('done' in x || 'id' in x)))
     || (typeof raw.sets === 'string' && /[x×@*,;]/i.test(raw.sets));
+  // what the per-set number means. Must be resolved BEFORE the targets, which
+  // are parsed in this unit: "1:00" is a minute's plank, not one rep.
+  const measure = type === 'lift'
+    ? parseMeasure(raw.measure ?? raw.measuredIn ?? (raw.hold || raw.isometric ? 'time' : 'reps'))
+    : 'reps';
   const setTargets = parseSetTargets(
     raw.setTargets ?? raw.perSet ?? raw.setPlan ?? (setsIsPlan ? raw.sets : null),
+    measure,
   );
-  const reps = parseReps(
+  const reps = parseAmountRange(
     raw.reps !== undefined ? raw.reps
       : (raw.repsMin !== undefined || raw.repsMax !== undefined)
         ? { min: raw.repsMin, max: raw.repsMax }
         : raw.targetReps,
+    measure,
   );
   const group = raw.group ?? raw.groupId ?? raw.superset ?? null;
   const declaredSets = num(raw.targetSets ?? (setsIsPlan ? null : raw.sets));
@@ -79,6 +88,9 @@ export function normalizeEntry(raw = {}) {
     // lift targets — either one target for every set, or setTargets per set
     targetSets: setTargets ? setTargets.length : (declaredSets ?? (type === 'lift' ? 3 : null)),
     setTargets,
+    // 'reps' | 'time' | 'distance' -- see js/measure.js. Absent means reps, so
+    // every entry written before this existed keeps its original meaning.
+    measure,
     repsMin: setTargets ? null : reps.min,
     repsMax: setTargets ? null : reps.max,
     weight: setTargets ? null : num(raw.weight ?? raw.targetWeight),

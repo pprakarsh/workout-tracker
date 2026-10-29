@@ -75,6 +75,24 @@ ok(nonAscii.length === 0,
   `deploy.sh is pure ASCII${nonAscii.length ? ` — found ${nonAscii.map(([c]) => JSON.stringify(c)).join(', ')}` : ''}`);
 ok(/^set -euo pipefail$/m.test(sh), 'deploy.sh fails fast on errors and unset variables');
 
+console.log('\n== test suites must be loadable');
+// A suite with two top-level `const x` at module scope throws SyntaxError before
+// its first assertion, printing neither a pass nor a failure. That silence once
+// shipped a release. These files are long and append-only, so collisions are
+// easy; this catches them without running anything.
+for (const suite of ['style.mjs', 'smoke.mjs', 'sync.mjs', 'dom.mjs']) {
+  const src = readFileSync(`${APP}/test/${suite}`, 'utf8');
+  const seen = new Map();
+  const dupes = [];
+  for (const m of src.matchAll(/^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=/gm)) {
+    const line = src.slice(0, m.index).split('\n').length;
+    if (seen.has(m[1])) dupes.push(`${m[1]} (lines ${seen.get(m[1])} and ${line})`);
+    else seen.set(m[1], line);
+  }
+  ok(dupes.length === 0,
+    `${suite} declares each top-level binding once${dupes.length ? ` — repeated: ${dupes.join(', ')}` : ` (${seen.size})`}`);
+}
+
 console.log('\n== release invariants');
 const utilSrc = readFileSync(`${APP}/js/util.js`, 'utf8');
 const appVersion = (utilSrc.match(/APP_VERSION = '([^']+)'/) || [])[1];

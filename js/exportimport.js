@@ -4,10 +4,11 @@ import {
   dataFingerprint, setLabels,
 } from './store.js';
 import {
-  download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, fmtReps, uid,
+  download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, uid,
 } from './util.js';
 import { pace, targetLine, loadLabel } from './format.js';
 import { patternText, legTotals, byRound, intervalSummary, fmtPace } from './cardio.js';
+import { MEASURES, measureOf, fmtAmountRange, fmtAmount } from './measure.js';
 
 export const SCHEMA = 'workout-tracker/v1';
 
@@ -54,16 +55,17 @@ export function routineObject(r) {
         o.sets = e.setTargets.map((t) => {
           const row = {};
           if (t.weight !== null && t.weight !== undefined) row.weight = t.weight;
-          const reps = fmtReps(t.repsMin, t.repsMax);
+          const reps = fmtAmountRange(t.repsMin, t.repsMax, e.measure);
           if (reps) row.reps = reps;
           return row;
         });
       } else {
         if (e.targetSets !== null) o.sets = e.targetSets;
-        const reps = fmtReps(e.repsMin, e.repsMax);
+        const reps = fmtAmountRange(e.repsMin, e.repsMax, e.measure);
         if (reps) o.reps = reps;
         if (e.weight !== null) o.weight = e.weight;
       }
+      if (e.measure && e.measure !== 'reps') o.measure = e.measure;
       if (e.targetDistance !== null) { o.distance = e.targetDistance; o.distanceUnit = e.distanceUnit || 'km'; }
       if (e.targetDuration) o.duration = fmtClock(e.targetDuration);
       if (e.targetPace) o.pace = fmtClock(e.targetPace);
@@ -168,6 +170,9 @@ const CSV_COLS = [
   // the interval redesign: one row per LEG of one round, so a treadmill block
   // exports as data instead of a single collapsed line
   'leg_label', 'leg_index', 'pace_seconds',
+  // holds and carries: the amount goes to the column that matches its unit, so
+  // 45 seconds of plank never lands in the reps column
+  'measure',
 ];
 
 export function csvRows(sessions) {
@@ -190,7 +195,7 @@ export function csvRows(sessions) {
               fmtNum(l.avgHr), fmtNum(l.maxHr), fmtNum(l.elevation),
               'yes', l.note || '', ...tail,
               '', '', '', lg.round, e.rounds ?? '',
-              lg.label || '', lg.leg + 1, lg.pace ?? ''].map(csvCell).join(','));
+              lg.label || '', lg.leg + 1, lg.pace ?? '', ''].map(csvCell).join(','));
           });
           return;
         }
@@ -202,18 +207,21 @@ export function csvRows(sessions) {
           fmtNum(l.avgHr), fmtNum(l.maxHr), fmtNum(l.elevation),
           'yes', l.note || '', ...tail,
           '', '', '', '', '',
-          '', '', l.pace ?? ''].map(csvCell).join(','));
+          '', '', l.pace ?? '', ''].map(csvCell).join(','));
       } else {
         const labels = setLabels(e.sets || []);
         // only ticked sets: an unticked pre-materialised row is plan, not log
         (e.sets || []).forEach((x, i) => {
           if (!x.done) return;
+          const mk = measureOf(e).key;
           rows.push([...base, e.name, 'lift', e.group || '',
-            i + 1, fmtNum(x.weight), x.unit || '', fmtNum(x.reps), fmtNum(x.rpe), x.rest ?? '',
-            '', '', '', '', '', '', '',
+            i + 1, fmtNum(x.weight), x.unit || '',
+            mk === 'reps' ? fmtNum(x.reps) : '', fmtNum(x.rpe), x.rest ?? '',
+            mk === 'distance' ? fmtNum(x.reps) : '', mk === 'distance' ? 'm' : '',
+            mk === 'time' ? (x.reps ?? '') : '', '', '', '', '',
             x.done ? 'yes' : 'no', x.note || '', ...tail,
             fmtNum(x.rir), x.warmup ? 'yes' : 'no', labels[i], '', '',
-            '', '', ''].map(csvCell).join(','));
+            '', '', '', mk].map(csvCell).join(','));
         });
       }
     });
@@ -257,11 +265,12 @@ export function sessionMarkdown(s) {
       const sets = allRows.filter((x) => x.done);
       if (!sets.length) { L.push('_nothing logged_'); return; }
       const anyRir = sets.some((x) => x.rir !== null && x.rir !== undefined);
-      L.push(`| Set | Weight | Reps | RPE |${anyRir ? ' RIR |' : ''} Rest | Done |`);
+      const mh = (MEASURES[e.measure] || MEASURES.reps).header;
+      L.push(`| Set | Weight | ${mh} | RPE |${anyRir ? ' RIR |' : ''} Rest | Done |`);
       L.push(`|---:|---:|---:|---:|${anyRir ? '---:|' : ''}---:|:--:|`);
       sets.forEach((x) => {
         const rir = anyRir ? ` ${x.rir !== null && x.rir !== undefined ? fmtNum(x.rir) : '—'} |` : '';
-        L.push(`| ${labels[allRows.indexOf(x)]} | ${loadLabel({ ...x, unit: x.unit || s.unit }, { spaced: true })} | ${x.reps !== null ? fmtNum(x.reps) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} |${rir} ${x.rest ? fmtClock(x.rest) : 'no rest logged'} | ${x.done ? '✓' : ''} |`);
+        L.push(`| ${labels[allRows.indexOf(x)]} | ${loadLabel({ ...x, unit: x.unit || s.unit }, { spaced: true })} | ${x.reps !== null ? fmtAmount(x.reps, e.measure) : '—'} | ${x.rpe !== null ? fmtNum(x.rpe) : '—'} |${rir} ${x.rest ? fmtClock(x.rest) : 'no rest logged'} | ${x.done ? '✓' : ''} |`);
       });
       if (sets.some((x) => x.warmup)) L.push('');
       if (sets.some((x) => x.warmup)) L.push('_W = warmup set; excluded from volume._');

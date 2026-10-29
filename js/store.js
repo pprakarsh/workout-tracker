@@ -2,6 +2,7 @@
 import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
 import { uid, num, parseReps, parseDur } from './util.js';
 import { resolveRun, isIntervals, plannedLegs, reconcileLegs, cardioLogged } from './cardio.js';
+import { setIsLoggableFor, countsTowardsVolume } from './measure.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
   parseSetTargets, setLabels, workingSets,
@@ -355,6 +356,32 @@ export async function moveSessionEntry(entryId, dir) {
   await touch();
 }
 
+/**
+ * Move an entry's whole block to directly after the block being worked on.
+ *
+ * "Do this next" is the move people actually want mid-workout -- the machine is
+ * taken, so bring something forward -- and it is one tap instead of pressing
+ * "move earlier" five times. Blocks move whole: half a superset cannot jump the
+ * queue without breaking the pairing.
+ */
+export async function moveEntryNext(entryId) {
+  const s = working();
+  if (!s) return false;
+  const from = blockAt(s.entries, entryIndex(entryId));
+  const here = blockAt(s.entries, s.currentIdx);
+  if (!from.length || !here.length) return false;
+  if (from[0] === here[0]) return false;                 // it is already current
+  const cur = s.entries[s.currentIdx];
+  const moving = from.map((i) => s.entries[i]);
+  const rest = s.entries.filter((e) => !moving.includes(e));
+  const at = rest.indexOf(s.entries[here[here.length - 1]]) + 1;
+  s.entries = [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+  if (cur) s.currentIdx = s.entries.indexOf(cur);
+  s.modified = true;
+  await touch();
+  return true;
+}
+
 export async function toggleSkip(entryId) {
   const e = findEntry(entryId);
   if (!e) return;
@@ -697,7 +724,7 @@ export async function stopRest() {
     const e = findEntry(t.entryId);
     const set = e?.sets?.find((x) => x.id === t.setId);
     if (set && !set.done) {
-      if (setIsLoggable(set)) {
+      if (setIsLoggable(set, e.measure)) {
         set.done = true;
         set.completedAt = Date.now();
         await touch({ silent: true });
@@ -797,7 +824,6 @@ export function sessionProgress(s) {
   const done = live.filter((e) => entryStatus(e) === 'done').length;
   return { done, total: live.length };
 }
-
 /**
  * Load moved, in the session's unit. A bodyweight set counts your bodyweight
  * plus any added load, but only when the session records a bodyweight -- we will
@@ -806,20 +832,28 @@ export function sessionProgress(s) {
  */
 export function sessionVolume(s) {
   let v = 0;
-  s.entries.forEach((e) => workingSets(e).forEach((x) => {
+  s.entries.forEach((e) => {
+    // weight x seconds is not tonnage, and neither is weight x metres. A timed
+    // or carried set is real work, just not work this number can express.
+    if (!countsTowardsVolume(e.measure)) return;
+    workingSets(e).forEach((x) => {
     if (!x.done || x.reps === null) return;
     if (x.bodyweight) {
       if (s.bodyweight) v += (s.bodyweight + (x.weight || 0)) * x.reps;
       return;
     }
     if (x.weight !== null) v += x.weight * x.reps;
-  }));
+    });
+  });
   return Math.round(v);
 }
 
-/** Can this set be confirmed, or does it still need a number? */
-export function setIsLoggable(set) {
-  if (!set) return false;
-  if (set.reps === null) return false;
-  return set.bodyweight || set.weight !== null;
+/**
+ * Can this set be confirmed, or does it still need a number?
+ *
+ * Pass the entry's measure. A plank or a carry needs no load, so demanding one
+ * would make them impossible to tick -- see js/measure.js.
+ */
+export function setIsLoggable(set, measure = 'reps') {
+  return setIsLoggableFor(set, measure);
 }

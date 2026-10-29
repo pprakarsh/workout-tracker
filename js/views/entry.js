@@ -2,7 +2,7 @@
 // the read-only History view) plus the actions that belong to it.
 import {
   state, findEntry, addSet, deleteSet, updateSet, toggleSetDone, toggleSkip,
-  removeSessionEntry, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
+  removeSessionEntry, moveEntryNext, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
   addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
   parseSetTargets, getRoutine, saveRoutine, normalizeEntry,
   setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
@@ -11,6 +11,9 @@ import {
 import { exerciseLibrary, findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { parsePace, patternText, parseIntervals } from '../cardio.js';
+import {
+  MEASURES, measureOf, fmtAmount, fmtAmountRange, parseAmount, amountFieldValue, parseMeasure,
+} from '../measure.js';
 import { planLine, targetLine, logSummary, restLine, loadLabel } from '../format.js';
 import { cardioBody, cardioStatic, handleLegInput } from './cardio.js';
 import { openModal, confirmDialog, toast } from '../ui.js';
@@ -98,7 +101,9 @@ function setRow(e, s, label, workingIdx, allowRest) {
   const plan = s.warmup ? null : plannedSet(e, workingIdx);
   const wPh = s.bodyweight ? 'BW'
     : (plan && plan.weight !== null && plan.weight !== undefined ? fmtNum(plan.weight) : esc(unit));
-  const rPh = plan && fmtReps(plan.repsMin, plan.repsMax) ? fmtReps(plan.repsMin, plan.repsMax) : 'reps';
+  const m = measureOf(e);
+  const planned = plan ? fmtAmountRange(plan.repsMin, plan.repsMax, m.key) : '';
+  const rPh = planned || m.placeholder;
   return `
     <div class="set-row ${rowClass()} ${s.done ? 'done' : ''} ${s.warmup ? 'warm' : ''}"
          data-entry="${e.id}" data-set="${s.id}">
@@ -107,11 +112,12 @@ function setRow(e, s, label, workingIdx, allowRest) {
               aria-label="Set ${esc(label)}, tap to toggle warmup">${esc(label)}</button>
       <input inputmode="decimal" enterkeyhint="next" data-f="weight" placeholder="${wPh}"
              value="${esc(fmtNum(s.weight))}" aria-label="Weight set ${esc(label)}">
-      <input inputmode="numeric" enterkeyhint="next" data-f="reps" placeholder="${esc(rPh)}"
-             value="${esc(fmtNum(s.reps))}" aria-label="Reps set ${esc(label)}">
-      ${showRpe() ? `<input inputmode="decimal" enterkeyhint="next" data-f="rpe" placeholder="RPE"
+      <input inputmode="${m.inputmode}" enterkeyhint="next" data-f="reps" placeholder="${esc(rPh)}"
+             value="${esc(amountFieldValue(s.reps, m.key))}"
+             aria-label="${esc(m.label)} set ${esc(label)}">
+      ${showRpe() ? `<input inputmode="decimal" enterkeyhint="next" data-f="rpe" placeholder="1-10"
              value="${esc(fmtNum(s.rpe))}" aria-label="RPE set ${esc(label)}">` : ''}
-      ${showRir() ? `<input inputmode="decimal" enterkeyhint="done" data-f="rir" placeholder="RIR"
+      ${showRir() ? `<input inputmode="decimal" enterkeyhint="done" data-f="rir" placeholder="0-5"
              value="${esc(fmtNum(s.rir))}" aria-label="Reps in reserve, set ${esc(label)}">` : ''}
       <button type="button" class="chk ${s.done ? 'on' : ''}"
               title="${s.done ? 'Un-tick this set' : 'Tick without starting rest'}"
@@ -137,19 +143,20 @@ function confirmBar(e, allowRest) {
   }
   const labels = setLabels(e.sets || []);
   const label = labels[(e.sets || []).indexOf(s)];
-  if (!setIsLoggable(s)) {
+  const m = measureOf(e);
+  if (!setIsLoggable(s, m.key)) {
     // No numbers yet. Start the clock anyway: the rest is time-critical and the
     // weight is not -- it can be typed during the rest.
     return `
       <button type="button" class="confirm needs" data-action="set-rest-toggle"
               data-entry="${e.id}" data-set="${s.id}">
         <span class="big">&#9201;&nbsp; Start rest after set ${esc(label)}</span>
-        <span class="sub">no ${s.reps === null ? 'reps' : 'weight'} yet &mdash; enter it while you rest</span>
+        <span class="sub">no ${s.reps === null ? esc(m.short) : 'weight'} yet &mdash; enter it while you rest</span>
       </button>`;
   }
   return `
     <button type="button" class="confirm" data-action="set-confirm" data-entry="${e.id}" data-set="${s.id}">
-      <span class="big">&#10003;&nbsp; ${esc(loadLabel(s))} &times; ${esc(fmtNum(s.reps))}</span>
+      <span class="big">&#10003;&nbsp; ${loadLabel(s) === '—' && m.key !== 'reps' ? '' : `${esc(loadLabel(s))} &times; `}${esc(fmtAmount(s.reps, m.key))}</span>
       <span class="sub">set ${esc(label)}${allowRest ? ' &mdash; logs it and starts rest' : ' &mdash; log it'}</span>
     </button>`;
 }
@@ -161,6 +168,7 @@ function confirmBar(e, allowRest) {
  * without a re-render — which is what keeps the keyboard up.
  */
 function stepBar(e) {
+  const m = measureOf(e);
   const w = fmtNum(state.settings.weightStep);
   const recent = recentWeights(e.name);
   const active = activeSet(e);
@@ -169,8 +177,8 @@ function stepBar(e) {
       <div class="steprow">
         <button type="button" data-step="weight" data-delta="-${w}">&minus;${w}</button>
         <button type="button" data-step="weight" data-delta="${w}">+${w}</button>
-        <button type="button" data-step="reps" data-delta="-1">&minus;1 rep</button>
-        <button type="button" data-step="reps" data-delta="1">+1 rep</button>
+        <button type="button" data-step="reps" data-delta="-${m.step}">&minus;${m.step}${esc(m.stepLabel)}</button>
+        <button type="button" data-step="reps" data-delta="${m.step}">+${m.step}${esc(m.stepLabel)}</button>
       </div>
       <div class="steprow chips">
         <button type="button" class="chip bw" data-action="set-bw"
@@ -180,6 +188,28 @@ function stepBar(e) {
         ${recent.length ? '<span class="tiny dim" style="align-self:center">recent</span>' : ''}
       </div>
     </div>`;
+}
+
+/**
+ * Column headers carry the UNIT, placeholders carry the FORMAT.
+ *
+ * A placeholder vanishes the moment a value is typed, so a unit shown only
+ * there is a unit you cannot check while reading your own numbers back. The
+ * header stays put, costs one 10px row per exercise rather than space in every
+ * field, and is the only place that can honestly say "kg" when the field holds
+ * "52.5".
+ */
+function setHeader(e) {
+  const m = measureOf(e);
+  const unit = e.unit || state.settings.unit;
+  return `
+      <div class="set-hdr ${rowClass()}">
+        <div>Set</div>
+        <div>${e.bodyweight ? `+${esc(unit)}` : esc(unit)}</div>
+        <div>${esc(m.header)}</div>
+        ${showRpe() ? '<div>RPE</div>' : ''}${showRir() ? '<div>RIR</div>' : ''}
+        <div></div><div></div>
+      </div>`;
 }
 
 function liftBody(e, allowRest) {
@@ -195,11 +225,7 @@ function liftBody(e, allowRest) {
   const rest = restLine(e);
   return `
     <div class="sets">
-      <div class="set-hdr ${rowClass()}">
-        <div>Set</div><div>${e.bodyweight ? 'Added' : 'Weight'}</div><div>Reps</div>
-        ${showRpe() ? '<div>RPE</div>' : ''}${showRir() ? '<div>RIR</div>' : ''}
-        <div></div><div></div>
-      </div>
+      ${setHeader(e)}
       ${rows || '<p class="hint" style="margin:2px 0 8px">No sets planned. Add one below.</p>'}
     </div>
     ${stepBar(e)}
@@ -235,15 +261,29 @@ export function renderEntryStatic(e) {
 /* exercise form (add / edit) — shared with the routine editor         */
 /* ------------------------------------------------------------------ */
 
-const stRow = (t = {}) => `
+/**
+ * What each measure means, said where it is chosen. The range example matters:
+ * without it nobody discovers that a plank target can be "30-45".
+ */
+const MEASURE_HINT = {
+  reps: 'Normal sets. A target can be a single number or a range such as 8-12.',
+  time: 'For holds: plank, dead hang, L-sit. Type seconds (45) or a clock value (1:15). A range works too: 30-45.',
+  distance: 'For loaded carries: farmer carry, sled push, sandbag walk. Type metres (40). Weight is the load you carried.',
+};
+
+const stRow = (t = {}, measure = 'reps') => {
+  const m = MEASURES[measure] || MEASURES.reps;
+  return `
   <div class="strow" data-strow>
     <div class="idx"></div>
     <input data-stf="w" inputmode="decimal" placeholder="weight"
            value="${esc(fmtNum(t.weight))}" aria-label="Set weight">
-    <input data-stf="r" inputmode="text" placeholder="reps"
-           value="${esc(fmtReps(t.repsMin ?? null, t.repsMax ?? null))}" aria-label="Set reps">
+    <input data-stf="r" inputmode="text" placeholder="${esc(m.placeholder)}"
+           value="${esc(fmtAmountRange(t.repsMin ?? null, t.repsMax ?? null, m.key))}"
+           aria-label="Set ${esc(m.label.toLowerCase())}">
     <button type="button" class="chk" data-strow-del title="Remove this set">✕</button>
   </div>`;
+};
 
 /**
  * One grid row per set. An exercise saved with a single target for all sets is
@@ -251,14 +291,16 @@ const stRow = (t = {}) => `
  * are entered and there is no mode to discover.
  */
 function planRows(e) {
-  if (e.setTargets && e.setTargets.length) return e.setTargets.map((t) => stRow(t)).join('');
+  const m = e.measure || 'reps';
+  if (e.setTargets && e.setTargets.length) return e.setTargets.map((t) => stRow(t, m)).join('');
   const n = Math.min(Math.max(num(e.targetSets) ?? 3, 1), 30);
   const t = { weight: e.weight ?? null, repsMin: e.repsMin ?? null, repsMax: e.repsMax ?? null };
-  return Array.from({ length: n }, () => stRow(t)).join('');
+  return Array.from({ length: n }, () => stRow(t, m)).join('');
 }
 
 export function exerciseFormHtml(e = {}) {
   const type = e.type === 'cardio' ? 'cardio' : 'lift';
+  const measure = e.measure || 'reps';
   return `
     <label class="field"><span>Exercise name</span>
       <input name="name" list="exerciseNames" autocapitalize="words" placeholder="e.g. Back Squat"
@@ -270,26 +312,31 @@ export function exerciseFormHtml(e = {}) {
       </select></label>
 
     <div id="exLift" ${type === 'cardio' ? 'hidden' : ''}>
-      <div class="tiny" style="margin:2px 0 7px">Sets — weight and reps for each set</div>
-      <div class="strow-hdr"><div>Set</div><div>Weight</div><div>Reps</div><div></div></div>
+      <label class="field"><span>Each set is measured in</span>
+        <select name="measure" id="exMeasure">
+          ${Object.values(MEASURES).map((m) => `<option value="${m.key}"
+            ${measure === m.key ? 'selected' : ''}>${esc(m.long)}</option>`).join('')}
+        </select></label>
+      <p class="hint" id="exMeasureHint" style="margin-top:-4px">${esc(MEASURE_HINT[measure])}</p>
+      <div class="tiny" style="margin:2px 0 7px">Sets — weight and <span id="exAmountWord">${esc((MEASURES[measure] || MEASURES.reps).label.toLowerCase())}</span> for each set</div>
+      <div class="strow-hdr"><div>Set</div><div>Weight (${esc(state.settings.unit)})</div><div id="exAmountHdr">${esc((MEASURES[measure] || MEASURES.reps).header)}</div><div></div></div>
       <div id="exRows">${planRows(e)}</div>
       <div class="btn-row" style="margin:2px 0 8px">
         <button type="button" class="btn sm" id="exAddRow">+ Add set</button>
         <button type="button" class="btn sm ghost" id="exCopyDown" title="Copy set 1 into every set">Copy set 1 down</button>
       </div>
-      <p class="hint" style="margin-top:0">Reps can be a range such as <code>8-12</code>.
-        Leave the weight blank for bodyweight.</p>
+      <p class="hint" style="margin-top:0">Leave the weight blank for an unloaded set.</p>
     </div>
 
     <div id="exCardio" ${type === 'lift' ? 'hidden' : ''}>
       <div class="grid3">
-        <label class="field"><span>Target time</span>
+        <label class="field"><span>Target time (m:ss)</span>
           <input name="targetDuration" inputmode="text" placeholder="28:30"
                  value="${e.targetDuration ? esc(fmtClock(e.targetDuration)) : ''}"></label>
-        <label class="field"><span>Target pace</span>
+        <label class="field"><span>Target pace (/${esc(e.distanceUnit || state.settings.distanceUnit)})</span>
           <input name="targetPace" inputmode="text" placeholder="6:00"
                  value="${e.targetPace ? esc(fmtClock(e.targetPace)) : ''}"></label>
-        <label class="field"><span>Target distance</span>
+        <label class="field"><span>Target distance (${esc(e.distanceUnit || state.settings.distanceUnit)})</span>
           <input name="targetDistance" inputmode="decimal" placeholder="5"
                  value="${esc(fmtNum(e.targetDistance))}"></label>
       </div>
@@ -350,9 +397,25 @@ export function wireExerciseForm(modal) {
     modal.querySelector('#exCardio').hidden = !cardio;
   });
 
+  // Switching measure relabels the amount column and swaps the hint, so the
+  // unit you are typing in is never ambiguous.
+  const measure = modal.querySelector('#exMeasure');
+  if (measure) {
+    measure.addEventListener('change', () => {
+      const m = MEASURES[measure.value] || MEASURES.reps;
+      modal.querySelector('#exMeasureHint').textContent = MEASURE_HINT[m.key];
+      modal.querySelector('#exAmountHdr').textContent = m.header;
+      modal.querySelector('#exAmountWord').textContent = m.label.toLowerCase();
+      rows.querySelectorAll('[data-stf="r"]').forEach((i) => {
+        i.placeholder = m.placeholder;
+        i.setAttribute('aria-label', `Set ${m.label.toLowerCase()}`);
+      });
+    });
+  }
+
   modal.querySelector('#exAddRow').addEventListener('click', () => {
     const last = rows.querySelector('[data-strow]:last-child');
-    rows.insertAdjacentHTML('beforeend', stRow());
+    rows.insertAdjacentHTML('beforeend', stRow({}, measure ? measure.value : 'reps'));
     const fresh = rows.querySelector('[data-strow]:last-child');
     if (last) {
       // carry the previous set forward as a starting point
@@ -395,6 +458,7 @@ export function readExerciseForm(v, modal = null) {
     targetPace: parsePace(v.targetPace),
     rest: parseDur(v.rest),
     bodyweight: v.bodyweight === '1',
+    measure: parseMeasure(v.measure),
     group: (v.group || '').trim() || null,
     notes: (v.notes || '').trim(),
   };
@@ -414,7 +478,9 @@ export function readExerciseForm(v, modal = null) {
     weight: num(row.querySelector('[data-stf="w"]').value),
     reps: row.querySelector('[data-stf="r"]').value,
   }));
-  const parsed = parseSetTargets(raw.filter((t) => t.weight !== null || String(t.reps).trim() !== ''));
+  const parsed = parseSetTargets(
+    raw.filter((t) => t.weight !== null || String(t.reps).trim() !== ''), base.measure,
+  );
 
   if (!parsed) {
     // Rows exist but nothing was filled in: keep the set count, no loads.
@@ -683,6 +749,7 @@ export const entryActions = {
       bodyHtml: `
         <div class="btn-row" style="flex-direction:column;gap:8px">
           <button type="button" class="btn block" data-action="entry-edit" data-entry="${e.id}">Edit exercise & targets</button>
+          <button type="button" class="btn block primary" data-action="entry-next-up" data-entry="${e.id}">Do this next &#10514;</button>
           <button type="button" class="btn block" data-action="entry-up" data-entry="${e.id}">Move earlier ↑</button>
           <button type="button" class="btn block" data-action="entry-down" data-entry="${e.id}">Move later ↓</button>
           <button type="button" class="btn block" data-action="entry-skip" data-entry="${e.id}">${e.skipped ? 'Un-skip' : 'Mark as skipped'}</button>
@@ -720,6 +787,12 @@ export const entryActions = {
 
   'entry-up': async ({ entry }) => { await moveSessionEntry(entry, -1); },
   'entry-down': async ({ entry }) => { await moveSessionEntry(entry, 1); },
+
+  'entry-next-up': async ({ entry }) => {
+    const e = findEntry(entry);
+    const moved = await moveEntryNext(entry);
+    toast(moved ? `${e?.name || 'Exercise'} is next` : 'Already next up');
+  },
   'entry-skip': async ({ entry }) => { await toggleSkip(entry); },
 
   'entry-del': async ({ entry }) => {
@@ -752,7 +825,10 @@ export async function handleFieldInput(target) {
   const row = target.closest('[data-set]');
   if (row) {
     const patch = {};
-    patch[field] = num(target.value);
+    // the amount column is reps, seconds or metres depending on the entry
+    patch[field] = field === 'reps'
+      ? parseAmount(target.value, measureOf(findEntry(row.dataset.entry)).key)
+      : num(target.value);
     await updateSet(row.dataset.entry, row.dataset.set, patch, { silent: true });
     return;
   }

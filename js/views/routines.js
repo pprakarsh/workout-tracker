@@ -206,6 +206,11 @@ export function render() {
       <button type="button" class="btn sm ghost" data-action="sample-copy" data-which="run">Copy this sample</button>
 
       <div class="divider"></div>
+      <div class="tiny" style="margin-bottom:5px">Holds and carries &mdash; planks, hangs, farmer carries</div>
+      <pre class="code">${esc(SAMPLE_HOLDS)}</pre>
+      <button type="button" class="btn sm ghost" data-action="sample-copy" data-which="holds">Copy this sample</button>
+
+      <div class="divider"></div>
       <div class="tiny">What <code>group</code> does</div>
       <p class="hint" style="margin-top:4px">It marks a <b>superset or circuit</b>. Give two or more
         <b>consecutive</b> exercises the same short label and the app treats them as one block:
@@ -220,10 +225,13 @@ export function render() {
 
       <div class="divider"></div>
       <div class="tiny">Targets vs. what you log</div>
-      <p class="hint" style="margin-top:4px">A routine holds <b>targets</b> only. A cardio entry is
-        either <b>one straight run</b> - give any two of <code>duration</code>, <code>pace</code>
-        and <code>distance</code> and the third is worked out - or <b>one interval block</b>,
-        written as a single <code>pattern</code> such as
+      <p class="hint" style="margin-top:4px">A routine holds <b>targets</b> only. A <b>lift</b> entry
+        is measured in reps by default; set <code>measure</code> to <code>time</code> for a hold
+        (a plank's <code>reps</code> then means <b>seconds</b>) or <code>distance</code> for a
+        loaded carry (<code>reps</code> means <b>metres</b>, and <code>weight</code> is the load).
+        A <b>cardio</b> entry is either <b>one straight run</b> &mdash; give any two of
+        <code>duration</code>, <code>pace</code> and <code>distance</code> and the third is worked
+        out &mdash; or <b>one interval block</b>, written as a single <code>pattern</code> such as
         <code>1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6</code>. The block is logged in one tap, and
         any single round can still be corrected. Heart rate, elevation and perceived effort have no
         target fields; you record them while logging.</p>
@@ -234,6 +242,7 @@ export function render() {
 
 export const SAMPLE = `{
   "//": "group = superset. Same letter on CONSECUTIVE exercises makes them one block:",
+  "//3": "measure = what a set is counted in: reps (default), time in seconds, distance in metres.",
   "//2": "they share the Now screen and Next skips past both. Omit it for a normal exercise.",
   "name": "Squat day with Push Movements",
   "description": "Heavy squats, then pressing. ~75 min.",
@@ -255,6 +264,29 @@ export const SAMPLE = `{
         "Tempo 2-0-1, no leg drive",
         "Stop the set if the bar path drifts forward"
       ] }
+  ]
+}`;
+
+export const SAMPLE_HOLDS = `{
+  "//": "Holds and carries. These are LIFT entries with a measure, not cardio entries.",
+  "//2": "measure time     -> every reps value is SECONDS   (45, or 1:15, or a range 30-45)",
+  "//3": "measure distance -> every reps value is METRES, and weight is the load carried",
+  "name": "Core and Carries",
+  "description": "Finisher block. ~15 min.",
+  "entries": [
+    { "name": "Plank", "measure": "time", "sets": 3, "reps": "45", "rest": "1:00",
+      "notes": "Ribs down, squeeze glutes" },
+
+    { "//": "A range works: hold for at least 30s, stop by 45s.",
+      "name": "Dead Hang", "measure": "time", "sets": 3, "reps": "30-45", "rest": "1:30" },
+
+    { "//": "Per-set plan, in seconds. Weighted, so give a weight too.",
+      "name": "Weighted Plank", "measure": "time", "weight": 10,
+      "sets": [ { "reps": 40 }, { "reps": 30 }, { "reps": 20 } ], "rest": "1:00" },
+
+    { "name": "Farmer Carry", "measure": "distance",
+      "sets": 3, "reps": 40, "weight": 24, "rest": "2:00",
+      "notes": "Per hand. 40 m out and back" }
   ]
 }`;
 
@@ -352,6 +384,18 @@ LIFTING entries ("type":"lift", or omit "type") - pick ONE of two shapes:
      For bodyweight work omit the weight: {"reps":8} or "x8".
      Prefer shape B whenever the sets genuinely differ; prefer A when they do not.
 
+  "measure" - what each set is MEASURED IN. Omit it for normal rep sets.
+       "time"     a hold: plank, dead hang, L-sit, wall sit. "reps" then means
+                  SECONDS: "45", "1:15", or a range "30-45".
+                    { "name": "Plank", "measure": "time", "sets": 3, "reps": "45" }
+       "distance" a loaded carry: farmer carry, sled push, sandbag walk. "reps"
+                  then means METRES, and "weight" is the load carried.
+                    { "name": "Farmer Carry", "measure": "distance",
+                      "sets": 3, "reps": 40, "weight": 24 }
+     A measured entry is otherwise an ORDINARY LIFT entry - it has sets, warmups,
+     RPE, rest and per-set targets like any other. Do NOT make a plank or a carry
+     a cardio entry, and do NOT put the seconds in "duration".
+
 CARDIO entries ("type":"cardio"):
   A cardio entry is EITHER one straight run OR one interval block. Never both.
 
@@ -403,11 +447,15 @@ ${SAMPLE_RUN}
 ================ WORKED EXAMPLE 2: lifting day, superset + per-set plan ================
 ${SAMPLE}
 
+================ WORKED EXAMPLE 3: holds and carries (the "measure" field) ================
+${SAMPLE_HOLDS}
+
 ================ CHECKLIST BEFORE YOU ANSWER ================
 - Valid JSON, no code fences, nothing but the JSON.
 - Every entry has a "name".
 - Lifting entries use shape A or shape B, never both.
 - Cardio entries use distance/duration, never "sets".
+- Planks and carries are LIFT entries with "measure", not cardio entries.
 - Intervals use one "pattern" string on a single entry, never one entry per round.
 - Every member of a group has its own "rest".
 - All loads and distances are in the units I specified.
@@ -678,7 +726,9 @@ export const routineActions = {
   },
 
   'sample-copy': async ({ which }) => {
-    const text = which === 'prompt' ? AI_PROMPT : which === 'run' ? SAMPLE_RUN : SAMPLE;
+    const text = which === 'prompt' ? AI_PROMPT
+      : which === 'run' ? SAMPLE_RUN
+        : which === 'holds' ? SAMPLE_HOLDS : SAMPLE;
     const kb = Math.round(text.length / 102.4) / 10;
     const label = which === 'prompt'
       ? `Full prompt copied (${text.split('\n').length} lines, ${kb} KB) — paste it into your AI tool`

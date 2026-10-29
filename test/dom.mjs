@@ -56,6 +56,7 @@ async function type(sel, value) {
 }
 
 const store = await import(`${APP}/js/store.js`);
+const cardio = await import(`${APP}/js/cardio.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
 await import(`${APP}/js/app.js`);   // boots itself
@@ -631,17 +632,58 @@ ok(ivE.log.legs.length === 12, `holding 12 legs (${ivE.log.legs.length})`);
 ok(view().includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km'), 'the pattern is shown on the card');
 ok(view().includes('Log all 6 rounds'), 'with a single button for the whole block');
 
-section('the format is explained where the typing happens');
+section('the pattern is built by tapping, not typing');
 ok($('[data-action="cardio-pattern"]') !== null, 'the pattern is editable from the card');
 await click('[data-action="cardio-pattern"]');
+ok($('#bLegs') !== null, 'the builder opened');
+ok($$('[data-bleg]').length === 2, `the existing two legs are loaded for editing (${$$('[data-bleg]').length})`);
+ok($('#bRounds').textContent === '6', `and its round count (${$('#bRounds').textContent})`);
+ok($('#bPreview').textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km'),
+  'with a live preview of the canonical pattern');
+ok($$('[data-b-preset]').length >= 4, 'common blocks are one tap away');
+
+// every number is reachable with a stepper, so no colon is ever typed
+const leg0 = $('[data-bleg="0"]');
+const plus15 = [...leg0.querySelectorAll('[data-b-step="duration"]')].find((b) => b.textContent === '+15s');
+plus15.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(20);
+ok($('[data-bleg="0"] [data-b-out="duration"]').textContent === '1:15',
+  `+15s stepped the first leg to 1:15 (${$('[data-bleg="0"] [data-b-out="duration"]').textContent})`);
+ok($('#bPreview').textContent.includes('1:15 @ 8:00/km'), 'and the preview followed');
+
+const minus5 = [...$('[data-bleg="0"]').querySelectorAll('[data-b-step="pace"]')].find((b) => b.textContent === '\u22125s');
+minus5.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(20);
+ok($('[data-bleg="0"] [data-b-out="pace"]').textContent === '7:55',
+  `pace steps in seconds per km (${$('[data-bleg="0"] [data-b-out="pace"]').textContent})`);
+
+await click('[data-b-rounds="1"]');
+ok($('#bRounds').textContent === '7', `rounds step too (${$('#bRounds').textContent})`);
+await click('[data-b-rounds="-1"]');
+
+const legsBefore = $$('[data-bleg]').length;
+await click('#bDup');
+ok($$('[data-bleg]').length === legsBefore + 1, 'a leg can be duplicated rather than re-entered');
+await click('[data-bleg="2"] [data-b-del]');
+ok($$('[data-bleg]').length === legsBefore, 'and removed again');
+
+section('a preset replaces the whole block in one tap');
+const tabata = [...$$('[data-b-preset]')].find((b) => /Tabata/.test(b.textContent));
+tabata.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(20);
+ok($('#bPreview').textContent.includes('0:20 hard + 0:10 rest'),
+  `the preset loaded (${$('#bPreview').textContent.trim().slice(0, 40)})`);
+ok($('#bRounds').textContent === '8', 'including its round count');
+
+section('typing is still available, and still explains the format');
 const pat = $('#ivPattern');
-ok(pat !== null, 'the pattern editor opened');
+ok(pat !== null, 'the text field is there for anyone who prefers it');
 ok(/leg \+ leg/.test($('#modalForm').textContent), 'it states the format');
 ok($('#modalForm').textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6'),
   'with a worked example');
 ok(/bare leg time is/i.test($('#modalForm').textContent),
   'and spells out what a bare number means');
-ok($('#ivEcho').textContent.includes('reads as'), 'and echoes how it was understood');
+ok(/using the builder/i.test($('#ivEcho').textContent), 'empty means the builder wins');
 pat.value = '1 min - 8 mins per km + 1:30 - walk - 6 mins per km x 6';
 pat.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 await sleep(20);
@@ -651,7 +693,19 @@ pat.value = 'nonsense';
 pat.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 await sleep(20);
 ok(/not understood/i.test($('#ivEcho').textContent), 'and says so when it cannot read it');
-await click('[data-mclose]');
+pat.value = '';
+pat.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(20);
+
+section('saving the builder writes the pattern');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(80);
+ok(ivE.legs.length === 2 && ivE.rounds === 8,
+  `the Tabata block was saved (${ivE.legs.length} legs x ${ivE.rounds})`);
+ok(ivE.log.legs.length === 16, `and expanded to 16 rows (${ivE.log.legs.length})`);
+// put the original pattern back for the tests that follow
+await store.setIntervalPlan(ivE.id, cardio.parseIntervals('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6'));
+await sleep(40);
 
 section('one tap logs every round');
 await click('[data-action="cardio-log-all"]');
@@ -737,6 +791,95 @@ ok(/bare leg time is/i.test(exCardio.textContent), 'including the bare-number ru
 ok(/any two/i.test(exCardio.textContent), 'and the any-two rule for a straight run');
 await click('[data-mclose]');
 
+section('the header shows a progress bar you can read at a glance');
+await xi.importFromText(JSON.stringify({
+  name: 'Progress Check',
+  entries: [
+    { name: 'Plank', measure: 'time', sets: 2, reps: '45', rest: '0:45' },
+    { name: 'Farmer Carry', measure: 'distance', sets: 1, reps: 40, weight: 24 },
+  ],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const pgR = store.state.routines.find((r) => r.name === 'Progress Check');
+await click(`[data-action="routine-start"][data-id="${pgR.id}"]`, 'Start');
+const bar = $('.progress .bar');
+ok(bar !== null, 'the bar is there');
+ok(bar.style.width === '0%', `empty at the start (${bar.style.width})`);
+ok($('.progress').getAttribute('aria-valuemax') === '2', 'and reports the total for screen readers');
+
+section('a plank logs in seconds, with the unit on the column');
+const pgPlank = store.state.active.entries[0];
+ok($('.set-hdr').textContent.includes('Time (s)'),
+  `the amount column names its unit (${$('.set-hdr').textContent.trim().replace(/\s+/g, ' ')})`);
+const amtIn = $('.set-row input[data-f="reps"]');
+ok(amtIn.value === '45', 'pre-filled with the planned 45 seconds');
+ok(amtIn.placeholder === '45' || amtIn.getAttribute('aria-label').includes('Time'),
+  'and labelled as a time');
+ok(view().includes('45s'), 'the confirm button offers the time, not a weight');
+ok([...$$('.stepbar button')].some((b) => b.textContent.includes('5s')),
+  `the stepper moves in seconds (${[...$$('.stepbar button')].map((b) => b.textContent).join(' ')})`);
+amtIn.focus();
+amtIn.value = '1:05';
+amtIn.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(30);
+ok(pgPlank.sets[0].reps === 65, `a clock value is accepted and stored as seconds (${pgPlank.sets[0].reps})`);
+ok(document.activeElement === amtIn, 'focus stayed put');
+
+await click('[data-action="set-confirm"]');
+await sleep(40);
+ok(pgPlank.sets[0].done === true, 'confirming works with no weight at all');
+await click('[data-action="rest-stop"]');
+await sleep(40);
+await click(`[data-action="set-done"][data-set="${pgPlank.sets[1].id}"]`);
+await sleep(40);
+ok($('.progress .bar').style.width === '50%',
+  `one of two exercises done moves the bar to half (${$('.progress .bar').style.width})`);
+
+section('the carry column reads in metres');
+await click('[data-action="now-next"]');
+ok($('.set-hdr').textContent.includes('Dist (m)'),
+  `metres, not reps (${$('.set-hdr').textContent.trim().replace(/\s+/g, ' ')})`);
+ok($('.set-hdr').textContent.includes('kg'), 'and the weight column names its unit');
+
+section('"do this next" is one tap from the session list');
+// the Now screen shows only the current block, so the exercise you want to pull
+// forward is reached from the Session tab -- which is where its menu lives
+const pgCarry = store.state.active.entries[1];
+await store.setCurrent(0);
+await click('#tabBar .tab[data-tab="session"]');
+ok($(`[data-action="entry-menu"][data-entry="${pgCarry.id}"]`) !== null,
+  'every exercise in the list has its menu');
+await click(`[data-action="entry-menu"][data-entry="${pgCarry.id}"]`);
+ok($('[data-action="entry-next-up"]') !== null, 'the menu offers "Do this next"');
+await click('[data-action="entry-next-up"]');
+await sleep(60);
+ok(store.state.active.entries.map((e) => e.name).join(',') === 'Plank,Farmer Carry',
+  `the carry sits behind the current exercise (${store.state.active.entries.map((e) => e.name).join(',')})`);
+ok(store.state.active.entries[store.state.active.currentIdx].name === 'Plank',
+  'and you have not been moved off what you were doing');
+
+section('the exercise form explains each measure where it is chosen');
+await click(`[data-action="entry-menu"][data-entry="${pgCarry.id}"]`);
+await click('[data-action="entry-edit"]');
+const mSel = $('#exMeasure');
+ok(mSel !== null && mSel.value === 'distance', `the form remembers the measure (${mSel?.value})`);
+ok($('#exAmountHdr').textContent === 'Dist (m)', `the grid column follows it (${$('#exAmountHdr').textContent})`);
+ok(/carries/i.test($('#exMeasureHint').textContent), 'with a hint naming real exercises');
+mSel.value = 'time';
+mSel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+await sleep(20);
+ok($('#exAmountHdr').textContent === 'Time (s)', 'switching measure relabels the column live');
+ok(/plank|hang/i.test($('#exMeasureHint').textContent), 'and swaps the hint');
+ok($('#exRows [data-stf="r"]').placeholder.includes('1:15'),
+  `the grid placeholder shows the accepted format (${$('#exRows [data-stf="r"]').placeholder})`);
+await click('[data-mclose]');
+
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
 section('a plan with no weight: manual entry, or bodyweight');
 await xi.importFromText(JSON.stringify({
   name: 'No Weight Check',
@@ -782,7 +925,8 @@ await store.setCurrent(1);
 await click('#tabBar .tab[data-tab="now"]');
 ok(/Pull-up/.test(view()), 'on the bodyweight exercise');
 ok(/bodyweight/.test(view()), 'the target line says so');
-ok($('.set-hdr').textContent.includes('Added'), 'the weight column is relabelled Added');
+ok($('.set-hdr').textContent.includes('+kg'),
+  `the weight column reads as ADDED load, with its unit (${$('.set-hdr').textContent.trim().replace(/\s+/g, ' ')})`);
 ok($('.set-row input[data-f="weight"]').placeholder === 'BW', 'and the field hints BW');
 ok($('[data-action="set-confirm"]') !== null, 'confirm is offered with no weight entered');
 ok(/BW . 8/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),

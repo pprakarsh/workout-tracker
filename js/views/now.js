@@ -72,6 +72,7 @@ export function render() {
 function headerCard(s) {
   const { done, total } = sessionProgress(s);
   const mins = fmtDur((Date.now() - s.startedAt) / 1000);
+  const pct = total ? Math.round((done / total) * 100) : 0;
   return `
     <div class="card flat" style="margin-bottom:12px">
       <div class="row">
@@ -80,6 +81,10 @@ function headerCard(s) {
           <div class="small dim">${done}/${total} done · ${esc(mins)} elapsed${s.modified ? ' · modified today' : ''}</div>
         </div>
         <button type="button" class="btn sm ghost" data-action="go-session">Session ☰</button>
+      </div>
+      <div class="progress" role="progressbar" aria-valuenow="${done}" aria-valuemin="0"
+           aria-valuemax="${total}" aria-label="${done} of ${total} exercises done">
+        <div class="bar${done && done === total ? ' full' : ''}" style="width:${pct}%"></div>
       </div>
     </div>`;
 }

@@ -9,13 +9,15 @@ import { setLabels } from './model.js';
 import {
   isIntervals, patternText, paceOf, fmtPace, intervalSummary, totalsText,
 } from './cardio.js';
-import { fmtNum, fmtReps, fmtClock, fmtDur } from './util.js';
+import { fmtNum, fmtClock, fmtDur } from './util.js';
+import { fmtAmount, fmtAmountRange, measureOf } from './measure.js';
 
-/** "60×10 · 70×8 · 80×5-6" for a per-set plan. */
+/** "60×10 · 70×8 · 80×5-6" for a per-set plan, or "×45s" for a timed one. */
 export function planLine(e) {
   if (!e.setTargets) return '';
+  const m = e.measure || 'reps';
   return e.setTargets
-    .map((t) => `${t.weight !== null ? fmtNum(t.weight) : ''}×${fmtReps(t.repsMin, t.repsMax) || '?'}`)
+    .map((t) => `${t.weight !== null ? fmtNum(t.weight) : ''}×${fmtAmountRange(t.repsMin, t.repsMax, m) || '?'}`)
     .join(' · ');
 }
 
@@ -26,7 +28,7 @@ export function targetLine(e) {
     if (e.setTargets) {
       bits.push(`${e.setTargets.length} sets: ${planLine(e)} ${e.unit || state.settings.unit}`);
     } else {
-      const reps = fmtReps(e.repsMin, e.repsMax);
+      const reps = fmtAmountRange(e.repsMin, e.repsMax, e.measure);
       const sets = e.targetSets ? `${fmtNum(e.targetSets)} ×` : '';
       if (sets || reps) bits.push(`${sets} ${reps || '?'}`.trim());
       if (e.bodyweight) {
@@ -112,9 +114,12 @@ export function logSummary(e, { workingOnly = false } = {}) {
   // intent, not history -- showing it would report the plan as if it happened.
   const sets = (e.sets || []).filter((s) => s.done && !(workingOnly && s.warmup));
   if (!sets.length) return '';
+  const m = e.measure || 'reps';
   return sets.map((s) => {
-    const r = s.reps !== null ? fmtNum(s.reps) : '—';
-    return `${s.warmup ? 'W ' : ''}${loadLabel(s)}×${r}${effortTag(s)}`;
+    const r = s.reps !== null ? fmtAmount(s.reps, m) : '—';
+    // a timed or carried set with no load reads "45s", not "—×45s"
+    const load = loadLabel(s);
+    return `${s.warmup ? 'W ' : ''}${load === '—' && m !== 'reps' ? '' : `${load}×`}${r}${effortTag(s)}`;
   }).join('  ');
 }
 

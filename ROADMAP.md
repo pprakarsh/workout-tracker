@@ -23,6 +23,11 @@ plate calculator is offered, and whether your history becomes more than a list.
 | RPE and RIR per set | Stored independently, never converted |
 | ± stepper on weight and reps | Keeps focus, no re-render |
 | Cardio: a run is time + pace + distance, any two | The third is derived; duration is the anchor |
+| Holds and carries — `measure: time` / `distance` | A plank is a lift measured in seconds, not a cardio entry |
+| Session progress bar | Entry completion, in the Now header |
+| "Do this next" | Moves a whole block behind the current one, from the session list |
+| Tap-driven interval builder | Steppers, presets and a live preview; typing is the fallback |
+| Units on every column, formats in every placeholder | A unit you can still see once a value is typed |
 | Cardio intervals as one `pattern`, logged in one tap | `1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6`; any round still editable |
 | Exercise library | Derived from all routines and sessions |
 | Editing finished sessions, including the date | Same UI as the live session |
@@ -52,6 +57,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | **Search and filter in History** | Only matters past a few hundred sessions | S | — |
 | **Distance-based interval legs** | `400m @ 4:00/km` instead of a time. Legs are timed today, which covers treadmill work; this is for track sessions | S | `parseLeg` must disambiguate `400m` from 400 minutes |
 | **Rest as an interval leg** | A rest leg is timed by the clock rather than planned | S | Would let the block drive the rest timer |
+| **Hold/carry PRs** | Longest plank, furthest carry at a load | S | Needs `measure` awareness in whatever PR code gets written |
 | **Import from Strong / Hevy CSV** | Only if you migrate from another app | M | — |
 | **Per-record sync with tombstones** | Real merge instead of last-write-wins | L | Do this when you start logging on two devices in the same week |
 | **Program / week structure** — which routine is due today | Mild value for a fixed weekly split | M | Resist turning into a periodisation engine |

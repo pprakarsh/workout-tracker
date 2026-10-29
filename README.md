@@ -257,6 +257,7 @@ on each exercise.
 | `sets` | lift | A **number** for one target across all sets, or a **list** for a per-set plan (see below). |
 | `reps` | lift | `"5"`, `"6-8"`, or a number. Ranges are kept as a range. Ignored when `sets` is a per-set plan. |
 | `weight` | lift | Target load, in your configured unit. Ignored when `sets` is a per-set plan. |
+| `measure` | lift | What each set is counted in: `reps` (default), `time` (seconds — planks, hangs) or `distance` (metres — loaded carries). See below. |
 | `distance`, `distanceUnit` | cardio | `km` or `mi`. |
 | `duration` | cardio | `"28:30"`, `"1:05:00"`, `"28m"`, `"90s"`. A bare number means **minutes**. |
 | `pace` | cardio | `"6:00"`, `"6:00/km"`, `"6 min/km"`. A bare number means **minutes per unit**, so `6` is 6:00/km. |
@@ -295,6 +296,28 @@ Things worth knowing:
 A routine holds **targets** only. Heart rate, elevation and perceived effort have no target
 fields — you record those while logging. Warmup sets and RIR are likewise recorded while logging;
 describe intended warmups in `notes`.
+
+### Holds and carries: `measure`
+
+A plank is not cardio. It has sets, rest, warmups and an RPE like any other strength movement —
+the only difference is that the number per set is **seconds** rather than reps. Same for a farmer
+carry, where the number is **metres**. So this is one field on an ordinary lift entry:
+
+| `measure` | The per-set number means | Example |
+|---|---|---|
+| `reps` (default) | repetitions | `{ "name": "Squat", "sets": 5, "reps": "5", "weight": 100 }` |
+| `time` | **seconds** | `{ "name": "Plank", "measure": "time", "sets": 3, "reps": "45" }` |
+| `distance` | **metres** | `{ "name": "Farmer Carry", "measure": "distance", "sets": 3, "reps": 40, "weight": 24 }` |
+
+Everything else behaves identically. A target can be a range (`"reps": "30-45"` is a 30–45 second
+hold), a per-set plan works (`"sets": [{"reps":40},{"reps":30},{"reps":20}]` is a descending set of
+holds), `weight` is the load you held or carried, and `0:45` is accepted anywhere `45` is. The app
+labels the column `Time (s)` or `Dist (m)` while you log, and the ± stepper moves in 5s or 5m
+instead of 1 rep.
+
+Two things a timed or carried entry does **not** do: it contributes nothing to the tonnage figure
+(weight × seconds is not a meaningful total), and it does not need a weight to be logged — a
+bodyweight plank ticks with just its time.
 
 A cardio entry is **either** one straight run **or** one interval block.
 

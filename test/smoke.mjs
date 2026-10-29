@@ -837,6 +837,113 @@ ok(bare.entries[0].rest === 90 && bare.entries[1].rest === 90,
 await store.deleteRoutine(bare.id);
 
 section('the copied prompt really contains both JSON examples, in situ');
+section('holds and carries are lifts measured in seconds or metres');
+const hr = await store.createRoutine({
+  name: 'Core Block',
+  entries: [
+    { name: 'Plank', measure: 'time', sets: 3, reps: '45', rest: '1:00' },
+    { name: 'Dead Hang', measure: 'time', sets: 2, reps: '30-45' },
+    { name: 'Farmer Carry', measure: 'distance', sets: 3, reps: 40, weight: 24 },
+    { name: 'Squat', sets: 3, reps: 5, weight: 100 },
+  ],
+});
+const hs = await store.startSession(hr.id);
+const [hPlank, hHang, hCarry, hSquat] = hs.entries;
+ok(hPlank.type === 'lift' && hPlank.measure === 'time', 'a plank is a LIFT, not cardio');
+ok(hPlank.sets.length === 3, `its sets are pre-materialised like any lift (${hPlank.sets.length})`);
+ok(hPlank.sets[0].reps === 45, 'each pre-filled with the planned 45 seconds');
+ok(fmt.targetLine(hPlank).includes('45s'), `the target reads in seconds (${fmt.targetLine(hPlank)})`);
+ok(fmt.targetLine(hHang).includes('30-45s'), `a range reads as a range (${fmt.targetLine(hHang)})`);
+ok(fmt.targetLine(hCarry).includes('40 m'), `a carry reads in metres (${fmt.targetLine(hCarry)})`);
+ok(fmt.targetLine(hSquat) === '3 × 5 · @ 100 kg', `a normal lift is unchanged (${fmt.targetLine(hSquat)})`);
+
+section('a hold needs no weight to be logged');
+ok(store.setIsLoggable(hPlank.sets[0], 'time') === true, 'a plank with a time but no load is loggable');
+ok(store.setIsLoggable(hSquat.sets[0], 'reps') === true, 'a squat with both is loggable');
+await store.updateSet(hSquat.id, hSquat.sets[0].id, { weight: null });
+ok(store.setIsLoggable(hSquat.sets[0], 'reps') === false, 'but a rep set still demands a load');
+await store.updateSet(hSquat.id, hSquat.sets[0].id, { weight: 100 });
+
+section('logging a hold, and what it reads as');
+await store.toggleSetDone(hPlank.id, hPlank.sets[0].id);
+await store.updateSet(hPlank.id, hPlank.sets[1].id, { reps: 62 });
+await store.toggleSetDone(hPlank.id, hPlank.sets[1].id);
+ok(fmt.logSummary(hPlank) === '45s  1:02', `times, not reps, and past a minute as a clock (${fmt.logSummary(hPlank)})`);
+await store.updateSet(hCarry.id, hCarry.sets[0].id, { weight: 24, reps: 40 });
+await store.toggleSetDone(hCarry.id, hCarry.sets[0].id);
+ok(fmt.logSummary(hCarry) === '24kg×40 m', `a carry reads load by distance (${fmt.logSummary(hCarry)})`);
+
+section('weight x seconds is not tonnage');
+await store.toggleSetDone(hSquat.id, hSquat.sets[0].id);
+ok(store.sessionVolume(hs) === 500,
+  `only the squat's 100x5 counts towards volume (${store.sessionVolume(hs)})`);
+
+section('the amount lands in the CSV column that matches its unit');
+const hCsv = xi.csvRows([hs]).split('\n');
+const hHead = hCsv[0].split(',');
+const col = (row, name) => row.split(',')[hHead.indexOf(name)];
+const plankRow = hCsv.find((r) => r.includes('Plank'));
+ok(col(plankRow, 'measure') === 'time', 'the row says how it was measured');
+ok(col(plankRow, 'duration_seconds') === '45' && col(plankRow, 'reps') === '',
+  `45 seconds goes to duration_seconds, not reps (${col(plankRow, 'duration_seconds')}/"${col(plankRow, 'reps')}")`);
+const carryRow = hCsv.find((r) => r.includes('Farmer Carry'));
+ok(col(carryRow, 'distance') === '40' && col(carryRow, 'distance_unit') === 'm',
+  `40 metres goes to the distance column (${col(carryRow, 'distance')} ${col(carryRow, 'distance_unit')})`);
+const squatRow = hCsv.find((r) => r.includes('Squat'));
+ok(col(squatRow, 'reps') === '5' && col(squatRow, 'measure') === 'reps',
+  'and a normal set still fills the reps column');
+
+section('"do this next" brings a block forward in one move');
+ok(hs.currentIdx === 0, 'working on the first exercise');
+ok(await store.moveEntryNext(hCarry.id) === true, 'the carry can jump the queue');
+ok(hs.entries.map((e) => e.name).join(',') === 'Plank,Farmer Carry,Dead Hang,Squat',
+  `it lands directly after the current one (${hs.entries.map((e) => e.name).join(',')})`);
+ok(hs.entries[hs.currentIdx].name === 'Plank', 'without moving you off what you are doing');
+ok(await store.moveEntryNext(hPlank.id) === false, 'asking for the current block is a no-op');
+ok(hs.modified === true, 'and the session is marked as diverging from its routine');
+
+section('a superset moves as a whole block');
+await store.discardSession();
+const sr = await store.createRoutine({
+  name: 'Block Move',
+  entries: [
+    { name: 'Lead', sets: 1, reps: 5 },
+    { name: 'A1', group: 'A', sets: 1, reps: 5 },
+    { name: 'A2', group: 'A', sets: 1, reps: 5 },
+    { name: 'Tail', sets: 1, reps: 5 },
+  ],
+});
+const ss = await store.startSession(sr.id);
+await store.moveEntryNext(ss.entries.find((e) => e.name === 'A1').id);
+ok(ss.entries.map((e) => e.name).join(',') === 'Lead,A1,A2,Tail',
+  `both halves of the superset travel together (${ss.entries.map((e) => e.name).join(',')})`);
+await store.setCurrent(ss.entries.findIndex((e) => e.name === 'Tail'));
+await store.moveEntryNext(ss.entries.find((e) => e.name === 'A1').id);
+ok(ss.entries.map((e) => e.name).join(',') === 'Lead,Tail,A1,A2',
+  `and stay adjacent after the move (${ss.entries.map((e) => e.name).join(',')})`);
+await store.discardSession();
+await store.deleteRoutine(sr.id);
+await store.deleteRoutine(hr.id);
+
+section('every JSON sample the app shows must be valid and importable');
+// A sample is pasted straight into the Import box, so an invalid escape in one
+// is a broken feature, not a typo. One slipped through as `\"measure\"` inside a
+// template literal, which produced unescaped quotes in the JSON.
+for (const name of ['SAMPLE', 'SAMPLE_RUN', 'SAMPLE_HOLDS']) {
+  const text = routinesView[name];
+  ok(typeof text === 'string' && text.trim().startsWith('{'), `${name} is exported as a JSON string`);
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch (err) { parsed = err.message; }
+  ok(typeof parsed === 'object' && parsed !== null,
+    `${name} is valid JSON${typeof parsed === 'string' ? ` — ${parsed.slice(0, 60)}` : ''}`);
+  if (typeof parsed !== 'object' || !parsed) continue;
+  const norm = store.normalizeRoutine(parsed);
+  ok(norm.entries.length === parsed.entries.length,
+    `${name} imports every one of its ${parsed.entries.length} entries`);
+  ok(norm.entries.every((x) => x.name && x.name !== 'Exercise'),
+    `${name} has a real name on every entry`);
+}
+
 const promptText = routinesView.AI_PROMPT;
 const between = (startMark, endMark) => {
   const a = promptText.indexOf(startMark);
@@ -844,16 +951,33 @@ const between = (startMark, endMark) => {
   return promptText.slice(a + startMark.length, b === -1 ? promptText.length : b);
 };
 const ex1Raw = between('running + upper body ================', '================ WORKED EXAMPLE 2');
-const ex2Raw = between('superset + per-set plan ================', '================ CHECKLIST');
-let ex1 = null; let ex2 = null;
+const ex2Raw = between('superset + per-set plan ================', '================ WORKED EXAMPLE 3');
+const ex3Raw = between('the "measure" field) ================', '================ CHECKLIST');
+let ex1 = null; let ex2 = null; let ex3 = null;
 try { ex1 = JSON.parse(ex1Raw.trim()); } catch (e) { /* reported below */ }
 try { ex2 = JSON.parse(ex2Raw.trim()); } catch (e) { /* reported below */ }
+try { ex3 = JSON.parse(ex3Raw.trim()); } catch (e) { /* reported below */ }
 ok(ex1 !== null, 'example 1 inside the prompt is parseable JSON on its own');
 ok(ex2 !== null, 'example 2 inside the prompt is parseable JSON on its own');
 ok(ex1?.name === 'Run with Upper Body' && ex1?.entries?.length === 5,
   `example 1 is the full running routine (${ex1?.entries?.length} entries)`);
 ok(ex2?.name === 'Squat day with Push Movements' && ex2?.entries?.length === 5,
   `example 2 is the full lifting routine (${ex2?.entries?.length} entries)`);
+// the prompt must teach holds and carries, or an LLM reaches for a cardio entry
+ok(ex3 !== null, 'example 3 inside the prompt is parseable JSON on its own');
+ok(ex3?.name === 'Core and Carries', `example 3 is the holds routine (${ex3?.entries?.length} entries)`);
+const ex3n = store.normalizeRoutine(ex3);
+const plank = ex3n.entries.find((e) => e.name === 'Plank');
+const hang = ex3n.entries.find((e) => e.name === 'Dead Hang');
+const wplank = ex3n.entries.find((e) => e.name === 'Weighted Plank');
+const carry = ex3n.entries.find((e) => e.name === 'Farmer Carry');
+ok(plank?.type === 'lift' && plank.measure === 'time' && plank.repsMin === 45,
+  `the plank imports as a timed LIFT of 45s (${plank?.measure}, ${plank?.repsMin}s)`);
+ok(hang?.repsMin === 30 && hang.repsMax === 45, `a hold target can be a range (${hang?.repsMin}-${hang?.repsMax}s)`);
+ok(wplank?.setTargets?.length === 3 && wplank.setTargets[0].repsMin === 40,
+  'a per-set plan in seconds works like any other');
+ok(carry?.measure === 'distance' && carry.repsMin === 40 && carry.weight === 24,
+  `the carry imports as 40 m at 24 kg (${carry?.repsMin} m, ${carry?.weight} kg)`);
 ok(ex1.entries.some((e) => e.type === 'cardio' && e.rest)
   && ex1.entries.some((e) => e.pattern?.includes('x 6')),
   'example 1 still carries cardio rest and the interval pattern after being embedded');
@@ -943,7 +1067,7 @@ const header = wCsv.split('\n')[0].split(',');
 ok(header[0] === 'date' && header[8] === 'weight' && header[11] === 'rpe'
   && header[24] === 'session_notes',
   'existing CSV column positions unchanged');
-ok(header.slice(25).join(',') === 'rir,warmup,set_label,interval_rep,interval_of,leg_label,leg_index,pace_seconds',
+ok(header.slice(25).join(',') === 'rir,warmup,set_label,interval_rep,interval_of,leg_label,leg_index,pace_seconds,measure',
   `new CSV columns appended after the old ones (${header.slice(25).join(',')})`);
 const rows = wCsv.trim().split('\n').slice(1).map((l) => l.split(','));
 const warmCol = header.indexOf('warmup');
