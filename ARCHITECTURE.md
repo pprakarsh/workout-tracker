@@ -212,9 +212,16 @@ Invariants worth knowing:
   second action. `doneAt` is a manual override for the one case history cannot know about — you
   trained without the app. `dayStatus` decides this, and also reports `swapped` when you logged a
   different routine that day rather than calling the day missed.
-- The plan is a **blob in `meta`**, keyed by local ISO date, not its own object store: ten records
-  do not justify a database version bump, and it rides along in `backupObject` the way `settings`
-  does. Local date, not UTC — "today" has to mean the day you are living in.
+- The plan is a **blob in `meta`**, keyed by local ISO date, not its own object store: a few dozen
+  records do not justify a database version bump, and it rides along in `backupObject` the way
+  `settings` does. Local date, not UTC — "today" has to mean the day you are living in.
+- **The Plan tab shows two windows, and a row means something different in each.** `planWindow` is
+  today plus nine days, oldest first; `pastWindow` is the seven days behind, most recent first (the
+  direction History reads). The past section renders *below* the plan so opening the tab still puts
+  today at the top, and the renderer takes a `past` flag because the questions differ: a future row
+  asks "what am I doing?" and offers *Plan a routine* and *Start*; a past row asks "did I do it?",
+  cannot be planned, and shows what was actually logged — including an unplanned session, which
+  `pastSummary` counts as a day trained, since a review that ignored it would misreport the week.
 - **Progress is multi-dimensional, so no single number is "progress".** 100x5 to 105x3 raises the
   top set and lowers volume; 100x8 to 95x10 lowers the top set and raises both volume and estimated
   strength. Every series in `trends.js` therefore keeps the raw sets beside the summary, and the

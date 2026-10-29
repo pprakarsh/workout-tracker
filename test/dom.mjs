@@ -58,6 +58,7 @@ async function type(sel, value) {
 const store = await import(`${APP}/js/store.js`);
 const cardio = await import(`${APP}/js/cardio.js`);
 const planLib = await import(`${APP}/js/plan.js`);
+const planStore = await import(`${APP}/js/planstore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
 await import(`${APP}/js/app.js`);   // boots itself
@@ -1125,10 +1126,23 @@ await xi.importFromText(JSON.stringify({
 }));
 await sleep(60);
 await click('#tabBar .tab[data-tab="plan"]');
-ok($$('.pd-row').length === 10, `ten day rows (${$$('.pd-row').length})`);
-ok($$('.pd-row')[0].textContent.includes('Today'), 'the first row is today');
+ok($$('.pd-row').length === 17, `ten days ahead plus seven behind (${$$('.pd-row').length})`);
+ok($$('.pd-row:not(.is-past)').length === 10, 'ten of them are the plan');
+ok($$('.pd-row.is-past').length === 7, 'and seven are the week behind');
+ok($$('.pd-row')[0].textContent.includes('Today'), 'the FIRST row is today, not a week ago');
 ok($$('.pd-row')[1].textContent.includes('Tomorrow'), 'then tomorrow');
 ok($$('.pd-row')[0].classList.contains('is-today'), 'today is marked');
+ok(view().includes('Previous 7 days'), 'the week behind has its own heading, below the plan');
+const firstPast = $('.pd-row.is-past');
+ok(firstPast.textContent.includes('Yesterday'), 'which starts at yesterday');
+ok($$('.pd-row.is-past')[6].dataset.planRow === planLib.dayKey(planLib.addDays(Date.now(), -7)),
+  'and the last of them is seven days back');
+ok(firstPast.querySelector('[data-action="plan-pick"]') === null,
+  'a past day offers no "plan a routine" — yesterday cannot be planned');
+ok(firstPast.textContent.includes('nothing logged'), 'it says plainly that nothing was logged');
+ok(firstPast.querySelector('[data-action="plan-menu"]') !== null,
+  'but its menu is there, so a workout the app never saw can still be ticked');
+ok(/Last 7 days/.test(view()), 'and the header summarises the week behind');
 ok(view().includes('0 planned'), 'nothing planned yet');
 ok($$('[data-action="plan-pick"]').length === 10, 'every empty day invites a routine');
 
@@ -1166,6 +1180,45 @@ await sleep(60);
 const dayAfter = planLib.dayKey(planLib.addDays(Date.now(), 2));
 ok(!store.state.plan[tomorrowKey] && store.state.plan[dayAfter]?.routineId,
   'it moved a day later and left the old day empty');
+
+section('a finished workout shows up in the week behind, on its own day');
+// a session dated yesterday, as if logged then
+const yKey = planLib.dayKey(planLib.addDays(Date.now(), -1));
+const ySess = {
+  id: 'w_yesterday', routineId: pgR ? pgR.id : null, routineName: 'Plan Day A', unit: 'kg',
+  startedAt: planLib.keyToTs(yKey), finishedAt: planLib.keyToTs(yKey) + 3600000,
+  updatedAt: planLib.keyToTs(yKey) + 3600000, entries: [], currentIdx: 0,
+  rpe: null, bodyweight: null, notes: '', modified: false,
+};
+store.state.sessions.unshift(ySess);
+store.emit();
+await sleep(50);
+const yRow = [...$$('.pd-row.is-past')].find((r) => r.dataset.planRow === yKey);
+ok(yRow.textContent.includes('Plan Day A'), 'the row names what was logged');
+ok(yRow.textContent.includes('not planned'), 'and says it was not planned, since it was not');
+ok(yRow.classList.contains('done'), 'it reads as done');
+ok(yRow.querySelector('[data-action="plan-open"]') !== null, 'with a link to the workout');
+const backLine = [...$$('.card.flat .small.dim')].map((d) => d.textContent.replace(/\s+/g, ' '))
+  .find((t) => t.includes('Last 7 days')) || '';
+ok(/Last 7 days: 1 trained/.test(backLine),
+  `and the header counts it, planned or not (${backLine.trim()})`);
+
+section('a planned day that came and went reads as missed');
+await planStore.setPlanDay(planLib.dayKey(planLib.addDays(Date.now(), -3)), { routineId: pgR.id });
+await sleep(50);
+const mKey = planLib.dayKey(planLib.addDays(Date.now(), -3));
+const mRow = [...$$('.pd-row.is-past')].find((r) => r.dataset.planRow === mKey);
+ok(mRow.classList.contains('missed'), 'the row is marked missed');
+ok(mRow.textContent.includes('missed'), 'and says so');
+ok(mRow.querySelector('[data-action="plan-start"]') === null, 'with no Start button on a past day');
+await click(`[data-action="plan-menu"][data-key="${mKey}"]`);
+await click('#modalRoot [data-action="plan-done"]');
+await sleep(50);
+const mRow2 = [...$$('.pd-row.is-past')].find((r) => r.dataset.planRow === mKey);
+ok(mRow2.classList.contains('done'), 'ticking it by hand closes it off');
+ok(mRow2.textContent.includes('by hand'), 'and the row admits it was manual');
+store.state.sessions = store.state.sessions.filter((x) => x.id !== 'w_yesterday');
+await planStore.clearPlanDay(mKey);
 
 section('starting from the plan begins the workout and lands on Now');
 await click('[data-action="plan-start"]');

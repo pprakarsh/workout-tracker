@@ -260,6 +260,10 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 .pd-row.done{border-color:rgba(60,200,120,.35)}
 .pd-row.missed{border-color:rgba(255,176,32,.3)}
 .pd-row.rest{opacity:.72}
+/* the week behind is reference, not instruction: present but recessive */
+.pd-row.is-past{background:transparent}
+.pd-row.is-past .pd-day,.pd-row.is-past .pd-date{color:var(--fg3)}
+.pd-row.is-past.open{opacity:.6}
 .pd-when{text-align:center}
 .pd-day{font-size:12.5px;font-weight:700;line-height:1.25}
 .pd-row.is-today .pd-day{color:var(--accent)}

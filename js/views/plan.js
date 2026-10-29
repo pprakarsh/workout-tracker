@@ -11,7 +11,7 @@ import {
   setPlanDay, clearPlanDay, togglePlanDone, movePlanDay,
 } from '../planstore.js';
 import {
-  planWindow, planSummary, keyToTs, dayKey, addDays, PLAN_DAYS,
+  planWindow, pastWindow, planSummary, pastSummary, keyToTs, dayKey, addDays, PLAN_DAYS,
 } from '../plan.js';
 import { lastSessionForRoutine } from '../queries.js';
 import { esc, fmtDate, fmtDur } from '../util.js';
@@ -25,6 +25,7 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function dayLabel(ts, offset) {
   if (offset === 0) return 'Today';
   if (offset === 1) return 'Tomorrow';
+  if (offset === -1) return 'Yesterday';
   const d = new Date(ts);
   return `${DAYS[d.getDay()]} ${d.getDate()}`;
 }
@@ -39,30 +40,40 @@ const PILL = {
   upcoming: '',
 };
 
-function dayRow(day) {
+function dayRow(day, { past = false } = {}) {
   const { key, ts, entry, status } = day;
   const r = entry.routineId ? getRoutine(entry.routineId) : null;
   const gone = entry.routineId && !r;      // the routine was deleted since
   const label = dayLabel(ts, status.offset);
   const isToday = status.offset === 0;
+  const sess = status.session;
 
   const body = () => {
     if (entry.rest) return '<div class="pd-rest">Rest day</div>';
     if (gone) return '<div class="pd-name dim">routine no longer exists</div>';
     if (!r) {
+      // Yesterday cannot be planned. A past day with nothing on it either shows
+      // what you actually did, or says plainly that nothing was logged.
+      if (past) {
+        return sess
+          ? `<div class="pd-name">${esc(sess.routineName)}</div>
+             <div class="pd-sub dim">not planned &mdash; logged anyway</div>`
+          : '<div class="pd-rest dim">nothing logged</div>';
+      }
       return `<button type="button" class="pd-add" data-action="plan-pick" data-key="${key}">
         + Plan a routine</button>`;
     }
     const last = lastSessionForRoutine(r.id);
     return `
       <div class="pd-name">${esc(r.name)}</div>
-      <div class="pd-sub">${r.entries.length} exercise${r.entries.length === 1 ? '' : 's'}${
-  last ? ` · last done ${esc(fmtDate(last.startedAt)).slice(0, 10)}` : ' · never done'}</div>
+      <div class="pd-sub">${past ? `${r.entries.length} exercise${r.entries.length === 1 ? '' : 's'} planned`
+    : `${r.entries.length} exercise${r.entries.length === 1 ? '' : 's'}${
+      last ? ` · last done ${esc(fmtDate(last.startedAt)).slice(0, 10)}` : ' · never done'}`}</div>
       ${entry.note ? `<div class="pd-note">${esc(entry.note)}</div>` : ''}`;
   };
 
   return `
-    <div class="pd-row ${status.state}${isToday ? ' is-today' : ''}" data-plan-row="${key}">
+    <div class="pd-row ${status.state}${isToday ? ' is-today' : ''}${past ? ' is-past' : ''}" data-plan-row="${key}">
       <div class="pd-when">
         <div class="pd-day">${esc(label)}</div>
         <div class="pd-date">${esc(fmtDate(ts).slice(4))}</div>
@@ -70,18 +81,18 @@ function dayRow(day) {
       <div class="pd-main">
         ${body()}
         ${PILL[status.state] || ''}
-        ${status.state === 'swapped' && status.session
-    ? `<div class="pd-sub dim">logged: ${esc(status.session.routineName)}</div>` : ''}
+        ${status.state === 'swapped' && sess
+    ? `<div class="pd-sub dim">logged: ${esc(sess.routineName)}</div>` : ''}
         ${status.state === 'done' && status.manual ? '<div class="pd-sub dim">ticked by hand</div>' : ''}
-        ${status.state === 'done' && status.session
-    ? `<div class="pd-sub dim">${esc(fmtDur((status.session.finishedAt - status.session.startedAt) / 1000))} · ${status.session.entries.length} exercises</div>` : ''}
+        ${status.state === 'done' && sess
+    ? `<div class="pd-sub dim">${esc(fmtDur((sess.finishedAt - sess.startedAt) / 1000))} · ${sess.entries.length} exercises</div>` : ''}
       </div>
       <div class="pd-acts">
         ${r && isToday && !state.active && status.state !== 'done'
     ? `<button type="button" class="btn sm primary" data-action="plan-start" data-key="${key}">Start</button>` : ''}
-        ${status.session
-    ? `<button type="button" class="btn icon ghost" title="Open this workout" data-action="plan-open" data-id="${status.session.id}">↗</button>` : ''}
-        ${entry.routineId || entry.rest
+        ${sess
+    ? `<button type="button" class="btn icon ghost" title="Open this workout" data-action="plan-open" data-id="${sess.id}">↗</button>` : ''}
+        ${entry.routineId || entry.rest || past
     ? `<button type="button" class="btn icon ghost" title="Day options" data-action="plan-menu" data-key="${key}">⋯</button>`
     : `<button type="button" class="btn icon ghost" title="Mark as a rest day" data-action="plan-rest" data-key="${key}">z</button>`}
       </div>
@@ -90,7 +101,9 @@ function dayRow(day) {
 
 export function render() {
   const win = planWindow(state.plan, state.sessions);
+  const past = pastWindow(state.plan, state.sessions);
   const { planned, done, rest, open } = planSummary(win);
+  const back = pastSummary(past);
   const pct = planned ? Math.round((done / planned) * 100) : 0;
 
   return `
@@ -106,14 +119,19 @@ export function render() {
            aria-valuemax="${planned}" aria-label="${done} of ${planned} planned workouts done">
         <div class="bar${planned && done === planned ? ' full' : ''}" style="width:${pct}%"></div>
       </div>
+      <div class="small dim" style="margin-top:8px">Last ${back.days} days:
+        <b>${back.trained} trained</b>${back.missed ? ` · ${back.missed} missed` : ''}${back.rest ? ` · ${back.rest} rest` : ''}</div>
     </div>
 
-    <div class="pd-list">${win.map(dayRow).join('')}</div>
+    <div class="pd-list">${win.map((d) => dayRow(d)).join('')}</div>
+
+    <h2>Previous ${back.days} days</h2>
+    <div class="pd-list">${past.map((d) => dayRow(d, { past: true })).join('')}</div>
 
     <p class="hint">A day ticks itself when you finish that routine on it &mdash; the plan reads your
       history, so there is nothing to mark twice. Use <b>&#8226;&#8226;&#8226; &rarr; Mark done</b>
-      only for a workout the app never saw. Days roll forward automatically: this list always starts
-      today.</p>`;
+      only for a workout the app never saw. Days roll forward automatically: the plan always starts
+      today, and the week behind it always ends yesterday.</p>`;
 }
 
 /* ------------------------------------------------------------------ */

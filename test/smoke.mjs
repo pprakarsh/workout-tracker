@@ -1272,6 +1272,54 @@ ok(win0.length === 10, `the window is ten days (${win0.length})`);
 ok(win0[0].key === '2026-10-29' && win0[9].key === '2026-11-07', `today first (${win0[0].key}) then nine more (${win0[9].key})`);
 ok(win0.every((d) => d.status.state === 'open'), 'an empty plan is all open days');
 
+section('the week behind, most recent first');
+const past0 = planLib.pastWindow({}, [], T0);
+ok(past0.length === 7, `seven days (${past0.length})`);
+ok(past0[0].key === k(-1) && past0[6].key === k(-7),
+  `yesterday first, a week ago last (${past0[0].key} .. ${past0[6].key})`);
+ok(past0.every((d) => d.status.offset < 0), 'all of them are in the past');
+ok(planLib.planWindow({}, [], T0).every((d) => d.status.offset >= 0),
+  'and the plan window holds none of them');
+const bothKeys = new Set([...past0, ...planLib.planWindow({}, [], T0)].map((d) => d.key));
+ok(bothKeys.size === 17, `the two windows never overlap (${bothKeys.size} distinct days)`);
+
+section('what the week behind came to');
+const pastPlan = {
+  [k(-1)]: { routineId: 'r_a', rest: false, doneAt: null, note: '' },
+  [k(-2)]: { routineId: 'r_a', rest: false, doneAt: null, note: '' },
+  [k(-3)]: { routineId: null, rest: true, doneAt: null, note: '' },
+};
+const pastSess = [{
+  id: 'w_p1', routineId: 'r_a', routineName: 'A', entries: [],
+  startedAt: planLib.keyToTs(k(-1)), finishedAt: planLib.keyToTs(k(-1)) + 3600000,
+}, {
+  // an UNPLANNED session: still training, and a review that ignored it would lie
+  id: 'w_p2', routineId: 'r_z', routineName: 'Z', entries: [],
+  startedAt: planLib.keyToTs(k(-5)), finishedAt: planLib.keyToTs(k(-5)) + 3600000,
+}];
+const pastRows = planLib.pastWindow(pastPlan, pastSess, T0);
+const ps = planLib.pastSummary(pastRows);
+ok(pastRows[0].status.state === 'done', 'the planned day you did reads done');
+ok(pastRows[1].status.state === 'missed', 'the planned day you skipped reads missed');
+ok(pastRows[2].status.state === 'rest', 'the rest day reads rest');
+ok(pastRows[4].status.state === 'done' && pastRows[4].status.session.routineName === 'Z',
+  'an unplanned session still reads as a day you trained');
+ok(ps.trained === 2 && ps.missed === 1 && ps.rest === 1,
+  `counted up: ${ps.trained} trained, ${ps.missed} missed, ${ps.rest} rest`);
+ok(ps.days === 7, 'over seven days');
+
+section('a past day that was planned but swapped names what you did instead');
+const swapped = planLib.pastWindow(
+  { [k(-2)]: { routineId: 'r_a', rest: false, doneAt: null, note: '' } },
+  [{
+    id: 'w_p3', routineId: 'r_other', routineName: 'Something Else', entries: [],
+    startedAt: planLib.keyToTs(k(-2)), finishedAt: planLib.keyToTs(k(-2)) + 1800000,
+  }], T0,
+);
+ok(swapped[1].status.state === 'swapped', 'it is not called missed');
+ok(swapped[1].status.session.routineName === 'Something Else', 'and the swap is named');
+ok(planLib.pastSummary(swapped).trained === 1, 'a swap counts as a day trained');
+
 section('a day means something only once a routine is on it');
 const planRoutine = await store.createRoutine({ name: 'Push Day', entries: [{ name: 'Bench', sets: 3, reps: 5, weight: 60 }] });
 await planStore.setPlanDay(k(0), { routineId: planRoutine.id });

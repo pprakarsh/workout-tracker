@@ -14,8 +14,10 @@
 // a partial session good enough.
 import { isoDate } from './util.js';
 
-/** How many days the plan shows. The ask was ten; it is the only reason for 10. */
+/** How many days ahead the plan shows. The ask was ten; it is the only reason for 10. */
 export const PLAN_DAYS = 10;
+/** And how many behind. Enough to review a training week without it becoming a log. */
+export const PAST_DAYS = 7;
 
 /** A fresh, empty day. `routineId: null` with `rest: false` means "not planned yet". */
 export const blankDay = () => ({ routineId: null, rest: false, doneAt: null, note: '' });
@@ -78,14 +80,31 @@ export function dayStatus(key, entry, sessions = [], now = Date.now()) {
 }
 
 /**
- * The window the view renders: today plus the next nine days. Past days are not
- * shown -- History owns the past, and a plan that keeps yesterday around turns
- * into a to-do list with guilt attached.
+ * Today plus the next nine days, oldest first -- the plan proper.
  */
 export function planWindow(plan = {}, sessions = [], now = Date.now(), days = PLAN_DAYS) {
   const out = [];
   for (let i = 0; i < days; i++) {
     const ts = addDays(now, i);
+    const key = dayKey(ts);
+    const entry = plan[key] || blankDay();
+    out.push({ key, ts, entry, status: dayStatus(key, entry, sessions, now) });
+  }
+  return out;
+}
+
+/**
+ * The seven days behind, MOST RECENT FIRST -- the same direction History reads.
+ *
+ * Shown below the plan rather than above it, so opening the tab still puts
+ * today at the top. A past row answers a different question from a future one
+ * ("did I do it?" rather than "what am I doing?"), which is why the view
+ * renders them with a `past` flag instead of reusing the row as-is.
+ */
+export function pastWindow(plan = {}, sessions = [], now = Date.now(), days = PAST_DAYS) {
+  const out = [];
+  for (let i = 1; i <= days; i++) {
+    const ts = addDays(now, -i);
     const key = dayKey(ts);
     const entry = plan[key] || blankDay();
     out.push({ key, ts, entry, status: dayStatus(key, entry, sessions, now) });
@@ -99,6 +118,18 @@ export function planSummary(window = []) {
   const done = window.filter((d) => d.status.state === 'done' && d.entry.routineId).length;
   const rest = window.filter((d) => d.status.state === 'rest').length;
   return { planned, done, rest, open: window.length - planned - rest };
+}
+
+/**
+ * What the week behind came to. `trained` counts every day something was
+ * logged, planned or not -- an unplanned session is still training, and a
+ * review that ignored it would be lying about the week.
+ */
+export function pastSummary(window = []) {
+  const trained = window.filter((d) => d.status.state === 'done' || d.status.state === 'swapped').length;
+  const missed = window.filter((d) => d.status.state === 'missed').length;
+  const rest = window.filter((d) => d.status.state === 'rest').length;
+  return { trained, missed, rest, days: window.length };
 }
 
 /** Drop days that are neither planned nor rest, and days long past. */
