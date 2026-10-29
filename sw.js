@@ -5,7 +5,7 @@
 // kept serving the old JS/CSS for one more load after an update, so a change
 // appeared not to have happened until you reloaded twice. Network-first costs a
 // round trip when online and still works fully offline.
-const CACHE = 'workout-v28';
+const CACHE = 'workout-v29';
 
 const ASSETS = [
   '.',
@@ -28,6 +28,7 @@ const ASSETS = [
   'js/measure.js',
   'js/queries.js',
   'js/sync.js',
+  'js/timefield.js',
   'js/trends.js',
   'js/views/cardio.js',
   'js/views/entry.js',

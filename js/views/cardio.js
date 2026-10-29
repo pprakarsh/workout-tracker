@@ -16,6 +16,7 @@ import {
   parsePace, fmtPace, intervalSummary, roundLines,
 } from '../cardio.js';
 import { esc, fmtNum, fmtClock, parseDur } from '../util.js';
+import { timeFieldHtml, readTimeDom } from '../timefield.js';
 import { openModal, toast } from '../ui.js';
 
 /* ------------------------------------------------------------------ */
@@ -29,8 +30,8 @@ import { openModal, toast } from '../ui.js';
  */
 const RUN_HINT = `
   <p class="hint">Fill in <b>any two</b> and the third is worked out for you.
-    <br><b>Time</b> <code>28:30</code>, <code>28m</code>, <code>1:05:00</code>.
-    <b>Pace</b> <code>6:00</code>, or a bare <code>6</code> meaning 6 min/km.
+    <br>Hours, minutes and seconds have their own boxes &mdash; leave one empty and it counts as
+    <b>0</b>, so 28 in minutes is 28:00. The total is shown beside them as you type.
     <br><span class="dim">Change the time and your pace is kept, so the distance
     follows - which is how a treadmill behaves.</span></p>`;
 
@@ -62,17 +63,11 @@ function runBody(e, allowRest) {
   const du = l.distanceUnit || state.settings.distanceUnit;
   return `
     <div class="sets" data-entry="${e.id}" data-log="1">
-      <div class="grid3">
-        <label class="field"><span>Time (m:ss)</span>
-          <input inputmode="numeric" data-f="duration" placeholder="28:30"
-                 value="${l.duration ? esc(fmtClock(l.duration)) : ''}"></label>
-        <label class="field"><span>Pace (/${esc(du)})</span>
-          <input inputmode="numeric" data-f="pace" placeholder="6:00"
-                 value="${l.pace ? esc(fmtClock(l.pace)) : ''}"></label>
-        <label class="field"><span>Distance (${esc(du)})</span>
-          <input inputmode="decimal" data-f="distance" placeholder="5"
-                 value="${esc(fmtNum(l.distance))}"></label>
-      </div>
+      ${timeFieldHtml({ key: 'duration', label: 'Time', seconds: l.duration, parts: 'hms' })}
+      ${timeFieldHtml({ key: 'pace', label: 'Pace', seconds: l.pace, parts: 'ms', suffix: `per ${du}` })}
+      <label class="field"><span>Distance (${esc(du)})</span>
+        <input inputmode="decimal" data-f="distance" placeholder="5"
+               value="${esc(fmtNum(l.distance))}"></label>
       ${RUN_HINT}
       <div class="grid3">
         <label class="field"><span>Avg HR (bpm)</span>
@@ -110,11 +105,11 @@ const legRow = (lg, label, du) => `
             aria-label="Log round ${label}">${lg.done ? '\u2713' : ''}</button>
     <div class="idx">${esc(label)}</div>
     <input inputmode="numeric" data-leg="${lg.id}" data-entry="${lg.entryId}" data-lf="duration"
-           placeholder="1:00" value="${lg.duration ? esc(fmtClock(lg.duration)) : ''}"
-           aria-label="Time in minutes and seconds for round ${label}">
-    <input inputmode="numeric" data-leg="${lg.id}" data-entry="${lg.entryId}" data-lf="pace"
-           placeholder="8:00" value="${lg.pace ? esc(fmtClock(lg.pace)) : ''}"
-           aria-label="Pace per ${du} for round ${label}">
+           placeholder="90s" value="${lg.duration ? esc(fmtClock(lg.duration)) : ''}"
+           aria-label="Time in seconds for round ${label}">
+    <input inputmode="decimal" data-leg="${lg.id}" data-entry="${lg.entryId}" data-lf="pace"
+           placeholder="6.5" value="${lg.pace ? esc(fmtClock(lg.pace)) : ''}"
+           aria-label="Pace in minutes per ${du} for round ${label}">
     <div class="legd dim">${lg.duration && lg.pace ? esc(`${fmtNum(Math.round((lg.duration / lg.pace) * 1000) / 1000)} ${du}`) : ''}</div>
     ${lg.edited ? `<button type="button" class="chk" data-action="cardio-leg-reset"
             data-entry="${lg.entryId}" data-leg="${lg.id}" title="Back to the planned numbers">\u21ba</button>`
@@ -135,7 +130,9 @@ function roundsTable(e, du) {
     du,
   )).join('')).join('')}
     </div>
-    <p class="hint">Tap a row's tick to log just that round, or type over its time or pace -
+    <p class="hint">Round times are in <b>seconds</b> (90 = 1:30) and paces in <b>minutes</b>
+      (6.5 = 6:30), so neither needs a colon.
+      Tap a row's tick to log just that round, or type over its time or pace -
       an edited round is marked <b>&#8226;</b> and keeps its own numbers if you later change the
       pattern. <code>&#8634;</code> puts it back on plan.</p>`;
 }

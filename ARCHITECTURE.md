@@ -26,6 +26,7 @@ js/plan.js          the 10-day plan: day keys, the window, and what a day means
 js/planstore.js     writes for the plan -- the mirror of queries.js
 js/trends.js        progress analysis: e1RM, per-session series, PRs, weekly totals
 js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
+js/timefield.js     a duration as h/m/s boxes, so no colon is ever typed. Markup only
 js/db.js            thin promise wrapper over IndexedDB
 js/sync.js          Gist sync: push/pull, conflict guards, device pairing
 js/timer.js         rest timer bar: ticking, beep, audio unlock
@@ -475,13 +476,19 @@ Each of these was a real bug. They are cheap to reintroduce.
 7. **Undefined tie-breaks.** The exercise library picked a definition by iteration order
    (alphabetical by routine name) when two routines shared a timestamp. Sorts that can tie need an
    explicit second key.
-8. **Units only in placeholders.** A placeholder vanishes the moment a value is typed, so a unit
+8. **Asking for a character the keyboard cannot produce.** A duration reads as "28:30", so the
+   fields asked for a colon while requesting `inputmode="numeric"` — which gives iOS a digits-only
+   keypad with no colon on it. Durations are entered in separate h/m/s boxes now (`js/timefield.js`):
+   a blank box counts as 0, all blank is null, and the total is echoed back as a clock while you
+   type. The two dense grids that cannot hold more boxes — the set row and the interval leg rows —
+   take plain seconds for a time and plain minutes for a pace instead, so neither needs a colon.
+9. **Units only in placeholders.** A placeholder vanishes the moment a value is typed, so a unit
    shown only there cannot be checked while reading your own numbers back. Units belong in the
    column header or the field label; placeholders carry the *format*. Both are tested.
-9. **Re-parsing your own stored values.** See normalisation above: a value that was parsed on the
+10. **Re-parsing your own stored values.** See normalisation above: a value that was parsed on the
    way in must not be parsed again on the way back through. It cost a 60× inflation of every cardio
    target, twice — once for `duration`, once for `pace`.
-10. **Modal submit didn't repaint.** A modal that changes the tab or data must repaint the view
+11. **Modal submit didn't repaint.** A modal that changes the tab or data must repaint the view
    behind it; `closeModal()` calls `emit()` for this.
 
 ## What the platform will not allow

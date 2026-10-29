@@ -38,7 +38,10 @@ export const MEASURES = {
     long: 'Time in seconds (plank, dead hang, L-sit)',
     short: 'sec',
     header: 'Time (s)',
-    placeholder: '45 or 1:15',
+    // SECONDS, not a clock value: the numeric keypad this field asks for has no
+    // colon on it. 90 is a minute and a half, and the confirm bar echoes it
+    // back as 1:30 so the conversion is visible.
+    placeholder: '45',
     step: 5,
     stepLabel: 's',
     inputmode: 'numeric',

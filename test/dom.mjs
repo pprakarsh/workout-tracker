@@ -749,23 +749,58 @@ await click('#tabBar .tab[data-tab="now"]');
 const prR = store.state.routines.find((r) => r.name === 'Plain Run Check');
 await click(`[data-action="routine-start"][data-id="${prR.id}"]`, 'Start');
 const runE = store.state.active.entries[0];
-ok($('input[data-f="pace"]') !== null, 'pace is a field you log, not just a derived number');
-ok($('input[data-f="duration"]').value === '28:30', 'the time is pre-filled from the plan');
-ok($('input[data-f="pace"]').value === '6:00', 'and so is the pace');
+const tfBox = (key, part) => $(`[data-tf="${key}"][data-tp="${part}"]`);
+ok(tfBox('pace', 'm') !== null, 'pace is a field you log, not just a derived number');
+ok(tfBox('duration', 'h') !== null && tfBox('duration', 'm') !== null && tfBox('duration', 's') !== null,
+  'time has separate hour, minute and second boxes - no colon to type');
+ok(tfBox('pace', 'h') === null, 'pace has no hours box, since a pace never needs one');
+ok(tfBox('duration', 'h').inputMode === 'numeric', 'each box asks for the number keypad');
+ok(`${tfBox('duration', 'm').value}:${tfBox('duration', 's').value}` === '28:30',
+  `the time is pre-filled from the plan (${tfBox('duration', 'm').value}:${tfBox('duration', 's').value})`);
+ok(tfBox('pace', 'm').value === '6' && tfBox('pace', 's').value === '0', 'and so is the pace');
 ok($('input[data-f="distance"]').value === '4.75', `with the distance derived (${$('input[data-f="distance"]').value})`);
+ok($('[data-tf-echo="duration"]').textContent === '28:30',
+  `the total is echoed back as a clock (${$('[data-tf-echo="duration"]').textContent})`);
 const runCard = $('.card[data-entry]').textContent;
 ok(/any two/i.test(runCard), 'the card says any two numbers are enough');
 ok(runCard.includes('28:30') && runCard.includes('6:00'),
   'and gives a worked example of each format');
-ok(/bare/i.test(runCard), 'and spells out what a bare number means');
-const paceIn = $('input[data-f="pace"]');
-paceIn.focus();
-paceIn.value = '5:00';
-paceIn.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-await sleep(30);
+ok(/counts as/i.test(runCard) && /0/.test(runCard),
+  'and spells out that an empty box counts as zero');
+const paceM = tfBox('pace', 'm');
+paceM.focus();
+paceM.value = '5';
+paceM.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
 ok(runE.log.pace === 300 && runE.log.distance === 5.7,
-  `re-pacing moves the distance (${runE.log.distance} km)`);
-ok(document.activeElement === paceIn, 'and the keyboard stays in the field');
+  `re-pacing from the minutes box moves the distance (${runE.log.distance} km)`);
+ok(document.activeElement === paceM, 'and the keyboard stays in the box');
+ok($('[data-tf-echo="pace"]').textContent === '5:00',
+  `the echo follows (${$('[data-tf-echo="pace"]').textContent})`);
+
+section('a blank box counts as zero, and all blank means nothing entered');
+const durS = tfBox('duration', 's');
+durS.focus();
+durS.value = '';
+durS.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
+ok(runE.log.duration === 28 * 60, `clearing the seconds leaves 28:00 (${runE.log.duration}s)`);
+tfBox('duration', 'm').value = '';
+tfBox('duration', 'm').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
+ok(runE.log.duration === null, 'emptying every box means no value at all, not zero');
+tfBox('duration', 'm').value = '30';
+tfBox('duration', 'm').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
+ok(runE.log.duration === 1800, `and typing one box back fills it again (${runE.log.duration}s)`);
+
+section('a seconds box over 59 is accepted, not scolded');
+tfBox('duration', 's').value = '90';
+tfBox('duration', 's').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
+ok(runE.log.duration === 1890, `30 minutes and 90 seconds is 31:30 (${runE.log.duration}s)`);
+ok($('[data-tf-echo="duration"]').textContent === '31:30',
+  `echoed as a real clock value (${$('[data-tf-echo="duration"]').textContent})`);
 await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -896,8 +931,8 @@ mSel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 await sleep(20);
 ok($('#exAmountHdr').textContent === 'Time (s)', 'switching measure relabels the column live');
 ok(/plank|hang/i.test($('#exMeasureHint').textContent), 'and swaps the hint');
-ok($('#exRows [data-stf="r"]').placeholder.includes('1:15'),
-  `the grid placeholder shows the accepted format (${$('#exRows [data-stf="r"]').placeholder})`);
+ok($('#exRows [data-stf="r"]').placeholder === '45',
+  `the grid placeholder asks for plain seconds, not a colon the keypad lacks (${$('#exRows [data-stf="r"]').placeholder})`);
 await click('[data-mclose]');
 
 await click('#tabBar .tab[data-tab="session"]');
@@ -1564,8 +1599,10 @@ ok($('#restBar [data-action="entry-add"]') !== null, 'a new exercise can be adde
 ok($('#restBar [data-action="entry-edit"]') !== null, 'and this exercise edited');
 ok($('#restBar [data-action="go-session"]') !== null, 'with reorder one tap away');
 await click('#restBar [data-action="rest-target"]', 'rest target');
-ok($('[name="target"]') !== null, 'the target editor opened');
-$('[name="target"]').value = '3:15';
+ok($('[data-tf="target"][data-tp="m"]') !== null, 'the target editor opened, with split boxes');
+ok($('[data-tf="target"][data-tp="h"]') === null, 'and no hours box on a rest period');
+$('[data-tf="target"][data-tp="m"]').value = '3';
+$('[data-tf="target"][data-tp="s"]').value = '15';
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(80);
 ok(store.state.timer.target === 195, `target set precisely to 3:15 (${store.state.timer.target}s)`);

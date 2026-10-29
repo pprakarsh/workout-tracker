@@ -1132,6 +1132,44 @@ const mixWk = tr.weeklyTotals([{
 ok(mixWk[0].sets === 2 && mixWk[0].volume === 500,
   `both sets counted, only the squat in volume (${mixWk[0].sets} sets, ${mixWk[0].volume} volume)`);
 
+section('a duration is entered as separate h/m/s boxes');
+const tf = await import(`${APP}/js/timefield.js`);
+ok(tf.fromParts({ h: '', m: '28', s: '30' }) === 1710, '28 and 30 is 28:30');
+ok(tf.fromParts({ h: '', m: '30', s: '' }) === 1800,
+  'an empty seconds box counts as 0, so 30 minutes is 30:00');
+ok(tf.fromParts({ h: '1', m: '', s: '' }) === 3600, 'and an hour on its own is an hour');
+ok(tf.fromParts({ h: '', m: '', s: '45' }) === 45, 'seconds alone work too');
+ok(tf.fromParts({ h: '', m: '', s: '' }) === null,
+  'every box empty is NO VALUE, not 00:00 -- a field has to be clearable');
+ok(tf.fromParts({}) === null && tf.fromParts() === null, 'nothing in, nothing out');
+ok(tf.fromParts({ h: '', m: '30', s: '90' }) === 1890,
+  'a seconds box over 59 is accepted rather than scolded (31:30)');
+ok(tf.fromParts({ h: '', m: '-5', s: '10' }) === 10, 'a negative box is treated as 0');
+ok(tf.fromParts({ h: '', m: 'abc', s: '10' }) === 10, 'and so is junk');
+
+section('and split back out again, with leading zeros left blank');
+ok(JSON.stringify(tf.toParts(1710, 'hms')) === JSON.stringify({ h: '', m: '28', s: '30' }),
+  'under an hour leaves the hours box empty, not showing a "0"');
+ok(JSON.stringify(tf.toParts(3690, 'hms')) === JSON.stringify({ h: '1', m: '1', s: '30' }),
+  'over an hour fills all three');
+ok(JSON.stringify(tf.toParts(45, 'hms')) === JSON.stringify({ h: '', m: '', s: '45' }),
+  'under a minute leaves both leading boxes empty');
+ok(JSON.stringify(tf.toParts(null, 'hms')) === JSON.stringify({ h: '', m: '', s: '' }),
+  'and null is all blank');
+ok(JSON.stringify(tf.toParts(360, 'ms')) === JSON.stringify({ h: '', m: '6', s: '0' }),
+  'a pace has no hours box at all');
+// leading-zero blanking is what makes the field clearable: a literal "0" in a
+// box is not blank, so "every box empty" could never be reached
+ok(tf.fromParts(tf.toParts(1710, 'hms')) === 1710, 'the round trip is exact');
+ok(tf.fromParts(tf.toParts(45, 'hms')) === 45, 'for a short value too');
+ok(tf.fromParts(tf.toParts(3690, 'hms')) === 3690, 'and a long one');
+ok(tf.fromParts(tf.toParts(360, 'ms')) === 360, 'and for a pace');
+
+section('reading a split field out of a submitted modal');
+ok(tf.readTimeValues({ target_m: '2', target_s: '30' }, 'target') === 150, 'two and a half minutes');
+ok(tf.readTimeValues({ target_m: '', target_s: '' }, 'target') === null, 'or nothing');
+ok(tf.readTimeValues({}, 'target') === null, 'with no boxes at all');
+
 section('work that looks logged but is not confirmed is findable');
 const ucR = await store.createRoutine({
   name: 'Unconfirmed Check',

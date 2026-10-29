@@ -12,6 +12,7 @@ import { exerciseLibrary, findInLibrary, lastLogFor, recentWeights } from '../qu
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
 import { builderHtml, wireBuilder, DEFAULT_LEGS } from './cardio.js';
+import { readTimeDom } from '../timefield.js';
 import {
   MEASURES, measureOf, fmtAmount, fmtAmountRange, parseAmount, amountFieldValue, parseMeasure,
 } from '../measure.js';
@@ -870,4 +871,17 @@ export async function handleFieldInput(target) {
           : num(target.value);
     await updateLog(logBox.dataset.entry, patch, { silent: true });
   }
+}
+
+/**
+ * One box of a split time field changed, so recompute the whole value from all
+ * of its boxes. Saved silently, like every other field being typed into.
+ */
+export async function handleTimeField(target) {
+  const key = target.dataset.tf;
+  if (!key) return;
+  const logBox = target.closest('[data-log]');
+  if (!logBox) return;
+  const total = readTimeDom(logBox, key);
+  await updateLog(logBox.dataset.entry, { [key]: total }, { silent: true });
 }

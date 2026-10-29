@@ -6,6 +6,7 @@
 import { state, stopRest, setRestTarget, markBeeped, findEntry, setLabels } from './store.js';
 import { loadLabel } from './format.js';
 import { toast, openModal } from './ui.js';
+import { timeFieldHtml, readTimeValues, wireTimeFields } from './timefield.js';
 import { fmtClock, fmtNum, esc, parseDur } from './util.js';
 
 let bar, tickHandle = null, lastKey = '';
@@ -164,21 +165,22 @@ export const timerActions = {
   'rest-target': () => {
     const t = state.timer;
     if (!t) return;
-    openModal({
+    const m = openModal({
       title: 'Rest target',
       bodyHtml: `
-        <label class="field"><span>Target for this rest &mdash; 2:30, 90s, or seconds</span>
-          <input name="target" inputmode="text" value="${esc(fmtClock(t.target))}"></label>
-        <p class="hint">Changes this rest only. To change it for every set of the exercise, use
+        ${timeFieldHtml({ key: 'target', label: 'Target for this rest', seconds: t.target, parts: 'ms' })}
+        <p class="hint">Leave a box empty and it counts as <b>0</b>, so 2 in minutes is 2:00.
+          Changes this rest only. To change it for every set of the exercise, use
           <b>this exercise</b> and set its rest there.</p>`,
       onSubmit: async (v) => {
-        const secs = parseDur(String(v.target || '').trim());
-        if (secs === null) { toast('Could not read that as a time'); return false; }
+        const secs = readTimeValues(v, 'target');
+        if (secs === null) { toast('Enter a target'); return false; }
         await setRestTarget(secs);
         toast(`Target set to ${fmtClock(secs)}`);
         return true;
       },
     });
+    wireTimeFields(m);
   },
 
   'rest-stop': async () => {

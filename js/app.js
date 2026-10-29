@@ -12,7 +12,8 @@ import * as nowView from './views/now.js';
 import * as sessionView from './views/session.js';
 import * as historyView from './views/history.js';
 import * as routinesView from './views/routines.js';
-import { entryActions, handleFieldInput } from './views/entry.js';
+import { entryActions, handleFieldInput, handleTimeField } from './views/entry.js';
+import { wireTimeFields } from './timefield.js';
 import { cardioActions } from './views/cardio.js';
 import * as planView from './views/plan.js';
 import * as trendsView from './views/trends.js';
@@ -71,6 +72,7 @@ export function render() {
     // same screen: keep your place. new screen: start at the top.
     window.scrollTo(0, screen === lastScreen ? y : 0);
     lastScreen = screen;
+    wireTimeFields(root);          // the split time fields echo their total live
 
     document.getElementById('appTitle').textContent =
       (state.tab === 'now' || state.tab === 'session') && state.active
@@ -133,6 +135,7 @@ document.addEventListener('change', async (ev) => {
 
 document.addEventListener('input', async (ev) => {
   const t = ev.target;
+  if (t.dataset?.tf) return handleTimeField(t);
   if (t.dataset?.f || t.dataset?.lf) return handleFieldInput(t);
   if (t.dataset?.sf) return sessionView.handleSessionField(t);
   if (t.dataset?.rf) return routinesView.handleRoutineField(t);
