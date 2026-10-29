@@ -31,6 +31,9 @@ export function backupObject() {
     timer: state.timer,
     routines: state.routines,
     sessions: state.sessions,
+    // the 10-day plan travels too: a restore on a new phone should know what
+    // you intended this week, not just what you have already done
+    plan: state.plan,
   };
 }
 

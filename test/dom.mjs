@@ -57,6 +57,7 @@ async function type(sel, value) {
 
 const store = await import(`${APP}/js/store.js`);
 const cardio = await import(`${APP}/js/cardio.js`);
+const planLib = await import(`${APP}/js/plan.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
 await import(`${APP}/js/app.js`);   // boots itself
@@ -65,7 +66,7 @@ await sleep(150);
 section('boot');
 ok(store.state.ready, 'store initialised');
 ok(view().length > 0, 'something rendered');
-ok($$('#tabBar .tab').length === 4, 'four tabs present');
+ok($$('#tabBar .tab').length === 5, `five tabs present (${[...$$('#tabBar .tab')].map((b) => b.dataset.tab).join(',')})`);
 
 section('seed a routine, then start it from the Now tab');
 await xi.importFromText(routinesView.SAMPLE);
@@ -879,6 +880,83 @@ await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
+
+section('the Plan tab shows ten days and plans one in two taps');
+await xi.importFromText(JSON.stringify({
+  name: 'Plan Day A', entries: [{ name: 'Bench', sets: 3, reps: 5, weight: 60 }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="plan"]');
+ok($$('.pd-row').length === 10, `ten day rows (${$$('.pd-row').length})`);
+ok($$('.pd-row')[0].textContent.includes('Today'), 'the first row is today');
+ok($$('.pd-row')[1].textContent.includes('Tomorrow'), 'then tomorrow');
+ok($$('.pd-row')[0].classList.contains('is-today'), 'today is marked');
+ok(view().includes('0 planned'), 'nothing planned yet');
+ok($$('[data-action="plan-pick"]').length === 10, 'every empty day invites a routine');
+
+const todayKey = planLib.dayKey(Date.now());
+const planR = store.state.routines.find((r) => r.name === 'Plan Day A');
+await click(`[data-action="plan-pick"][data-key="${todayKey}"]`);
+ok($$('[data-action="plan-set"]').length === store.state.routines.length,
+  `the picker lists every routine (${$$('[data-action="plan-set"]').length})`);
+await click(`[data-action="plan-set"][data-key="${todayKey}"][data-id="${planR.id}"]`);
+ok($('#modalRoot').hidden === true, 'and the sheet closes once you choose');
+await sleep(60);
+ok(store.state.plan[todayKey]?.routineId, 'the routine landed on today');
+ok($$('.pd-row')[0].textContent.includes('Plan Day A'), 'and the row names it');
+ok(view().includes('1 planned'), 'the header counts it');
+ok($('[data-action="plan-start"]') !== null, "today's row offers Start");
+
+section('a rest day, and the two are mutually exclusive');
+const tomorrowKey = planLib.dayKey(planLib.addDays(Date.now(), 1));
+await click(`[data-action="plan-rest"][data-key="${tomorrowKey}"]`);
+await sleep(60);
+ok(store.state.plan[tomorrowKey].rest === true, 'tomorrow is a rest day');
+ok($$('.pd-row')[1].textContent.includes('Rest day'), 'and says so');
+await click(`[data-action="plan-menu"][data-key="${tomorrowKey}"]`);
+// scope to the sheet: the ten rows behind it carry the same action
+await click('#modalRoot [data-action="plan-pick"]');
+await click(`[data-action="plan-set"][data-key="${tomorrowKey}"][data-id="${planR.id}"]`);
+await sleep(60);
+ok(store.state.plan[tomorrowKey].rest === false && store.state.plan[tomorrowKey].routineId,
+  'planning a routine over a rest day replaces it');
+
+section('a day can be pushed to the next one');
+await click(`[data-action="plan-menu"][data-key="${tomorrowKey}"]`);
+await click('#modalRoot [data-action="plan-shift"][data-by="1"]');
+await sleep(60);
+const dayAfter = planLib.dayKey(planLib.addDays(Date.now(), 2));
+ok(!store.state.plan[tomorrowKey] && store.state.plan[dayAfter]?.routineId,
+  'it moved a day later and left the old day empty');
+
+section('starting from the plan begins the workout and lands on Now');
+await click('[data-action="plan-start"]');
+await sleep(80);
+ok(store.state.active !== null, 'the workout started');
+ok(store.state.tab === 'now', 'and the app moved to Now');
+ok(store.state.active.routineName === 'Plan Day A', 'running the planned routine');
+
+section('finishing it ticks the plan with no second action');
+const pSets = store.state.active.entries[0].sets;
+for (const st of pSets) await store.toggleSetDone(store.state.active.entries[0].id, st.id);
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-finish"]', 'Finish');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(120);
+await click('#tabBar .tab[data-tab="plan"]');
+ok($$('.pd-row')[0].classList.contains('done'),
+  `today reads done straight from history (${$$('.pd-row')[0].className})`);
+ok($$('.pd-row')[0].textContent.includes('done'), 'with a done pill');
+ok(store.state.plan[todayKey].doneAt === null, 'and no flag was written to get there');
+ok($('[data-action="plan-open"]') !== null, 'the row links to the workout it matched');
+ok($('[data-action="plan-start"]') === null, 'and no longer offers Start');
+
+section('the plan can be cleared');
+await click('[data-action="plan-clear"]', 'Clear plan');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(80);
+ok(Object.keys(store.state.plan).length === 0, 'the plan is empty');
+ok(view().includes('0 planned'), 'and the header agrees');
 
 section('a plan with no weight: manual entry, or bodyweight');
 await xi.importFromText(JSON.stringify({

@@ -3,6 +3,7 @@ import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
 import { uid, num, parseReps, parseDur } from './util.js';
 import { resolveRun, isIntervals, plannedLegs, reconcileLegs, cardioLogged } from './cardio.js';
 import { setIsLoggableFor, countsTowardsVolume } from './measure.js';
+import { normalizePlan, prunePlan, blankDay, dayKey } from './plan.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
   parseSetTargets, setLabels, workingSets,
@@ -33,6 +34,10 @@ export const state = {
   // transient view state: which interval blocks have their rounds expanded.
   // Not persisted -- it is a disclosure triangle, not data.
   openRounds: new Set(),
+  // the 10-day plan: { 'YYYY-MM-DD': { routineId, rest, doneAt, note } }.
+  // A blob in `meta`, like settings: ten records do not need their own store,
+  // and it travels in the backup the same way.
+  plan: {},
   settings: { ...DEFAULT_SETTINGS },
   timer: null,           // { startedAt, target, sessionId, entryId, setId, label, beeped }
   tab: 'now',
@@ -68,17 +73,19 @@ export async function setEditing(sessionId) {
 /* ------------------------------------------------------------------ */
 
 export async function init() {
-  const [routines, sessions, settings, activeId, timer] = await Promise.all([
+  const [routines, sessions, settings, activeId, timer, plan] = await Promise.all([
     dbGetAll('routines'),
     dbGetAll('sessions'),
     metaGet('settings', null),
     metaGet('activeSessionId', null),
     metaGet('timer', null),
+    metaGet('plan', null),
   ]);
   state.routines = (routines || []).map(normalizeRoutine)
     .sort((a, b) => a.name.localeCompare(b.name));
   state.sessions = (sessions || []).sort((a, b) => b.startedAt - a.startedAt);
   state.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
+  state.plan = normalizePlan(plan);
   state.active = activeId ? state.sessions.find((s) => s.id === activeId && !s.finishedAt) || null : null;
   state.timer = timer && timer.startedAt ? timer : null;
   // a timer belonging to a session that is gone or finished is stale
@@ -752,7 +759,9 @@ export async function markBeeped() {
  * in-progress session, same running rest timer — so the app is byte-for-byte
  * the state the backup was taken from.
  */
-export async function restoreAll({ routines = [], sessions = [], settings = null, activeSessionId = null, timer = null }) {
+export async function restoreAll({
+  routines = [], sessions = [], settings = null, activeSessionId = null, timer = null, plan = null,
+}) {
   await Promise.all([dbClear('routines'), dbClear('sessions')]);
 
   state.routines = routines.map(normalizeRoutine);
@@ -768,6 +777,12 @@ export async function restoreAll({ routines = [], sessions = [], settings = null
 
   if (settings) state.settings = { ...DEFAULT_SETTINGS, ...settings };
   await metaSet('settings', state.settings);
+
+  // a backup without a plan predates the Plan tab; leave what is here alone
+  if (plan) {
+    state.plan = prunePlan(normalizePlan(plan));
+    await metaSet('plan', state.plan);
+  }
 
   state.active = activeSessionId
     ? state.sessions.find((s) => s.id === activeSessionId && !s.finishedAt) || null
@@ -803,6 +818,74 @@ export function dataFingerprint() {
     newest,
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* the 10-day plan                                                    */
+/* ------------------------------------------------------------------ */
+
+async function persistPlan() {
+  state.plan = prunePlan(state.plan);
+  await metaSet('plan', state.plan);
+  emit();
+}
+
+/** Put a routine on a day. `routineId: null` with rest clears or rests the day. */
+export async function setPlanDay(key, { routineId = undefined, rest = undefined, note = undefined } = {}) {
+  const cur = state.plan[key] || blankDay();
+  const next = { ...cur };
+  if (routineId !== undefined) next.routineId = routineId || null;
+  if (rest !== undefined) next.rest = !!rest;
+  if (note !== undefined) next.note = String(note || '').trim();
+  // A rest day and a routine are mutually exclusive, and WHAT THE CALLER JUST
+  // SET WINS. Resolving this the other way round let a day's existing rest flag
+  // silently swallow the routine you had just chosen for it.
+  if (routineId) next.rest = false;
+  else if (rest) next.routineId = null;
+  state.plan[key] = next;
+  await persistPlan();
+  return next;
+}
+
+export async function clearPlanDay(key) {
+  delete state.plan[key];
+  await persistPlan();
+}
+
+/**
+ * Tick a day by hand. Only for a day history cannot speak for -- you trained
+ * without the app, or a partial session counts. A day with a matching finished
+ * session already reads as done without this.
+ */
+export async function togglePlanDone(key) {
+  const cur = state.plan[key] || blankDay();
+  state.plan[key] = { ...cur, doneAt: cur.doneAt ? null : Date.now() };
+  await persistPlan();
+  return state.plan[key];
+}
+
+/** Move a day's plan to another day, swapping if the target is taken. */
+export async function movePlanDay(fromKey, toKey) {
+  if (fromKey === toKey) return false;
+  const from = state.plan[fromKey];
+  if (!from) return false;
+  const to = state.plan[toKey] || null;
+  state.plan[toKey] = from;
+  if (to) state.plan[fromKey] = to;
+  else delete state.plan[fromKey];
+  await persistPlan();
+  return true;
+}
+
+/** Replace the whole plan, used by restore. */
+export async function replacePlan(raw) {
+  state.plan = prunePlan(normalizePlan(raw));
+  await metaSet('plan', state.plan);
+  emit();
+  return state.plan;
+}
+
+/** The plan entry for the day a session happened, if any. */
+export const planDayFor = (ts) => state.plan[dayKey(ts)] || null;
 
 /* ------------------------------------------------------------------ */
 /* progress helpers                                                   */

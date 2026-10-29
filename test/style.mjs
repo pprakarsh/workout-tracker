@@ -34,7 +34,7 @@ console.log('\n== the shell itself must be visible');
 ok(display('viewRoot') !== 'none', `#viewRoot is visible (${display('viewRoot')})`);
 ok(display('tabBar') === 'flex', `#tabBar lays out as flex (${display('tabBar')})`);
 ok(display('appHeader') === 'flex', `#appHeader lays out as flex (${display('appHeader')})`);
-ok(document.querySelectorAll('#tabBar .tab').length === 4, 'four tab buttons exist');
+ok(document.querySelectorAll('#tabBar .tab').length === 5, 'five tab buttons exist');
 
 console.log('\n== no stray CSS placeholders');
 ok(!/#1f3character|TODO|FIXME/.test(css), 'no broken colour values or leftover markers');
@@ -104,7 +104,7 @@ ok(cacheName === `workout-v${appVersion}`,
 
 console.log('\n== action registry integrity');
 const viewFiles = ['js/views/entry.js', 'js/views/cardio.js', 'js/views/now.js', 'js/views/session.js',
-  'js/views/history.js', 'js/views/routines.js', 'js/timer.js'];
+  'js/views/plan.js', 'js/views/history.js', 'js/views/routines.js', 'js/timer.js'];
 const sources = Object.fromEntries(viewFiles.map((f) => [f, readFileSync(`${APP}/${f}`, 'utf8')]));
 const allSource = Object.values(sources).join('\n');
 
@@ -138,8 +138,8 @@ ok(unreachable.length === 0,
   `every handler is reachable from markup${unreachable.length ? ` — dead: ${unreachable.join(', ')}` : ''}`);
 
 // every actions map must actually be merged into ACTIONS in app.js
-for (const map of ['entryActions', 'cardioActions', 'nowActions', 'sessionActions', 'historyActions',
-  'routineActions', 'timerActions']) {
+for (const map of ['entryActions', 'cardioActions', 'nowActions', 'sessionActions', 'planActions',
+  'historyActions', 'routineActions', 'timerActions']) {
   ok(appSrc.includes(map), `${map} is merged into the ACTIONS registry`);
 }
 

@@ -25,6 +25,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Cardio: a run is time + pace + distance, any two | The third is derived; duration is the anchor |
 | Holds and carries — `measure: time` / `distance` | A plank is a lift measured in seconds, not a cardio entry |
 | Session progress bar | Entry completion, in the Now header |
+| 10-day Plan tab | Assign a routine per day, rest days, push/pull a day; done is derived from history |
 | "Do this next" | Moves a whole block behind the current one, from the session list |
 | Tap-driven interval builder | Steppers, presets and a live preview; typing is the fallback |
 | Units on every column, formats in every placeholder | A unit you can still see once a value is typed |
@@ -60,7 +61,9 @@ plate calculator is offered, and whether your history becomes more than a list.
 | **Hold/carry PRs** | Longest plank, furthest carry at a load | S | Needs `measure` awareness in whatever PR code gets written |
 | **Import from Strong / Hevy CSV** | Only if you migrate from another app | M | — |
 | **Per-record sync with tombstones** | Real merge instead of last-write-wins | L | Do this when you start logging on two devices in the same week |
-| **Program / week structure** — which routine is due today | Mild value for a fixed weekly split | M | Resist turning into a periodisation engine |
+| **Repeat last week's plan** | Copy the previous seven days forward in one tap | S | Builds on the Plan tab |
+| **Accounts + cloud sync (Firebase Auth + Firestore)** | What "log in on a new phone and everything is there" actually needs. Replaces the Gist transport; keeps IndexedDB as the source of truth | L | Per-record, not a blob — Firestore caps a document at 1 MiB. Brings privacy-policy, in-app account deletion and Sign in with Apple obligations |
+| **Capacitor shell for the App Store and Play** | Ships the existing codebase as a native app without a rewrite | M | Needs real native integration to pass Apple guideline 4.2 |
 
 ## Ideas specific to this app
 

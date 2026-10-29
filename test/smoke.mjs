@@ -925,6 +925,106 @@ await store.discardSession();
 await store.deleteRoutine(sr.id);
 await store.deleteRoutine(hr.id);
 
+section('the 10-day plan window');
+const planLib = await import(`${APP}/js/plan.js`);
+const T0 = new Date(2026, 9, 29, 9, 0, 0).getTime();   // Thu 29 Oct 2026, 09:00 local
+const k = (n) => planLib.dayKey(planLib.addDays(T0, n));
+ok(planLib.dayKey(T0) === '2026-10-29', `day keys are local dates (${planLib.dayKey(T0)})`);
+ok(k(1) === '2026-10-30' && k(3) === '2026-11-01', `and roll over months (${k(3)})`);
+ok(planLib.daysFromToday(k(4), T0) === 4, 'offsets count whole days');
+// a key built at 09:00 must still be today when read at 23:30 the same date
+const lateT = new Date(2026, 9, 29, 23, 30, 0).getTime();
+ok(planLib.daysFromToday('2026-10-29', lateT) === 0, 'and do not slip at the end of the day');
+const win0 = planLib.planWindow({}, [], T0);
+ok(win0.length === 10, `the window is ten days (${win0.length})`);
+ok(win0[0].key === '2026-10-29' && win0[9].key === '2026-11-07', `today first (${win0[0].key}) then nine more (${win0[9].key})`);
+ok(win0.every((d) => d.status.state === 'open'), 'an empty plan is all open days');
+
+section('a day means something only once a routine is on it');
+const planRoutine = await store.createRoutine({ name: 'Push Day', entries: [{ name: 'Bench', sets: 3, reps: 5, weight: 60 }] });
+await store.setPlanDay(k(0), { routineId: planRoutine.id });
+await store.setPlanDay(k(1), { rest: true });
+await store.setPlanDay(k(2), { routineId: planRoutine.id });
+ok(state.plan[k(0)].routineId === planRoutine.id, 'the routine is on today');
+ok(state.plan[k(1)].rest === true && state.plan[k(1)].routineId === null,
+  'a rest day holds no routine');
+await store.setPlanDay(k(1), { routineId: planRoutine.id });
+ok(state.plan[k(1)].rest === false, 'and planning a routine clears the rest flag');
+await store.setPlanDay(k(1), { rest: true });
+ok(state.plan[k(1)].routineId === null, 'the reverse too — the two are exclusive');
+const win1 = planLib.planWindow(state.plan, [], T0);
+ok(win1[0].status.state === 'today', `today with a routine reads "today" (${win1[0].status.state})`);
+ok(win1[1].status.state === 'rest', 'the rest day reads rest');
+ok(win1[2].status.state === 'upcoming', 'later planned days read upcoming');
+const planSum = planLib.planSummary(win1);
+ok(planSum.planned === 2 && planSum.rest === 1 && planSum.open === 7,
+  `the summary counts up (${planSum.planned} planned, ${planSum.rest} rest, ${planSum.open} open)`);
+
+section('finishing the workout ticks the plan — nothing to mark twice');
+const fakeSession = {
+  id: 'w_plan1', routineId: planRoutine.id, routineName: 'Push Day',
+  startedAt: T0, finishedAt: T0 + 3600000, entries: [],
+};
+const win2 = planLib.planWindow(state.plan, [fakeSession], T0);
+ok(win2[0].status.state === 'done', `today is done because the session exists (${win2[0].status.state})`);
+ok(win2[0].status.manual === false, 'and it was not ticked by hand');
+ok(win2[0].status.session.id === 'w_plan1', 'the row can link to the workout');
+ok(state.plan[k(0)].doneAt === null, 'no flag was written — done is derived');
+
+section('a different routine that day is reported, not called missed');
+const other = { ...fakeSession, id: 'w_plan2', routineId: 'r_other', routineName: 'Pull Day' };
+const win3 = planLib.planWindow(state.plan, [other], T0);
+ok(win3[0].status.state === 'swapped', `it reads as swapped (${win3[0].status.state})`);
+ok(win3[0].status.session.routineName === 'Pull Day', 'naming what you actually did');
+
+section('an unfinished session does not count');
+const win4 = planLib.planWindow(state.plan, [{ ...fakeSession, finishedAt: null }], T0);
+ok(win4[0].status.state === 'today', 'a workout in progress is not a workout done');
+
+section('a past planned day with nothing logged is missed');
+const past = { [k(-2)]: { routineId: planRoutine.id, rest: false, doneAt: null, note: '' } };
+ok(planLib.dayStatus(k(-2), past[k(-2)], [], T0).state === 'missed', 'missed');
+ok(planLib.planWindow(past, [], T0).every((d) => d.key !== k(-2)),
+  'but the window never shows it — History owns the past');
+
+section('marking a day done by hand, for a workout the app never saw');
+await store.togglePlanDone(k(2));
+ok(Number.isFinite(state.plan[k(2)].doneAt), 'a timestamp is recorded');
+const win5 = planLib.planWindow(state.plan, [], T0);
+ok(win5[2].status.state === 'done' && win5[2].status.manual === true,
+  'the row says it was ticked by hand');
+await store.togglePlanDone(k(2));
+ok(state.plan[k(2)].doneAt === null, 'and it can be un-ticked');
+
+section('moving a day, and swapping when the target is taken');
+await store.setPlanDay(k(5), { routineId: planRoutine.id });
+ok(await store.movePlanDay(k(5), k(6)) === true, 'an empty target just takes it');
+ok(!state.plan[k(5)] && state.plan[k(6)].routineId === planRoutine.id, 'and the old day is cleared');
+await store.setPlanDay(k(5), { rest: true });
+await store.movePlanDay(k(5), k(6));
+ok(state.plan[k(6)].rest === true && state.plan[k(5)].routineId === planRoutine.id,
+  'a taken target swaps rather than overwrites');
+ok(await store.movePlanDay(k(7), k(8)) === false, 'moving an empty day is a no-op');
+
+section('the plan is pruned, persisted and travels in the backup');
+await store.setPlanDay(k(4), { note: '   ' });
+ok(!state.plan[k(4)], 'a day with nothing on it is not kept');
+const planBackup = xi.backupObject();
+ok(typeof planBackup.plan === 'object' && planBackup.plan[k(0)].routineId === planRoutine.id,
+  'the plan is in the backup');
+const planned0 = JSON.stringify(state.plan);
+await store.restoreAll({ routines: state.routines, sessions: state.sessions, plan: planBackup.plan });
+ok(JSON.stringify(state.plan) === planned0, 'and comes back verbatim from a restore');
+await store.restoreAll({ routines: state.routines, sessions: state.sessions });
+ok(JSON.stringify(state.plan) === planned0,
+  'an older backup with no plan leaves the current one alone');
+ok(JSON.stringify(planLib.normalizePlan({ nonsense: 1, '2026-13-99': {}, [k(0)]: { routineId: 'x' } }))
+  === JSON.stringify({ [k(0)]: { routineId: 'x', rest: false, doneAt: null, note: '' } }),
+  'junk keys are dropped on the way in');
+
+await store.deleteRoutine(planRoutine.id);
+for (const key of Object.keys(state.plan)) await store.clearPlanDay(key);
+
 section('every JSON sample the app shows must be valid and importable');
 // A sample is pasted straight into the Import box, so an invalid escape in one
 // is a broken feature, not a typo. One slipped through as `\"measure\"` inside a

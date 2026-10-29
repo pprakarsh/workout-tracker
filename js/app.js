@@ -14,10 +14,12 @@ import * as historyView from './views/history.js';
 import * as routinesView from './views/routines.js';
 import { entryActions, handleFieldInput } from './views/entry.js';
 import { cardioActions } from './views/cardio.js';
+import * as planView from './views/plan.js';
 
 const VIEWS = {
   now: nowView,
   session: sessionView,
+  plan: planView,
   history: historyView,
   routines: routinesView,
 };
@@ -25,6 +27,7 @@ const VIEWS = {
 const TITLES = {
   now: 'Now',
   session: 'Session',
+  plan: 'Plan',
   history: 'History',
   routines: 'Routines',
 };
@@ -34,6 +37,7 @@ const ACTIONS = {
   ...cardioActions,
   ...nowView.nowActions,
   ...sessionView.sessionActions,
+  ...planView.planActions,
   ...historyView.historyActions,
   ...routinesView.routineActions,
   ...timerActions,

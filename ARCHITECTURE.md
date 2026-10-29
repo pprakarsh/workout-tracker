@@ -21,6 +21,7 @@ js/model.js         entry/routine SHAPE: normalisation, defaults, plan -> sessio
 js/queries.js       read-only derived queries: exercise library, history lookups, recent values
 js/cardio.js        run maths: pace arithmetic, the interval pattern, round expansion
 js/measure.js       what a set is measured in: reps, time (holds) or distance (carries)
+js/plan.js          the 10-day plan: day keys, the window, and what a day means
 js/db.js            thin promise wrapper over IndexedDB
 js/sync.js          Gist sync: push/pull, conflict guards, device pairing
 js/timer.js         rest timer bar: ticking, beep, audio unlock
@@ -30,6 +31,7 @@ js/format.js        entry -> summary strings (targetLine, logSummary, restLine, 
 js/exportimport.js  JSON backup, CSV, Markdown, import/normalisation entry point
 js/views/entry.js   the exercise card and set rows, the exercise form, the library picker
 js/views/cardio.js  the cardio card: a straight run, or an interval block and its rounds
+js/views/plan.js    "Plan" tab: ten day rows, assign a routine, mark done
 js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
@@ -47,7 +49,7 @@ js/views/*  →  store, queries, format, cardio, ui, util, timer, sync
    ↓
 store, sync, exportimport, format, queries  →  model, cardio, db, util
    ↓
-model  →  cardio, measure, util        cardio  →  util        measure  →  util
+model  →  cardio, measure, util     cardio  →  util     measure  →  util     plan  →  util
 ```
 
 **Nothing outside `js/views/` may import a view**, `js/app.js` excepted. `js/format.js` exists for
@@ -197,6 +199,14 @@ Invariants worth knowing:
   against working sets only, `sessionVolume` skips them, `plannedSet` is indexed by *working* set
   number so a warmup does not shift the plan, and `setLabels` numbers them `W1, W2` separately.
   Anything added later that aggregates sets (PRs, charts) must use `workingSets(e)`.
+- **The plan's "done" is derived, not bookkept.** A planned day reads as done when a *finished*
+  session for that routine exists on that local date, so finishing a workout ticks the plan with no
+  second action. `doneAt` is a manual override for the one case history cannot know about — you
+  trained without the app. `dayStatus` decides this, and also reports `swapped` when you logged a
+  different routine that day rather than calling the day missed.
+- The plan is a **blob in `meta`**, keyed by local ISO date, not its own object store: ten records
+  do not justify a database version bump, and it rides along in `backupObject` the way `settings`
+  does. Local date, not UTC — "today" has to mean the day you are living in.
 - `rpe` and `rir` are both stored and neither is derived from the other, even though
   RIR ≈ 10 − RPE. `settings.effortScale` decides which columns are shown, not which are stored.
 - **A plank is a lift, not cardio.** `measure` on a lift entry says what the per-set number means:
