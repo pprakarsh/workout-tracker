@@ -925,6 +925,185 @@ await store.discardSession();
 await store.deleteRoutine(sr.id);
 await store.deleteRoutine(hr.id);
 
+section('estimated 1RM, and when it refuses to guess');
+const tr = await import(`${APP}/js/trends.js`);
+ok(tr.e1rm(100, 5) === 116.7, `Epley: 100x5 is 116.7 (${tr.e1rm(100, 5)})`);
+ok(tr.e1rm(100, 8) === 126.7, `100x8 is 126.7 (${tr.e1rm(100, 8)})`);
+// a measured single is not an estimate; Epley would say 103.3 and invent a PR
+ok(tr.e1rm(100, 1) === 100, `a single rep returns the weight itself (${tr.e1rm(100, 1)})`);
+ok(tr.e1rm(100, 12) !== null, '12 reps is the last usable rep count');
+ok(tr.e1rm(100, 13) === null, '13 reps gets no estimate at all');
+ok(tr.e1rm(100, 20) === null, 'and nor does a set of 20');
+ok(tr.e1rm(null, 5) === null && tr.e1rm(0, 5) === null, 'no load, no estimate');
+ok(tr.e1rm(10, 5, { isBodyweight: true }) === null,
+  'a bodyweight set with no recorded bodyweight gets none -- the app never invents one');
+ok(tr.e1rm(10, 5, { isBodyweight: true, bodyweight: 80 }) === 105,
+  `with a bodyweight it uses body + added load (${tr.e1rm(10, 5, { isBodyweight: true, bodyweight: 80 })})`);
+ok(tr.e1rm(0, 5, { isBodyweight: true, bodyweight: 80 }) === 93.3, 'plain bodyweight works too');
+
+section('which estimates are worth trusting');
+ok(tr.isWeakEstimate({ reps: 5, rpe: 9 }) === false, 'a hard set of 5 is solid');
+ok(tr.isWeakEstimate({ reps: 10 }) === true, '10 reps is where it softens');
+ok(tr.isWeakEstimate({ reps: 5, rpe: 7 }) === true, 'RPE 7 is not near failure');
+ok(tr.isWeakEstimate({ reps: 5, rir: 3 }) === true, 'nor is 3 reps in reserve');
+ok(tr.isWeakEstimate(null) === true, 'and nothing at all is not trustworthy');
+
+section('building a per-exercise series');
+const mkSet = (w, r, done = true, extra = {}) => ({
+  id: `s_${Math.random()}`, weight: w, reps: r, unit: 'kg', rpe: null, rir: null,
+  bodyweight: false, warmup: false, done, completedAt: null, rest: null, ...extra,
+});
+const mkSess = (d, sets, extra = {}) => ({
+  id: `w_t${d}`, routineName: 'T', unit: 'kg', bodyweight: null,
+  startedAt: new Date(2026, 8, d, 9).getTime(),
+  finishedAt: new Date(2026, 8, d, 10).getTime(),
+  entries: [{ name: 'Bench Press', type: 'lift', measure: 'reps', sets }],
+  ...extra,
+});
+const nk = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const tSessions = [
+  mkSess(1, [mkSet(80, 5), mkSet(80, 5), mkSet(60, 10, true, { warmup: true })]),
+  mkSess(8, [mkSet(85, 5), mkSet(85, 4), mkSet(85, 3, false)]),
+  mkSess(15, [mkSet(90, 5), mkSet(90, 5)]),
+];
+const built = tr.exerciseSets(tSessions, 'bench press', nk, 'kg');
+ok(built.sets.length === 6, `warmups and unticked sets are excluded (${built.sets.length} of 8)`);
+ok(built.converted === 0, 'nothing needed converting');
+const metric = tr.metricFor('reps');
+const tRows = tr.bySession(built.sets, metric);
+ok(tRows.length === 3, `one row per session (${tRows.length})`);
+ok(tRows[0].at < tRows[2].at, 'oldest first, which is how a chart reads');
+ok(tRows[2].best === tr.e1rm(90, 5), `each row carries that session's best (${tRows[2].best})`);
+ok(tRows[0].sets.length === 2, 'and the raw sets behind it');
+
+section('an unfinished session is not a result');
+const withOpen = [...tSessions, mkSess(22, [mkSet(95, 5)], { finishedAt: null })];
+ok(tr.exerciseSets(withOpen, 'bench press', nk, 'kg').sets.length === 6,
+  'so its sets never reach the chart');
+
+section('the headline delta is a fact, and needs three sessions');
+ok(tr.trendDelta(tRows.slice(0, 2)).enough === false, 'two sessions is not a trend');
+ok(tr.trendDelta(tRows.slice(0, 2)).need === 3, 'and it says how many are needed');
+const d = tr.trendDelta(tRows);
+ok(d.enough === true && d.sessions === 3, 'three is');
+ok(d.change === Math.round((tr.e1rm(90, 5) - tr.e1rm(80, 5)) * 10) / 10,
+  `the change is last minus first (${d.change})`);
+ok(d.weeks === 2, `with the span in weeks (${d.weeks})`);
+
+section('personal bests pick the right set, and the first time it happened');
+const prSets = tr.exerciseSets([
+  mkSess(1, [mkSet(100, 3)]),
+  mkSess(8, [mkSet(90, 8)]),
+  mkSess(15, [mkSet(100, 3)]),
+], 'bench press', nk, 'kg').sets;
+const prs = tr.personalBests(prSets, 'reps', 'kg');
+const byLabel = Object.fromEntries(prs.map((p) => [p.label, p]));
+ok(byLabel['Heaviest set'].value.startsWith('100'), 'heaviest is the 100 kg set');
+ok(byLabel['Heaviest set'].set.at === prSets[0].at,
+  'and a tie goes to the FIRST time it was hit, not the latest');
+ok(byLabel['Best est. 1RM'].value.startsWith('114'),
+  `90x8 (114) beats 100x3 (110) on estimated 1RM (${byLabel['Best est. 1RM'].value})`);
+ok(byLabel['Best set volume'].value.startsWith('720'), '90x8 = 720 is the best single-set volume');
+ok(byLabel['Most reps'].value.startsWith('8'), 'and the most reps in one set');
+
+section('mixed units are converted, not refused');
+const mixed = tr.exerciseSets([
+  mkSess(1, [mkSet(220, 5, true, { unit: 'lb' })]),
+  mkSess(8, [mkSet(100, 5, true, { unit: 'kg' })]),
+], 'bench press', nk, 'kg');
+ok(mixed.converted === 1, `the lb set is counted as converted (${mixed.converted})`);
+ok(Math.abs(mixed.sets[0].weight - 99.79) < 0.02,
+  `220 lb reads as 99.79 kg (${mixed.sets[0].weight})`);
+ok(util.toUnit(100, 'kg', 'lb') === 220.46 && util.toUnit(100, 'kg', 'kg') === 100,
+  'and the conversion round-trips');
+ok(util.toUnit(100, 'kg', 'stone') === 100, 'an unknown unit passes through unchanged');
+
+section('holds and carries get their own metric, never an e1RM');
+const holdM = tr.metricFor('time');
+ok(holdM.estimate === false && holdM.title === 'Longest hold', 'a hold is judged on time');
+ok(holdM.fmt(45) === '45s' && holdM.fmt(75) === '1:15', `and reads as a clock past a minute (${holdM.fmt(75)})`);
+ok(tr.metricFor('distance').fmt(40) === '40 m', 'a carry is judged on metres');
+const holdSets = tr.exerciseSets([{
+  id: 'w_h1', routineName: 'T', unit: 'kg', bodyweight: null,
+  startedAt: new Date(2026, 8, 1, 9).getTime(), finishedAt: new Date(2026, 8, 1, 10).getTime(),
+  entries: [{ name: 'Plank', type: 'lift', measure: 'time', sets: [mkSet(null, 45), mkSet(null, 60)] }],
+}], 'plank', nk, 'kg').sets;
+ok(holdM.value(holdSets[1]) === 60, 'the metric reads the seconds straight off the set');
+const holdPrs = tr.personalBests(holdSets, 'time', 'kg');
+ok(holdPrs[0].label === 'Longest hold' && holdPrs[0].value === '1:00',
+  `the PR is the longest hold (${holdPrs[0].value})`);
+ok(!holdPrs.some((p) => p.label.includes('1RM')), 'and no estimated 1RM is offered for a plank');
+
+section('weekly totals bucket by Monday');
+const WNOW = new Date(2026, 9, 29, 10).getTime();              // Thu 29 Oct 2026
+const wk = tr.weeklyTotals([
+  { ...mkSess(1, [mkSet(100, 5)]), startedAt: new Date(2026, 9, 26, 9).getTime(), finishedAt: new Date(2026, 9, 26, 10).getTime() },
+  { ...mkSess(2, [mkSet(100, 5)]), startedAt: new Date(2026, 9, 20, 9).getTime(), finishedAt: new Date(2026, 9, 20, 10).getTime() },
+], 'kg', 4, util.startOfWeek, util.addWeeks, WNOW);
+ok(wk.length === 4, `four buckets asked for, four returned (${wk.length})`);
+ok(wk[3].volume === 500 && wk[3].sets === 1, `this week holds the Monday session (${wk[3].volume})`);
+ok(wk[2].volume === 500, 'and last week holds the earlier one');
+ok(wk[0].volume === 0 && wk[1].volume === 0, 'the empty weeks are zero, not missing');
+
+section('a timed exercise contributes sets but not tonnage');
+const mixWk = tr.weeklyTotals([{
+  id: 'w_mx', routineName: 'T', unit: 'kg', bodyweight: null,
+  startedAt: new Date(2026, 9, 27, 9).getTime(), finishedAt: new Date(2026, 9, 27, 10).getTime(),
+  entries: [
+    { name: 'Squat', type: 'lift', measure: 'reps', sets: [mkSet(100, 5)] },
+    { name: 'Plank', type: 'lift', measure: 'time', sets: [mkSet(null, 45)] },
+  ],
+}], 'kg', 1, util.startOfWeek, util.addWeeks, WNOW);
+ok(mixWk[0].sets === 2 && mixWk[0].volume === 500,
+  `both sets counted, only the squat in volume (${mixWk[0].sets} sets, ${mixWk[0].volume} volume)`);
+
+section('cardio trends are about pace');
+const runs = tr.cardioRuns([{
+  id: 'w_r1', routineName: 'R', unit: 'kg',
+  startedAt: new Date(2026, 8, 1, 9).getTime(), finishedAt: new Date(2026, 8, 1, 10).getTime(),
+  entries: [{
+    name: 'Morning Run', type: 'cardio',
+    log: { done: true, distance: 5, duration: 1800, pace: 360, distanceUnit: 'km', legs: null },
+  }],
+}, {
+  id: 'w_r2', routineName: 'R', unit: 'kg',
+  startedAt: new Date(2026, 8, 8, 9).getTime(), finishedAt: new Date(2026, 8, 8, 10).getTime(),
+  entries: [{
+    name: 'Morning Run', type: 'cardio',
+    log: {
+      done: true, distanceUnit: 'km', distance: null, duration: null, pace: null,
+      legs: [{ round: 1, leg: 0, duration: 60, pace: 300, done: true },
+        { round: 1, leg: 1, duration: 60, pace: 420, done: true }],
+    },
+  }],
+}], 'morning run', nk);
+ok(runs.length === 2, `both runs land (${runs.length})`);
+ok(runs[0].pace === 360, 'a straight run reports its pace');
+ok(runs[1].intervals === true && runs[1].rounds === 1, 'an interval block is marked as one');
+ok(runs[1].pace === Math.round(120 / (60 / 300 + 60 / 420)),
+  `whose pace is the average across its logged legs (${runs[1].pace})`);
+
+section('the chart builders emit well-formed svg');
+const ch = await import(`${APP}/js/chart.js`);
+const svg = ch.linePlot({
+  points: [{ x: 1, y: 100 }, { x: 2, y: 110 }, { x: 3, y: 105, dim: true }],
+  best: [{ x: 1, y: 100 }, { x: 2, y: 110, pr: true }],
+  xLeft: 'Sep', xRight: 'Oct', label: 'test chart',
+});
+ok(svg.startsWith('\n    <svg') || svg.trim().startsWith('<svg'), 'it is an svg');
+ok((svg.match(/<circle/g) || []).length === 5, `three points plus two best dots (${(svg.match(/<circle/g) || []).length})`);
+ok(svg.includes('class="cdot dim"'), 'a weak point is marked for hollow drawing');
+ok(svg.includes('class="cbest pr"'), 'and the record is marked');
+ok((svg.match(/<polyline/g) || []).length === 1, 'the best series is joined by one line');
+ok(svg.includes('role="img"') && svg.includes('aria-label="test chart"'), 'and it is labelled for a screen reader');
+ok(ch.linePlot({ points: [], best: [] }) === '', 'no data draws nothing at all');
+const one = ch.linePlot({ points: [{ x: 1, y: 100 }], best: [{ x: 1, y: 100 }] });
+ok(one.includes('<circle') && !one.includes('<polyline'), 'a single point gets no line through it');
+const bars = ch.barPlot({ bars: [{ v: 0, label: 'a' }, { v: 10, label: 'b', now: true }], label: 'bars' });
+ok((bars.match(/<rect/g) || []).length === 2, 'one rect per bar');
+ok(bars.includes('class="cbar now"'), 'the current bucket is highlighted');
+ok(bars.includes('height="0"') || /height="0(\.0)?"/.test(bars), 'a zero bar has no height, not a negative one');
+
 section('history windows: week, month, a range, a single date');
 const HNOW = new Date(2026, 9, 29, 10, 0, 0).getTime();   // Thu 29 Oct 2026
 const hw = (f) => q.historyWindow(f, HNOW);
@@ -1004,6 +1183,7 @@ await store.deleteRoutine(strand.id);
 
 section('the 10-day plan window');
 const planLib = await import(`${APP}/js/plan.js`);
+const planStore = await import(`${APP}/js/planstore.js`);
 const T0 = new Date(2026, 9, 29, 9, 0, 0).getTime();   // Thu 29 Oct 2026, 09:00 local
 const k = (n) => planLib.dayKey(planLib.addDays(T0, n));
 ok(planLib.dayKey(T0) === '2026-10-29', `day keys are local dates (${planLib.dayKey(T0)})`);
@@ -1019,15 +1199,15 @@ ok(win0.every((d) => d.status.state === 'open'), 'an empty plan is all open days
 
 section('a day means something only once a routine is on it');
 const planRoutine = await store.createRoutine({ name: 'Push Day', entries: [{ name: 'Bench', sets: 3, reps: 5, weight: 60 }] });
-await store.setPlanDay(k(0), { routineId: planRoutine.id });
-await store.setPlanDay(k(1), { rest: true });
-await store.setPlanDay(k(2), { routineId: planRoutine.id });
+await planStore.setPlanDay(k(0), { routineId: planRoutine.id });
+await planStore.setPlanDay(k(1), { rest: true });
+await planStore.setPlanDay(k(2), { routineId: planRoutine.id });
 ok(state.plan[k(0)].routineId === planRoutine.id, 'the routine is on today');
 ok(state.plan[k(1)].rest === true && state.plan[k(1)].routineId === null,
   'a rest day holds no routine');
-await store.setPlanDay(k(1), { routineId: planRoutine.id });
+await planStore.setPlanDay(k(1), { routineId: planRoutine.id });
 ok(state.plan[k(1)].rest === false, 'and planning a routine clears the rest flag');
-await store.setPlanDay(k(1), { rest: true });
+await planStore.setPlanDay(k(1), { rest: true });
 ok(state.plan[k(1)].routineId === null, 'the reverse too — the two are exclusive');
 const win1 = planLib.planWindow(state.plan, [], T0);
 ok(win1[0].status.state === 'today', `today with a routine reads "today" (${win1[0].status.state})`);
@@ -1065,26 +1245,26 @@ ok(planLib.planWindow(past, [], T0).every((d) => d.key !== k(-2)),
   'but the window never shows it — History owns the past');
 
 section('marking a day done by hand, for a workout the app never saw');
-await store.togglePlanDone(k(2));
+await planStore.togglePlanDone(k(2));
 ok(Number.isFinite(state.plan[k(2)].doneAt), 'a timestamp is recorded');
 const win5 = planLib.planWindow(state.plan, [], T0);
 ok(win5[2].status.state === 'done' && win5[2].status.manual === true,
   'the row says it was ticked by hand');
-await store.togglePlanDone(k(2));
+await planStore.togglePlanDone(k(2));
 ok(state.plan[k(2)].doneAt === null, 'and it can be un-ticked');
 
 section('moving a day, and swapping when the target is taken');
-await store.setPlanDay(k(5), { routineId: planRoutine.id });
-ok(await store.movePlanDay(k(5), k(6)) === true, 'an empty target just takes it');
+await planStore.setPlanDay(k(5), { routineId: planRoutine.id });
+ok(await planStore.movePlanDay(k(5), k(6)) === true, 'an empty target just takes it');
 ok(!state.plan[k(5)] && state.plan[k(6)].routineId === planRoutine.id, 'and the old day is cleared');
-await store.setPlanDay(k(5), { rest: true });
-await store.movePlanDay(k(5), k(6));
+await planStore.setPlanDay(k(5), { rest: true });
+await planStore.movePlanDay(k(5), k(6));
 ok(state.plan[k(6)].rest === true && state.plan[k(5)].routineId === planRoutine.id,
   'a taken target swaps rather than overwrites');
-ok(await store.movePlanDay(k(7), k(8)) === false, 'moving an empty day is a no-op');
+ok(await planStore.movePlanDay(k(7), k(8)) === false, 'moving an empty day is a no-op');
 
 section('the plan is pruned, persisted and travels in the backup');
-await store.setPlanDay(k(4), { note: '   ' });
+await planStore.setPlanDay(k(4), { note: '   ' });
 ok(!state.plan[k(4)], 'a day with nothing on it is not kept');
 const planBackup = xi.backupObject();
 ok(typeof planBackup.plan === 'object' && planBackup.plan[k(0)].routineId === planRoutine.id,
@@ -1100,7 +1280,7 @@ ok(JSON.stringify(planLib.normalizePlan({ nonsense: 1, '2026-13-99': {}, [k(0)]:
   'junk keys are dropped on the way in');
 
 await store.deleteRoutine(planRoutine.id);
-for (const key of Object.keys(state.plan)) await store.clearPlanDay(key);
+for (const key of Object.keys(state.plan)) await planStore.clearPlanDay(key);
 
 section('every JSON sample the app shows must be valid and importable');
 // A sample is pasted straight into the Import box, so an invalid escape in one

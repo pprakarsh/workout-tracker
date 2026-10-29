@@ -89,6 +89,29 @@ export function fmtReps(min, max) {
   return fmtNum(min ?? max);
 }
 
+/** 1 kg in lb. Exact enough that a converted history never drifts visibly. */
+const LB_PER_KG = 2.20462262;
+
+/**
+ * Convert a weight between kg and lb.
+ *
+ * Sets store the unit they were LOGGED in, so a history that spans a unit
+ * change holds both. Charts and totals convert everything into the unit on
+ * display rather than refusing to draw, because a 2.2x step in the middle of a
+ * progress line is worse than a rounding difference. Unknown units pass
+ * through: better an unconverted number than a silently wrong one.
+ */
+export function toUnit(value, from, to) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const a = String(from || '').toLowerCase();
+  const b = String(to || '').toLowerCase();
+  if (!a || !b || a === b) return n;
+  if (a === 'kg' && b === 'lb') return Math.round(n * LB_PER_KG * 100) / 100;
+  if (a === 'lb' && b === 'kg') return Math.round((n / LB_PER_KG) * 100) / 100;
+  return n;
+}
+
 /**
  * Calendar boundaries, built from date parts so DST never shifts them.
  *
@@ -156,7 +179,7 @@ export function download(filename, text, mime = 'text/plain') {
 export const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** Shown in the Routines tab so you can tell which build is actually loaded. */
-export const APP_VERSION = '22';
+export const APP_VERSION = '23';
 
 /** CSV field quoting. */
 export function csvCell(v) {

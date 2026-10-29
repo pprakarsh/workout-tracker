@@ -66,7 +66,7 @@ await sleep(150);
 section('boot');
 ok(store.state.ready, 'store initialised');
 ok(view().length > 0, 'something rendered');
-ok($$('#tabBar .tab').length === 5, `five tabs present (${[...$$('#tabBar .tab')].map((b) => b.dataset.tab).join(',')})`);
+ok($$('#tabBar .tab').length === 6, `six tabs present (${[...$$('#tabBar .tab')].map((b) => b.dataset.tab).join(',')})`);
 
 section('seed a routine, then start it from the Now tab');
 await xi.importFromText(routinesView.SAMPLE);
@@ -965,6 +965,76 @@ ok(store.getSession(openId).finishedAt === loggedAt,
 const closedRow = [...$$('.sess-item')].find((r) => r.dataset.id === openId);
 ok(!closedRow.textContent.includes('unfinished'), 'and the row stops saying unfinished');
 await store.deleteSession(openId);
+
+section('the Trends tab opens on an overview of everything logged');
+await click('#tabBar .tab[data-tab="trends"]');
+ok(view().includes('Logged'), 'it shows how much has been logged');
+ok($$('.chart').length >= 1, `with at least one chart (${$$('.chart').length})`);
+ok(view().includes('Sets per week'), 'sets per week is always there');
+ok($('.chart[role="img"]') !== null, 'and the chart is labelled for a screen reader');
+ok($('.chart[aria-label]').getAttribute('aria-label').length > 10, 'with a real description');
+ok($$('[data-action="trend-open"]').length >= 1, 'every trained exercise is tappable');
+ok($$('.cbar').length >= 4, `bars are drawn, one per week (${$$('.cbar').length})`);
+ok($('.cbar.now') !== null, 'with the current week highlighted');
+
+section('tapping an exercise shows how it is progressing');
+const trendTarget = [...$$('[data-action="trend-open"]')][0];
+const trendName = trendTarget.dataset.name;
+await click(`[data-action="trend-open"][data-name="${trendName}"]`);
+ok(store.state.nav.trendName === trendName, `opened ${trendName}`);
+ok(view().includes(trendName), 'the heading names it');
+ok($('[data-action="trend-back"]') !== null, 'with a way back');
+ok($$('[data-action="trend-range"]').length === 3, 'three ranges to choose from');
+ok($('[data-action="trend-range"][data-range="all"]').classList.contains('on'), 'all time by default');
+ok($('.trend-table') !== null, 'the session table is there — the real readout on a phone');
+ok($$('.trend-table .tr').length >= 2, 'with a header and at least one row');
+ok($('.trend-table .tr.hd') !== null, 'the table has column headings');
+
+section('a thin history says so instead of drawing a trend');
+const detailText = view();
+const hasDelta = $('.trend-delta') !== null;
+ok(hasDelta || /more and a trend appears/.test(detailText),
+  'either a delta or an explicit "not enough yet" — never a line through two points');
+if (!hasDelta) {
+  ok(/session/.test(detailText), 'and it says how many sessions there are');
+}
+
+section('switching range re-filters without leaving the exercise');
+await click('[data-action="trend-range"][data-range="3m"]');
+ok(store.state.trendRange === '3m', 'the range changed');
+ok(store.state.nav.trendName === trendName, 'and we are still on the same exercise');
+ok($('[data-action="trend-range"][data-range="3m"]').classList.contains('on'), 'the chip reflects it');
+await click('[data-action="trend-range"][data-range="all"]');
+
+section('the exercise can be swapped from inside the detail');
+await click('[data-action="trend-pick"]');
+ok($('#modalRoot [data-action="trend-open"]') !== null, 'the picker lists exercises');
+await click('[data-mclose]');
+await click('[data-action="trend-back"]');
+ok(store.state.nav.trendName === null, 'back returns to the overview');
+ok(view().includes('Sets per week'), 'which is the overview again');
+
+section('a plank trend is measured in seconds, with no estimated 1RM');
+await xi.importFromText(JSON.stringify({
+  name: 'Trend Hold', entries: [{ name: 'Trend Plank', measure: 'time', sets: 2, reps: '45' }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const thR = store.state.routines.find((r) => r.name === 'Trend Hold');
+await click(`[data-action="routine-start"][data-id="${thR.id}"]`, 'Start');
+const thE = store.state.active.entries[0];
+for (const st of thE.sets) await store.toggleSetDone(thE.id, st.id);
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-finish"]', 'Finish');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(120);
+await click('#tabBar .tab[data-tab="trends"]');
+await click('[data-action="trend-open"][data-name="Trend Plank"]');
+ok(view().includes('Longest hold'), 'the headline is the longest hold');
+ok(!view().includes('Estimated 1RM'), 'and no estimated 1RM is offered');
+ok(view().includes('45s'), `with the hold in seconds (${/45s/.test(view())})`);
+ok(view().includes('Personal bests'), 'PRs still apply');
+await click('[data-action="trend-back"]');
 
 section('the Plan tab shows ten days and plans one in two taps');
 await xi.importFromText(JSON.stringify({

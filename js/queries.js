@@ -8,6 +8,9 @@ import {
   normName, startOfWeek, startOfMonth, addWeeks, addMonths, fmtDate, isoDate,
 } from './util.js';
 import { cardioLogged } from './cardio.js';
+import {
+  exerciseSets, metricFor, bySession, weeklyTotals, exerciseTotals, cardioRuns,
+} from './trends.js';
 
 /* ------------------------------------------------------------------ */
 /* history lookups                                                    */
@@ -270,4 +273,61 @@ export function groupByMonth(sessions = []) {
     out[out.length - 1].sessions.push(s);
   });
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* trends                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Everything the Trends tab needs about one exercise, in the unit on display.
+ *
+ * The state read lives here so js/trends.js can stay pure and testable with
+ * hand-built sessions. `normName` folds case and spacing, so "Bench press" and
+ * "Bench Press" are one exercise rather than two half-histories.
+ */
+export function exerciseTrend(name, unit = state.settings.unit) {
+  const key = normName(name);
+  if (!key) return null;
+  const lib = findInLibrary(key);
+  const sessions = [...state.sessions].sort((a, b) => a.startedAt - b.startedAt);
+  const type = lib?.def?.type === 'cardio' ? 'cardio' : 'lift';
+  if (type === 'cardio') {
+    return {
+      key, name: lib?.name || name, type: 'cardio', measure: 'reps',
+      runs: cardioRuns(sessions, key, normName), sets: [], rows: [], converted: 0, unit,
+    };
+  }
+  // the measure can only come from the sessions themselves: a routine may have
+  // been edited since, and a logged plank stays a plank
+  const measure = (() => {
+    for (let i = state.sessions.length - 1; i >= 0; i--) {
+      const hit = state.sessions[i].entries.find((e) => normName(e.name) === key && e.type === 'lift');
+      if (hit) return hit.measure || 'reps';
+    }
+    return lib?.def?.measure || 'reps';
+  })();
+  const { sets, converted } = exerciseSets(sessions, key, normName, unit);
+  const metric = metricFor(measure);
+  return {
+    key,
+    name: lib?.name || name,
+    type: 'lift',
+    measure,
+    metric,
+    sets,
+    rows: bySession(sets, metric),
+    converted,
+    unit,
+  };
+}
+
+/** Weekly volume and set counts for the whole log. */
+export function weeklyVolume(weeks = 12, unit = state.settings.unit) {
+  return weeklyTotals(state.sessions, unit, weeks, startOfWeek, addWeeks);
+}
+
+/** Every exercise ever logged, ranked by how much work went into it. */
+export function trainedExercises(sessions = state.sessions, unit = state.settings.unit) {
+  return exerciseTotals(sessions, normName, unit);
 }

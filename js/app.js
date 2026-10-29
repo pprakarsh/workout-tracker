@@ -15,12 +15,14 @@ import * as routinesView from './views/routines.js';
 import { entryActions, handleFieldInput } from './views/entry.js';
 import { cardioActions } from './views/cardio.js';
 import * as planView from './views/plan.js';
+import * as trendsView from './views/trends.js';
 
 const VIEWS = {
   now: nowView,
   session: sessionView,
   plan: planView,
   history: historyView,
+  trends: trendsView,
   routines: routinesView,
 };
 
@@ -29,6 +31,7 @@ const TITLES = {
   session: 'Session',
   plan: 'Plan',
   history: 'History',
+  trends: 'Trends',
   routines: 'Routines',
 };
 
@@ -38,6 +41,7 @@ const ACTIONS = {
   ...nowView.nowActions,
   ...sessionView.sessionActions,
   ...planView.planActions,
+  ...trendsView.trendsActions,
   ...historyView.historyActions,
   ...routinesView.routineActions,
   ...timerActions,
@@ -57,7 +61,7 @@ export function render() {
   try {
     const root = document.getElementById('viewRoot');
     const view = VIEWS[state.tab] || VIEWS.now;
-    const screen = `${state.tab}|${state.nav.sessionId || ''}|${state.nav.routineId || ''}`;
+    const screen = `${state.tab}|${state.nav.sessionId || ''}|${state.nav.routineId || ''}|${state.nav.trendName || ''}`;
     const y = window.scrollY;
     root.innerHTML = view.render();
     // same screen: keep your place. new screen: start at the top.

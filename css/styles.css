@@ -196,6 +196,42 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 .legrow.edited .idx::after{content:"\2022";color:var(--warn);margin-left:1px}
 .warnmsg{color:var(--warn)}
 
+/* charts and trends ---------------------------------------------------- */
+.chart{display:block;width:100%;height:auto;overflow:visible}
+.chart .cg{stroke:var(--line);stroke-width:.6}
+.chart .cyl{fill:var(--fg3);font-size:7.5px;text-anchor:end;font-family:inherit}
+.chart .cxl{fill:var(--fg3);font-size:7.5px;font-family:inherit}
+.chart .cline{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-linejoin:round}
+.chart .cdot{fill:var(--fg3);opacity:.75}
+/* a hollow dot is a set whose estimate means less: high reps, or logged easy */
+.chart .cdot.dim{fill:none;stroke:var(--fg3);stroke-width:.8;opacity:.6}
+.chart .cbest{fill:var(--accent)}
+.chart .cbest.pr{fill:var(--ok);stroke:var(--bg2);stroke-width:1.4}
+.chart .cbar{fill:var(--accent);opacity:.55}
+.chart .cbar.now{opacity:1}
+
+.trend-big{font-size:30px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.trend-delta{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--fg2)}
+.trend-delta.up{color:var(--ok)}
+.trend-delta.down{color:var(--warn)}
+
+.trend-table{font-size:12.5px}
+.trend-table .tr{
+  display:grid;grid-template-columns:52px 1fr 62px;gap:8px;align-items:start;
+  padding:7px 2px;border-bottom:1px solid var(--line);
+}
+.trend-table .tr:last-child{border-bottom:none}
+.trend-table .tr.hd{
+  font-size:10px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--fg3);font-weight:700;border-bottom:1px solid var(--line);
+}
+.trend-table .tr>div:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.trend-table .sets{display:flex;flex-wrap:wrap;gap:4px}
+.trend-table .sets code{
+  background:var(--bg3);border-radius:6px;padding:2px 5px;font-size:11px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--fg2);
+}
+
 /* history filtering ---------------------------------------------------- */
 .hist-filter{margin-bottom:10px}
 .hist-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}

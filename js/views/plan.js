@@ -6,10 +6,10 @@
 //
 // Nothing here decides what a day MEANS: js/plan.js does that, reading the
 // session history so a day you trained reads as done without being ticked.
+import { state, startSession, getRoutine } from '../store.js';
 import {
-  state, setPlanDay, clearPlanDay, togglePlanDone, movePlanDay,
-  startSession, getRoutine,
-} from '../store.js';
+  setPlanDay, clearPlanDay, togglePlanDone, movePlanDay,
+} from '../planstore.js';
 import {
   planWindow, planSummary, keyToTs, dayKey, addDays, PLAN_DAYS,
 } from '../plan.js';

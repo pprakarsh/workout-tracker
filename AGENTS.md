@@ -235,7 +235,8 @@ Honest list, with the trigger for paying it off rather than a vague "someday":
 | ~~Cardio intervals are expanded entries~~ | **Done.** One entry holds a `pattern` and expands into `log.legs`; `cardioLogged(log)` is the only way to ask whether a cardio entry recorded anything |
 | Interval legs are timed, never measured | When you want `400m @ 4:00/km` on a track. `parseLeg` currently refuses `400m` rather than guess |
 | A set's amount is stored in `reps` for every measure | If a set ever needs reps *and* a time together. Until then `measure` plus `fmtAmount`/`parseAmount` is cheaper than parallel fields and a migration |
-| `store.js` is at 968 of its 1000-line cap | **Next time it needs a function.** The seam to take: the plan's persistence (`persistPlan`, `setPlanDay`, `clearPlanDay`, `togglePlanDone`, `movePlanDay`) needs only `state`, `emit` and `metaSet`, so it can leave without a circular import |
+| ~~`store.js` is at its 1000-line cap~~ | **Done.** The plan's writes moved to `js/planstore.js`, the mirror of `queries.js`: both import `state` from the store and neither is imported by it. store.js is back to 913. The same seam is available again for the rest timer if needed |
+| Trends has no muscle-group view | When you want weekly volume per muscle. Nothing tags an exercise, and names must never be guessed from |
 | No charts, so years of logs stay a list | When you have enough history to want a trend |
 | Exercises have no muscle-group tags | When you want weekly volume per muscle |
 | Gist files over 1 MB rely on a raw-URL fallback | Around year 3–5 of daily logging |

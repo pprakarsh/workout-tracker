@@ -23,6 +23,9 @@ js/queries.js       read-only derived queries: exercise library, history lookups
 js/cardio.js        run maths: pace arithmetic, the interval pattern, round expansion
 js/measure.js       what a set is measured in: reps, time (holds) or distance (carries)
 js/plan.js          the 10-day plan: day keys, the window, and what a day means
+js/planstore.js     writes for the plan -- the mirror of queries.js
+js/trends.js        progress analysis: e1RM, per-session series, PRs, weekly totals
+js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
 js/db.js            thin promise wrapper over IndexedDB
 js/sync.js          Gist sync: push/pull, conflict guards, device pairing
 js/timer.js         rest timer bar: ticking, beep, audio unlock
@@ -33,6 +36,7 @@ js/exportimport.js  JSON backup, CSV, Markdown, import/normalisation entry point
 js/views/entry.js   the exercise card and set rows, the exercise form, the library picker
 js/views/cardio.js  the cardio card: a straight run, or an interval block and its rounds
 js/views/plan.js    "Plan" tab: ten day rows, assign a routine, mark done
+js/views/trends.js  "Trends" tab: weekly totals, and progress for one exercise
 js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
@@ -50,7 +54,9 @@ js/views/*  →  store, queries, format, cardio, ui, util, timer, sync
    ↓
 store, sync, exportimport, format, queries  →  model, cardio, db, util
    ↓
-model  →  cardio, measure, util     cardio  →  util     measure  →  util     plan  →  util
+model  →  cardio, measure, util     cardio  →  util     measure  →  util
+plan  →  util     trends  →  measure, util     chart  →  util
+queries, planstore  →  store (for `state`), and the pure modules above
 ```
 
 **Nothing outside `js/views/` may import a view**, `js/app.js` excepted. `js/format.js` exists for
@@ -208,6 +214,26 @@ Invariants worth knowing:
 - The plan is a **blob in `meta`**, keyed by local ISO date, not its own object store: ten records
   do not justify a database version bump, and it rides along in `backupObject` the way `settings`
   does. Local date, not UTC — "today" has to mean the day you are living in.
+- **Progress is multi-dimensional, so no single number is "progress".** 100x5 to 105x3 raises the
+  top set and lowers volume; 100x8 to 95x10 lowers the top set and raises both volume and estimated
+  strength. Every series in `trends.js` therefore keeps the raw sets beside the summary, and the
+  chart plots both: small dots for every working set, larger joined dots for the best of each
+  session.
+- **e1RM returns null rather than fiction.** Above 12 reps the formulas are materially less accurate
+  and disagree with each other by 5-15%, so there is no estimate. A bodyweight set with no recorded
+  session bodyweight has no estimate either — the app refuses to invent a bodyweight here exactly as
+  `sessionVolume` does. And a single rep returns the weight itself: Epley would return 103.3 for a
+  100 kg single, inventing a PR you did not lift. Sets of 10+ reps or logged at RPE <= 7 / RIR >= 3
+  still compute but are drawn hollow, because the estimate means less there.
+- **A trend needs three sessions.** Below that the view says how many more are needed instead of
+  drawing a line through two points. The headline is a plain delta ("+9 kg over 6 sessions") — never
+  a verdict, no regression line, no "stalled" warning, because four flat weeks during a deload is
+  correct training and the app cannot tell the difference. This is the same decision as the
+  rejection of auto-progression.
+- **Weights convert on the way into a chart.** `unit` is stored per set, so a history spanning a
+  kg/lb switch holds both; `toUnit` converts everything into the unit on display and the screen says
+  how many sets were converted. A 2.2x step in the middle of a progress line is worse than a
+  rounding difference.
 - **History's filter is a lens, not data.** `state.histFilter` lives on `state` rather than in
   `state.nav`, because `app.js` clears `nav` on every tab change and a filter you lose by glancing
   at Now is worse than no filter. It is never persisted and never appears in a backup. The window

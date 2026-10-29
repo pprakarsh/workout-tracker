@@ -3,7 +3,7 @@ import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
 import { uid, num, parseReps, parseDur } from './util.js';
 import { resolveRun, isIntervals, plannedLegs, reconcileLegs, cardioLogged } from './cardio.js';
 import { setIsLoggableFor, countsTowardsVolume } from './measure.js';
-import { normalizePlan, prunePlan, blankDay } from './plan.js';
+import { normalizePlan, prunePlan } from './plan.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
   parseSetTargets, setLabels, workingSets,
@@ -38,6 +38,8 @@ export const state = {
   // state.nav, which app.js clears on every tab change -- a filter you lose by
   // glancing at Now is worse than no filter.
   histFilter: { mode: 'all', offset: 0, from: null, to: null },
+  // how far back the Trends charts look. Transient, like histFilter.
+  trendRange: 'all',
   // the 10-day plan: { 'YYYY-MM-DD': { routineId, rest, doneAt, note } }.
   // A blob in `meta`, like settings: ten records do not need their own store,
   // and it travels in the backup the same way.
@@ -582,7 +584,6 @@ export async function toggleSetDone(entryId, setId) {
   await touch();
 }
 
-/** Show or hide the per-round detail of one interval block. */
 /** Change which slice of History is shown. Not persisted; it is a lens. */
 export function setHistFilter(patch) {
   state.histFilter = { ...state.histFilter, ...patch };
@@ -616,6 +617,7 @@ export async function markSessionFinished(id) {
   return s;
 }
 
+/** Show or hide the per-round detail of one interval block. */
 export async function toggleRounds(entryId) {
   if (state.openRounds.has(entryId)) state.openRounds.delete(entryId);
   else state.openRounds.add(entryId);
@@ -854,63 +856,6 @@ export function dataFingerprint() {
     oldest,
     newest,
   };
-}
-
-/* ------------------------------------------------------------------ */
-/* the 10-day plan                                                    */
-/* ------------------------------------------------------------------ */
-
-async function persistPlan() {
-  state.plan = prunePlan(state.plan);
-  await metaSet('plan', state.plan);
-  emit();
-}
-
-/** Put a routine on a day. `routineId: null` with rest clears or rests the day. */
-export async function setPlanDay(key, { routineId = undefined, rest = undefined, note = undefined } = {}) {
-  const cur = state.plan[key] || blankDay();
-  const next = { ...cur };
-  if (routineId !== undefined) next.routineId = routineId || null;
-  if (rest !== undefined) next.rest = !!rest;
-  if (note !== undefined) next.note = String(note || '').trim();
-  // A rest day and a routine are mutually exclusive, and WHAT THE CALLER JUST
-  // SET WINS. Resolving this the other way round let a day's existing rest flag
-  // silently swallow the routine you had just chosen for it.
-  if (routineId) next.rest = false;
-  else if (rest) next.routineId = null;
-  state.plan[key] = next;
-  await persistPlan();
-  return next;
-}
-
-export async function clearPlanDay(key) {
-  delete state.plan[key];
-  await persistPlan();
-}
-
-/**
- * Tick a day by hand. Only for a day history cannot speak for -- you trained
- * without the app, or a partial session counts. A day with a matching finished
- * session already reads as done without this.
- */
-export async function togglePlanDone(key) {
-  const cur = state.plan[key] || blankDay();
-  state.plan[key] = { ...cur, doneAt: cur.doneAt ? null : Date.now() };
-  await persistPlan();
-  return state.plan[key];
-}
-
-/** Move a day's plan to another day, swapping if the target is taken. */
-export async function movePlanDay(fromKey, toKey) {
-  if (fromKey === toKey) return false;
-  const from = state.plan[fromKey];
-  if (!from) return false;
-  const to = state.plan[toKey] || null;
-  state.plan[toKey] = from;
-  if (to) state.plan[fromKey] = to;
-  else delete state.plan[fromKey];
-  await persistPlan();
-  return true;
 }
 
 /* ------------------------------------------------------------------ */

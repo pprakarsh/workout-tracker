@@ -1,0 +1,302 @@
+// "Trends" — progress, by exercise and across the whole log.
+//
+// Two screens: an overview (weekly volume, what you train most) and a detail
+// for one exercise. Tapping an exercise anywhere lands on its detail.
+//
+// The reading order on the detail screen is deliberate, and matches the order a
+// lifter actually asks things: am I getting stronger (headline + chart), what
+// is my best ever (PRs), am I doing enough (consistency), what exactly did I do
+// (the table). The table is not an afterthought -- on a phone it is the primary
+// readout, because a 6px dot has no touch target, and it doubles as the
+// accessible version of the chart.
+import { state } from '../store.js';
+import {
+  exerciseTrend, weeklyVolume, trainedExercises, historyWindow, sessionsIn,
+} from '../queries.js';
+import {
+  metricFor, personalBests, trendDelta, setLoad, isWeakEstimate, MIN_TREND_SESSIONS,
+} from '../trends.js';
+import { linePlot, barPlot } from '../chart.js';
+import { fmtPace } from '../cardio.js';
+import { measureOf, MEASURES } from '../measure.js';
+import { esc, fmtNum, fmtDate, fmtClock, fmtDur, relDay } from '../util.js';
+import { openModal, toast } from '../ui.js';
+
+const RANGES = [
+  { key: '3m', label: '3M', days: 90 },
+  { key: '1y', label: '1Y', days: 365 },
+  { key: 'all', label: 'All', days: null },
+];
+
+const shortDate = (ts) => fmtDate(ts).slice(4, -5);   // "29 Oct"
+
+/* ------------------------------------------------------------------ */
+/* overview                                                          */
+/* ------------------------------------------------------------------ */
+
+function overview() {
+  const unit = state.settings.unit;
+  const done = state.sessions.filter((s) => s.finishedAt);
+  if (!done.length) {
+    return `<div class="empty">No finished workouts yet.<br>
+      Trends appear here once you have logged a session or two.</div>`;
+  }
+
+  const weeks = weeklyVolume(12, unit);
+  const trained = trainedExercises(done, unit);
+  const last4 = weeks.slice(-4);
+  const perWeek = Math.round((last4.reduce((n, w) => n + w.sessions, 0) / 4) * 10) / 10;
+  const anyVolume = weeks.some((w) => w.volume > 0);
+
+  return `
+    <div class="card flat" style="margin-bottom:12px">
+      <div class="kv"><span>Logged</span>
+        <span class="strong">${done.length} session${done.length === 1 ? '' : 's'}</span></div>
+      <div class="kv"><span>Last 4 weeks</span><span>${perWeek} per week</span></div>
+      <div class="kv"><span>Exercises trained</span><span>${trained.length}</span></div>
+    </div>
+
+    ${anyVolume ? `
+      <h2>Volume per week</h2>
+      <div class="card">
+        ${barPlot({
+    bars: weeks.map((w, i) => ({
+      v: w.volume, label: shortDate(w.from), now: i === weeks.length - 1,
+    })),
+    yFmt: (v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : fmtNum(Math.round(v))),
+    label: `Volume per week for the last ${weeks.length} weeks, in ${unit}`,
+  })}
+        <div class="small dim center">total load lifted each week, in ${esc(unit)}
+          &mdash; timed and carried work is counted in sets, not here</div>
+      </div>` : ''}
+
+    <h2>Sets per week</h2>
+    <div class="card">
+      ${barPlot({
+    bars: weeks.map((w, i) => ({ v: w.sets, label: shortDate(w.from), now: i === weeks.length - 1 })),
+    yFmt: (v) => fmtNum(Math.round(v)),
+    label: `Working sets per week for the last ${weeks.length} weeks`,
+  })}
+      <div class="small dim center">working sets, warmups excluded</div>
+    </div>
+
+    <h2>What you train</h2>
+    ${trained.map((x) => `
+      <div class="sess-item" data-action="trend-open" data-name="${esc(x.name)}" role="button" tabindex="0">
+        <div class="body">
+          <div class="nm">${esc(x.name)}
+            ${x.type === 'cardio' ? '<span class="pill">cardio</span>' : ''}
+            ${x.measure !== 'reps' ? `<span class="pill">${esc((MEASURES[x.measure] || MEASURES.reps).label.toLowerCase())}</span>` : ''}</div>
+          <div class="sub">${x.sessions} session${x.sessions === 1 ? '' : 's'} ·
+            ${x.sets} ${x.type === 'cardio' ? 'effort' : 'set'}${x.sets === 1 ? '' : 's'}${
+  x.volume ? ` · ${fmtNum(x.volume)} ${esc(unit)} total` : ''} ·
+            last ${esc(relDay(x.lastAt).toLowerCase())}</div>
+        </div>
+        <div class="dim">›</div>
+      </div>`).join('')}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* one exercise                                                      */
+/* ------------------------------------------------------------------ */
+
+function rangeChips(active) {
+  return `<div class="hist-chips">${RANGES.map((r) => `<button type="button"
+    class="chip ${active === r.key ? 'on' : ''}" data-action="trend-range" data-range="${r.key}"
+    >${r.label}</button>`).join('')}</div>`;
+}
+
+function inRange(rows, rangeKey) {
+  const r = RANGES.find((x) => x.key === rangeKey) || RANGES[2];
+  if (!r.days) return rows;
+  const from = Date.now() - (r.days * 86400000);
+  return rows.filter((x) => x.at >= from);
+}
+
+/** A straight run or an interval block: pace is the thing that got better. */
+function cardioDetail(t) {
+  const runs = inRange(t.runs, state.trendRange);
+  if (!runs.length) {
+    return `<div class="empty">Nothing logged for ${esc(t.name)} in this range.</div>`;
+  }
+  const unit = runs[runs.length - 1].unit || 'km';
+  const best = runs.reduce((a, b) => (a === null || b.pace < a.pace ? b : a), null);
+  const far = runs.reduce((a, b) => (a === null || (b.distance || 0) > (a.distance || 0) ? b : a), null);
+  const totalDist = Math.round(runs.reduce((n, r) => n + (r.distance || 0), 0) * 100) / 100;
+  // a LOWER pace is better, so the axis is inverted by negating the values
+  return `
+    <div class="card">
+      <div class="kv"><span>Best pace</span>
+        <span class="strong">${esc(fmtPace(best.pace, unit))}</span></div>
+      <div class="kv"><span>Runs in range</span><span>${runs.length}</span></div>
+      <div class="kv"><span>Distance covered</span><span>${fmtNum(totalDist)} ${esc(unit)}</span></div>
+      ${far && far.distance ? `<div class="kv"><span>Furthest</span><span>${fmtNum(far.distance)} ${esc(unit)} on ${esc(shortDate(far.at))}</span></div>` : ''}
+    </div>
+    <div class="card">
+      ${linePlot({
+    points: runs.map((r) => ({ x: r.at, y: -r.pace })),
+    best: runs.map((r) => ({ x: r.at, y: -r.pace, pr: r === best })),
+    yFmt: (v) => fmtClock(-v),
+    xLeft: shortDate(runs[0].at),
+    xRight: shortDate(runs[runs.length - 1].at),
+    label: `Pace per ${unit} over ${runs.length} runs, faster is higher`,
+  })}
+      <div class="small dim center">pace per ${esc(unit)} &mdash; higher is faster</div>
+    </div>
+    <h2>Runs</h2>
+    <div class="trend-table">
+      <div class="tr hd"><div>Date</div><div>Dist</div><div>Time</div><div>Pace</div></div>
+      ${[...runs].reverse().map((r) => `
+        <div class="tr">
+          <div>${esc(shortDate(r.at))}</div>
+          <div>${r.distance ? `${fmtNum(r.distance)} ${esc(r.unit)}` : '--'}</div>
+          <div>${r.duration ? esc(fmtClock(r.duration)) : '--'}</div>
+          <div class="strong">${esc(fmtPace(r.pace, r.unit))}${r.intervals ? ` <span class="dim">${r.rounds}&times;</span>` : ''}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function liftDetail(t) {
+  const unit = t.unit;
+  const metric = t.metric || metricFor(t.measure);
+  const rows = inRange(t.rows, state.trendRange);
+  const sets = rows.flatMap((r) => r.sets);
+  if (!rows.length) {
+    return `<div class="empty">Nothing logged for ${esc(t.name)} in this range.</div>`;
+  }
+
+  const withValue = rows.filter((r) => r.best !== null);
+  const delta = trendDelta(rows);
+  const prs = personalBests(sets, t.measure, unit);
+  const allTimeBest = withValue.reduce((a, b) => (a === null || b.best > a.best ? b : a), null);
+  const fmtV = (v) => metric.fmt(v, metric.key === 'e1rm' ? unit : '');
+  const latest = withValue.length ? withValue[withValue.length - 1] : null;
+  const days = rows.length > 1
+    ? Math.max(1, Math.round((rows[rows.length - 1].at - rows[0].at) / 86400000)) : 0;
+  const perWeek = days ? Math.round((rows.length / (days / 7)) * 10) / 10 : rows.length;
+
+  return `
+    <div class="card">
+      <div class="row">
+        <div style="flex:1;min-width:0">
+          <div class="tiny">${esc(metric.title)}${metric.estimate ? ' (estimated)' : ''}</div>
+          <div class="trend-big">${latest ? esc(fmtV(latest.best)) : '--'}</div>
+        </div>
+        ${delta.enough ? `
+          <div style="text-align:right">
+            <div class="trend-delta ${delta.change > 0 ? 'up' : delta.change < 0 ? 'down' : ''}">
+              ${delta.change > 0 ? '▲' : delta.change < 0 ? '▼' : '='} ${esc(fmtV(Math.abs(delta.change)))}</div>
+            <div class="tiny dim">over ${delta.sessions} sessions · ${delta.weeks} week${delta.weeks === 1 ? '' : 's'}</div>
+          </div>` : ''}
+      </div>
+      ${delta.enough ? '' : `<p class="hint" style="margin-bottom:0">${delta.have} session${delta.have === 1 ? '' : 's'}
+        with a usable number so far. ${MIN_TREND_SESSIONS - delta.have} more and a trend appears here &mdash;
+        two points make a line, not a trend.</p>`}
+      ${metric.estimate ? `<p class="hint" style="margin-bottom:0">Estimated from your best set each
+        session (Epley). Sets of ${esc(String(10))} or more reps, or logged easy, are drawn hollow
+        because the estimate means less there.</p>` : ''}
+    </div>
+
+    ${withValue.length > 1 ? `
+      <div class="card">
+        ${linePlot({
+    points: sets.map((x) => ({ x: x.sessionAt, y: metric.value(x), dim: metric.estimate && isWeakEstimate(x) }))
+      .filter((p) => p.y !== null),
+    best: withValue.map((r) => ({ x: r.at, y: r.best, pr: r === allTimeBest })),
+    yFmt: (v) => fmtV(v),
+    xLeft: shortDate(rows[0].at),
+    xRight: shortDate(rows[rows.length - 1].at),
+    label: `${metric.title} for ${t.name} across ${withValue.length} sessions`,
+  })}
+        <div class="small dim center">every working set, with the best of each session joined</div>
+      </div>` : ''}
+
+    ${prs.length ? `
+      <h2>Personal bests</h2>
+      <div class="card">
+        ${prs.map((p) => `<div class="kv"><span>${esc(p.label)}${p.estimate ? ' <span class="dim">est.</span>' : ''}</span>
+          <span><b>${p.value}</b> <span class="dim small">${esc(shortDate(p.set.at))}</span></span></div>`).join('')}
+      </div>` : ''}
+
+    <div class="card flat">
+      <div class="kv"><span>Sessions in range</span><span>${rows.length}</span></div>
+      <div class="kv"><span>Working sets</span><span>${sets.length}</span></div>
+      <div class="kv"><span>Frequency</span><span>${perWeek} per week</span></div>
+      ${t.converted ? `<div class="kv"><span>Converted</span>
+        <span class="dim">${t.converted} set${t.converted === 1 ? '' : 's'} logged in another unit, shown in ${esc(unit)}</span></div>` : ''}
+    </div>
+
+    <h2>Session log</h2>
+    <div class="trend-table">
+      <div class="tr hd"><div>Date</div><div>Sets</div><div>${esc(metric.estimate ? 'e1RM' : metric.axis)}</div></div>
+      ${[...rows].reverse().map((r) => `
+        <div class="tr">
+          <div>${esc(shortDate(r.at))}</div>
+          <div class="sets">${r.sets.map((x) => `<code>${esc(setLabelFor(x, t.measure, unit))}</code>`).join('')}</div>
+          <div class="strong">${r.best === null ? '--' : esc(fmtV(r.best))}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+/** "100 kg × 5 @8" for reps, "45s" for a hold, "40 m @ 24 kg" for a carry. */
+function setLabelFor(x, measure, unit) {
+  const eff = [
+    x.rpe !== null ? `@${fmtNum(x.rpe)}` : null,
+    x.rir !== null ? `r${fmtNum(x.rir)}` : null,
+  ].filter(Boolean).join(' ');
+  const tail = eff ? ` ${eff}` : '';
+  if (measure === 'time') {
+    const t = x.reps >= 60 ? fmtClock(x.reps) : `${fmtNum(x.reps)}s`;
+    return `${t}${x.weight ? ` @ ${fmtNum(x.weight)} ${unit}` : ''}${tail}`;
+  }
+  if (measure === 'distance') {
+    return `${fmtNum(x.reps)} m${x.weight ? ` @ ${fmtNum(x.weight)} ${unit}` : ''}${tail}`;
+  }
+  return `${setLoad(x, unit)} \u00d7 ${x.reps === null ? '--' : fmtNum(x.reps)}${tail}`;
+}
+
+function detail(name) {
+  const t = exerciseTrend(name);
+  if (!t) { state.nav.trendName = null; return overview(); }
+  return `
+    <button type="button" class="btn sm ghost" data-action="trend-back">← All trends</button>
+    <div class="row" style="margin:12px 0 8px">
+      <div style="flex:1;min-width:0">
+        <h2 style="margin:0">${esc(t.name)}</h2>
+        <div class="tiny dim">${t.type === 'cardio' ? 'cardio'
+    : esc((MEASURES[t.measure] || MEASURES.reps).label.toLowerCase())}</div>
+      </div>
+      <button type="button" class="btn sm" data-action="trend-pick">Change</button>
+    </div>
+    ${rangeChips(state.trendRange)}
+    ${t.type === 'cardio' ? cardioDetail(t) : liftDetail(t)}`;
+}
+
+export function render() {
+  return state.nav.trendName ? detail(state.nav.trendName) : overview();
+}
+
+/* ------------------------------------------------------------------ */
+/* actions                                                           */
+/* ------------------------------------------------------------------ */
+
+export const trendsActions = {
+  'trend-open': ({ name }) => { state.nav.trendName = name; },
+  'trend-back': () => { state.nav.trendName = null; },
+  'trend-range': ({ range }) => { state.trendRange = range; },
+
+  'trend-pick': () => {
+    const list = trainedExercises();
+    if (!list.length) { toast('Nothing logged yet'); return; }
+    openModal({
+      title: 'Which exercise?',
+      bodyHtml: `
+        <div class="btn-row" style="flex-direction:column;gap:8px">
+          ${list.map((x) => `<button type="button" class="btn block" data-action="trend-open"
+            data-name="${esc(x.name)}">${esc(x.name)}
+            <span class="dim small">${x.sessions} session${x.sessions === 1 ? '' : 's'}</span></button>`).join('')}
+        </div>`,
+      cancelText: 'Close',
+    });
+  },
+};

@@ -27,6 +27,9 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Session progress bar | Entry completion, in the Now header |
 | 10-day Plan tab | Assign a routine per day, rest days, push/pull a day; done is derived from history |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |
+| Trends tab | Weekly volume and sets, most-trained list; per-exercise e1RM/hold/carry/pace charts, PRs, session log |
+| Dependency-free SVG charts | `js/chart.js` — scatter+line and bars, no library, no build step |
+| Weight unit conversion | A history spanning a kg/lb switch converts into the unit on display |
 | Explicit dates in History, and closing a stranded session | `markSessionFinished` times it to the last set logged |
 | "Do this next" | Moves a whole block behind the current one, from the session list |
 | Tap-driven interval builder | Steppers, presets and a live preview; typing is the fallback |
@@ -43,11 +46,11 @@ plate calculator is offered, and whether your history becomes more than a list.
 | # | Feature | Why | Effort | Depends on |
 |---|---|---|---|---|
 | 1 | **Plate calculator** — per-side loading for a target weight, given bar weight and available plates | Named as a differentiator in every app comparison; removes real mid-set arithmetic | S | — |
-| 2 | **PR detection** — best weight at a rep count, best estimated 1RM, best session volume, flagged when you beat it | Free from data already stored; the main motivational payoff of keeping a log | S | warmup flag (done) |
+| 2 | **PR notification** — tell you at the moment you beat a record, not only when you visit Trends | The records are computed; this is surfacing them mid-session | S | Trends (done) |
 | 3 | **Screen wake lock** during a workout | `navigator.wakeLock` is supported in iOS Safari 16.4+. Stops you unlocking the phone between every set | S | verify support on your iOS version |
 | 4 | **Set notes UI** | `set.note` already exists in the model with no input | S | — |
 | 5 | **Rest suggestion from your own history** — default to the median rest you actually took for that exercise | Logged rest is currently write-only | S | — |
-| 6 | **Per-exercise history screen** — every past set for one movement, best set, estimated 1RM trend | Turns years of logs into something you'd open. Today only "last time" is surfaced | M | — |
+| 6 | **Muscle-group tags** → weekly volume per muscle | The one view Trends cannot build today, because nothing tags an exercise | M | Tag once per exercise in the library; never guess from names |
 
 ## Later
 
