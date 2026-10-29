@@ -4,7 +4,9 @@
 //
 // Imports state but never mutates it.
 import { state } from './store.js';
-import { normName } from './util.js';
+import {
+  normName, startOfWeek, startOfMonth, addWeeks, addMonths, fmtDate, isoDate,
+} from './util.js';
 import { cardioLogged } from './cardio.js';
 
 /* ------------------------------------------------------------------ */
@@ -172,3 +174,100 @@ export function lastSessionForRoutine(routineId) {
 
 export const completedSessions = () => state.sessions.filter((s) => s.finishedAt);
 
+
+/* ------------------------------------------------------------------ */
+/* history filtering                                                  */
+/* ------------------------------------------------------------------ */
+
+/** The default: everything, newest first. */
+export const ALL_SESSIONS = { mode: 'all', offset: 0, from: null, to: null };
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+const dayEnd = (ts) => {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+};
+
+const parseDayInput = (v) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || ''));
+  if (!m) return null;
+  const ts = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+  return isoDate(ts) === v ? ts : null;
+};
+
+/**
+ * Turn a filter into a concrete window plus a label for the header.
+ *
+ * `offset` steps whole weeks or months back (negative) and forward, so the week
+ * and month views can be browsed rather than only showing the current one.
+ * A range with `from` equal to `to` is a single day, which is how "a specific
+ * date" is expressed -- one control instead of two.
+ */
+export function historyWindow(filter = ALL_SESSIONS, now = Date.now()) {
+  const f = { ...ALL_SESSIONS, ...(filter || {}) };
+  if (f.mode === 'week') {
+    const from = addWeeks(startOfWeek(now), f.offset || 0);
+    const to = dayEnd(addWeeks(from, 1) - 86400000);
+    const sameYear = new Date(from).getFullYear() === new Date(now).getFullYear();
+    return {
+      from,
+      to,
+      label: f.offset === 0 ? 'This week'
+        : f.offset === -1 ? 'Last week'
+          : `${fmtDate(from).slice(4, sameYear ? 10 : 99)} - ${fmtDate(to).slice(4)}`,
+      sub: `${fmtDate(from).slice(4)} - ${fmtDate(to).slice(4)}`,
+    };
+  }
+  if (f.mode === 'month') {
+    const from = addMonths(startOfMonth(now), f.offset || 0);
+    const to = dayEnd(addMonths(from, 1) - 86400000);
+    const d = new Date(from);
+    return {
+      from,
+      to,
+      label: f.offset === 0 ? 'This month' : `${MONTHS[d.getMonth()]} ${d.getFullYear()}`,
+      sub: `${MONTHS[d.getMonth()]} ${d.getFullYear()}`,
+    };
+  }
+  if (f.mode === 'range') {
+    const a = parseDayInput(f.from);
+    const b = parseDayInput(f.to);
+    if (a === null && b === null) return { from: null, to: null, label: 'Pick a date', sub: '' };
+    const from = a === null ? b : a;
+    const to = dayEnd(b === null ? a : b);
+    if (from > to) return { from: to - 86399999, to: dayEnd(from), label: 'Date range', sub: '' };
+    const oneDay = isoDate(from) === isoDate(to);
+    return {
+      from,
+      to,
+      label: oneDay ? fmtDate(from) : `${fmtDate(from).slice(4)} - ${fmtDate(to).slice(4)}`,
+      sub: oneDay ? 'a single day' : '',
+    };
+  }
+  return { from: null, to: null, label: 'All time', sub: '' };
+}
+
+/** Sessions inside a window. A null bound means unbounded on that side. */
+export function sessionsIn(sessions, window) {
+  if (!window || (window.from === null && window.to === null)) return sessions;
+  return sessions.filter((s) => (window.from === null || s.startedAt >= window.from)
+    && (window.to === null || s.startedAt <= window.to));
+}
+
+/** Month headings for a list of sessions, so a long range stays readable. */
+export function groupByMonth(sessions = []) {
+  const out = [];
+  let key = null;
+  sessions.forEach((s) => {
+    const d = new Date(s.startedAt);
+    const k = `${d.getFullYear()}-${d.getMonth()}`;
+    if (k !== key) {
+      key = k;
+      out.push({ heading: `${MONTHS[d.getMonth()]} ${d.getFullYear()}`, sessions: [] });
+    }
+    out[out.length - 1].sessions.push(s);
+  });
+  return out;
+}

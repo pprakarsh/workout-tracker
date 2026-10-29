@@ -18,7 +18,8 @@ manifest.webmanifest
 js/app.js           boot, render loop, delegated event routing, action registry
 js/store.js         ALL state and persistence; session and routine mutations
 js/model.js         entry/routine SHAPE: normalisation, defaults, plan -> session expansion
-js/queries.js       read-only derived queries: exercise library, history lookups, recent values
+js/queries.js       read-only derived queries: exercise library, history lookups and
+                    windows (week/month/range), recent values
 js/cardio.js        run maths: pace arithmetic, the interval pattern, round expansion
 js/measure.js       what a set is measured in: reps, time (holds) or distance (carries)
 js/plan.js          the 10-day plan: day keys, the window, and what a day means
@@ -207,6 +208,17 @@ Invariants worth knowing:
 - The plan is a **blob in `meta`**, keyed by local ISO date, not its own object store: ten records
   do not justify a database version bump, and it rides along in `backupObject` the way `settings`
   does. Local date, not UTC — "today" has to mean the day you are living in.
+- **History's filter is a lens, not data.** `state.histFilter` lives on `state` rather than in
+  `state.nav`, because `app.js` clears `nav` on every tab change and a filter you lose by glancing
+  at Now is worse than no filter. It is never persisted and never appears in a backup. The window
+  maths is in `queries.js` (`historyWindow`, `sessionsIn`, `groupByMonth`); the week starts
+  **Monday**, because a training week is counted Monday-to-Sunday and a Sunday start splits every
+  weekend across two of them. Stepping forward is capped at the current week or month — there is no
+  history ahead of today.
+- **A session can be stranded unfinished** if the app closes mid-workout. `markSessionFinished`
+  closes it from History, and sets `finishedAt` to the **last thing actually logged**, not now, so a
+  workout abandoned on Tuesday does not claim to have ended on Friday. Until it is closed it reads
+  "unfinished", is skipped by the plan's done check, and never reaches an export.
 - `rpe` and `rir` are both stored and neither is derived from the other, even though
   RIR ≈ 10 − RPE. `settings.effortScale` decides which columns are shown, not which are stored.
 - **A plank is a lift, not cardio.** `measure` on a lift entry says what the per-set number means:

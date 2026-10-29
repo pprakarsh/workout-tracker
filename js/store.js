@@ -3,7 +3,7 @@ import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
 import { uid, num, parseReps, parseDur } from './util.js';
 import { resolveRun, isIntervals, plannedLegs, reconcileLegs, cardioLogged } from './cardio.js';
 import { setIsLoggableFor, countsTowardsVolume } from './measure.js';
-import { normalizePlan, prunePlan, blankDay, dayKey } from './plan.js';
+import { normalizePlan, prunePlan, blankDay } from './plan.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
   parseSetTargets, setLabels, workingSets,
@@ -34,6 +34,10 @@ export const state = {
   // transient view state: which interval blocks have their rounds expanded.
   // Not persisted -- it is a disclosure triangle, not data.
   openRounds: new Set(),
+  // which slice of History is on show. Transient like openRounds, but NOT in
+  // state.nav, which app.js clears on every tab change -- a filter you lose by
+  // glancing at Now is worse than no filter.
+  histFilter: { mode: 'all', offset: 0, from: null, to: null },
   // the 10-day plan: { 'YYYY-MM-DD': { routineId, rest, doneAt, note } }.
   // A blob in `meta`, like settings: ten records do not need their own store,
   // and it travels in the backup the same way.
@@ -579,6 +583,39 @@ export async function toggleSetDone(entryId, setId) {
 }
 
 /** Show or hide the per-round detail of one interval block. */
+/** Change which slice of History is shown. Not persisted; it is a lens. */
+export function setHistFilter(patch) {
+  state.histFilter = { ...state.histFilter, ...patch };
+  emit();
+  return state.histFilter;
+}
+
+/**
+ * Finish a session that was left open -- the app was closed mid-workout, or you
+ * forgot to tap Finish. Without this a stranded session reads "unfinished"
+ * forever, is skipped by the plan's done check, and never reaches an export.
+ * The finish time is the last thing actually logged, not now, so a session
+ * abandoned on Tuesday does not claim to have ended on Friday.
+ */
+export async function markSessionFinished(id) {
+  const s = getSession(id);
+  if (!s || s.finishedAt) return null;
+  const stamps = s.entries.flatMap((e) => [
+    ...(e.sets || []).map((x) => x.completedAt),
+    e.log?.completedAt ?? null,
+  ]).filter(Number.isFinite);
+  s.finishedAt = Math.max(s.startedAt, stamps.length ? Math.max(...stamps) : s.updatedAt || s.startedAt);
+  if (state.active && state.active.id === id) {
+    state.active = null;
+    state.timer = null;
+    await metaSet('activeSessionId', null);
+    await metaSet('timer', null);
+  }
+  await persistSession(s);
+  emit();
+  return s;
+}
+
 export async function toggleRounds(entryId) {
   if (state.openRounds.has(entryId)) state.openRounds.delete(entryId);
   else state.openRounds.add(entryId);
@@ -875,17 +912,6 @@ export async function movePlanDay(fromKey, toKey) {
   await persistPlan();
   return true;
 }
-
-/** Replace the whole plan, used by restore. */
-export async function replacePlan(raw) {
-  state.plan = prunePlan(normalizePlan(raw));
-  await metaSet('plan', state.plan);
-  emit();
-  return state.plan;
-}
-
-/** The plan entry for the day a session happened, if any. */
-export const planDayFor = (ts) => state.plan[dayKey(ts)] || null;
 
 /* ------------------------------------------------------------------ */
 /* progress helpers                                                   */

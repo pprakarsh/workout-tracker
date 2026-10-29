@@ -881,6 +881,91 @@ await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
+section('History spells the date out on every row');
+await click('#tabBar .tab[data-tab="history"]');
+const histRows = $$('.sess-item');
+ok(histRows.length > 0, `there are sessions to look at (${histRows.length})`);
+const firstSub = histRows[0].querySelector('.sub').textContent;
+ok(/\d{4}/.test(firstSub), `the row carries a full date with a year (${firstSub.trim().slice(0, 40)})`);
+ok($('.sess-item .sub b') !== null, 'with the date emphasised over the rest of the line');
+
+section('the filter narrows to a week, a month or a date range');
+ok($$('[data-action="hist-filter"]').length === 4, 'four ways to slice it');
+ok($('[data-action="hist-filter"][data-mode="all"]').classList.contains('on'), 'all time to begin with');
+const allCount = $$('.sess-item').length;
+
+await click('[data-action="hist-filter"][data-mode="week"]');
+ok(store.state.histFilter.mode === 'week', 'switched to week');
+ok(view().includes('This week'), 'the header names the window');
+ok($('[data-action="hist-step"][data-by="1"]').disabled === true,
+  'you cannot step forward past the current week');
+const weekCount = $$('.sess-item').length;
+ok(weekCount <= allCount, `the week shows no more than all time (${weekCount} of ${allCount})`);
+
+await click('[data-action="hist-step"][data-by="-1"]');
+ok(store.state.histFilter.offset === -1, 'stepped back one week');
+ok(view().includes('Last week'), 'and says so');
+ok($('[data-action="hist-step"][data-by="1"]').disabled === false, 'forward is available again');
+
+await click('[data-action="hist-filter"][data-mode="month"]');
+ok(store.state.histFilter.offset === 0, 'changing mode resets the step');
+ok(view().includes('This month'), 'now showing the month');
+
+section('a specific date, via the range inputs');
+await click('[data-action="hist-filter"][data-mode="range"]');
+const fromIn = $('input[data-hf="from"]');
+ok(fromIn !== null && $('input[data-hf="to"]') !== null, 'two date inputs');
+const todayIso = store.state.sessions.length ? new Date(store.state.sessions[0].startedAt) : new Date();
+const iso = `${todayIso.getFullYear()}-${String(todayIso.getMonth() + 1).padStart(2, '0')}-${String(todayIso.getDate()).padStart(2, '0')}`;
+fromIn.value = iso;
+fromIn.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
+ok(store.state.histFilter.from === iso, `the filter took the date (${store.state.histFilter.from})`);
+ok($$('.sess-item').length >= 1, 'and that day has its session');
+ok(!view().includes('Nothing logged'), 'so the list is not empty');
+
+const emptyDay = '2020-01-01';
+$('input[data-hf="from"]').value = emptyDay;
+$('input[data-hf="from"]').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
+ok(view().includes('Nothing logged'), 'a day with no workout says so rather than showing everything');
+
+section('the filter survives a trip to another tab');
+await click('#tabBar .tab[data-tab="now"]');
+await click('#tabBar .tab[data-tab="history"]');
+ok(store.state.histFilter.mode === 'range' && store.state.histFilter.from === emptyDay,
+  'the lens is still where you left it');
+await click('[data-action="hist-filter"][data-mode="all"]');
+ok($$('.sess-item').length === allCount, 'and All brings everything back');
+ok($('.hist-month') !== null, 'with month headings once the range is wide');
+
+section('an unfinished session can be marked done from History');
+// a routine with at least one lift entry, so there is a set to log
+const openR = store.state.routines.find((r) => r.entries.some((e) => e.type !== 'cardio'));
+ok(openR !== undefined, 'found a routine to strand');
+await click('#tabBar .tab[data-tab="now"]');
+await click(`[data-action="routine-start"][data-id="${openR.id}"]`, 'Start');
+ok(store.state.active !== null, 'the session started');
+const openId = store.state.active.id;
+const oe = store.state.active.entries.find((e) => e.sets && e.sets.length);
+ok(oe !== undefined, 'with a materialised set to tick');
+await store.toggleSetDone(oe.id, oe.sets[0].id);
+const loggedAt = oe.sets[0].completedAt;
+store.state.active = null;                       // as if the app had been closed
+await click('#tabBar .tab[data-tab="history"]');
+const openRow = [...$$('.sess-item')].find((r) => r.dataset.id === openId);
+ok(openRow !== undefined, 'the stranded session is listed');
+ok(openRow.textContent.includes('unfinished'), 'flagged as unfinished');
+ok(openRow.classList.contains('open'), 'and visibly different');
+await click(`[data-action="hist-finish"][data-id="${openId}"]`, 'Mark as done');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+ok(store.getSession(openId).finishedAt === loggedAt,
+  'it is finished, timed to the last set logged');
+const closedRow = [...$$('.sess-item')].find((r) => r.dataset.id === openId);
+ok(!closedRow.textContent.includes('unfinished'), 'and the row stops saying unfinished');
+await store.deleteSession(openId);
+
 section('the Plan tab shows ten days and plans one in two taps');
 await xi.importFromText(JSON.stringify({
   name: 'Plan Day A', entries: [{ name: 'Bench', sets: 3, reps: 5, weight: 60 }],

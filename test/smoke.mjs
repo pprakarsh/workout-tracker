@@ -925,6 +925,83 @@ await store.discardSession();
 await store.deleteRoutine(sr.id);
 await store.deleteRoutine(hr.id);
 
+section('history windows: week, month, a range, a single date');
+const HNOW = new Date(2026, 9, 29, 10, 0, 0).getTime();   // Thu 29 Oct 2026
+const hw = (f) => q.historyWindow(f, HNOW);
+const dstr = (ts) => new Date(ts).toDateString();
+ok(hw({ mode: 'all' }).from === null && hw({ mode: 'all' }).to === null, 'all time is unbounded');
+const thisWeek = hw({ mode: 'week', offset: 0 });
+ok(dstr(thisWeek.from) === 'Mon Oct 26 2026', `the week starts Monday (${dstr(thisWeek.from)})`);
+ok(dstr(thisWeek.to) === 'Sun Nov 01 2026', `and ends Sunday (${dstr(thisWeek.to)})`);
+ok(thisWeek.label === 'This week', 'labelled plainly');
+ok(hw({ mode: 'week', offset: -1 }).label === 'Last week'
+  && dstr(hw({ mode: 'week', offset: -1 }).from) === 'Mon Oct 19 2026', 'stepping back a week');
+const thisMonth = hw({ mode: 'month', offset: 0 });
+ok(dstr(thisMonth.from) === 'Thu Oct 01 2026' && dstr(thisMonth.to) === 'Sat Oct 31 2026',
+  `a month spans the whole month (${dstr(thisMonth.from)} .. ${dstr(thisMonth.to)})`);
+ok(hw({ mode: 'month', offset: -1 }).label === 'September 2026',
+  `an earlier month names itself (${hw({ mode: 'month', offset: -1 }).label})`);
+ok(hw({ mode: 'month', offset: -2 }).label === 'August 2026', 'and keeps stepping back');
+const oneDay = hw({ mode: 'range', from: '2026-10-07', to: '2026-10-07' });
+ok(oneDay.label === 'Wed 7 Oct 2026', `from == to is a single named day (${oneDay.label})`);
+ok(new Date(oneDay.to).getHours() === 23, 'whose window reaches the end of that day');
+ok(hw({ mode: 'range', from: '2026-10-07', to: null }).label === 'Wed 7 Oct 2026',
+  'and one bound alone means that day too');
+const rng = hw({ mode: 'range', from: '2026-10-01', to: '2026-10-15' });
+ok(dstr(rng.from) === 'Thu Oct 01 2026' && dstr(rng.to) === 'Thu Oct 15 2026', 'a real range');
+const backwards = hw({ mode: 'range', from: '2026-10-15', to: '2026-10-01' });
+ok(backwards.from < backwards.to, 'a backwards range is straightened, not dropped');
+ok(hw({ mode: 'range', from: 'rubbish', to: null }).from === null, 'junk dates select nothing');
+ok(hw({ mode: 'range', from: '2026-02-30', to: null }).from === null,
+  'and an impossible date is junk, not the 1st of March');
+
+section('filtering sessions by window');
+const mk = (y, mo, d) => ({
+  id: `w_h${y}${mo}${d}`, routineName: 'X', unit: 'kg', entries: [],
+  startedAt: new Date(y, mo - 1, d, 8, 0, 0).getTime(),
+  finishedAt: new Date(y, mo - 1, d, 9, 0, 0).getTime(),
+});
+const hSessions = [mk(2026, 10, 29), mk(2026, 10, 27), mk(2026, 10, 20), mk(2026, 9, 15), mk(2026, 8, 2)];
+ok(q.sessionsIn(hSessions, hw({ mode: 'all' })).length === 5, 'all time keeps everything');
+ok(q.sessionsIn(hSessions, thisWeek).length === 2, `this week has 2 (${q.sessionsIn(hSessions, thisWeek).length})`);
+ok(q.sessionsIn(hSessions, thisMonth).length === 3, `October has 3 (${q.sessionsIn(hSessions, thisMonth).length})`);
+ok(q.sessionsIn(hSessions, hw({ mode: 'month', offset: -1 })).length === 1, 'September has 1');
+ok(q.sessionsIn(hSessions, hw({ mode: 'range', from: '2026-10-29', to: '2026-10-29' })).length === 1,
+  'a single date picks exactly that day');
+const groups = q.groupByMonth(hSessions);
+ok(groups.length === 3, `three month groups (${groups.length})`);
+ok(groups[0].heading === 'October 2026' && groups[0].sessions.length === 3,
+  `newest month first with its sessions (${groups[0].heading})`);
+ok(groups[2].heading === 'August 2026', 'oldest last');
+
+section('the filter is a lens, not stored data');
+ok(state.histFilter.mode === 'all', 'it starts on all time');
+store.setHistFilter({ mode: 'week', offset: -2 });
+ok(state.histFilter.mode === 'week' && state.histFilter.offset === -2, 'and it changes');
+store.setHistFilter({ mode: 'all', offset: 0 });
+ok(!('histFilter' in xi.backupObject()), 'it never travels in a backup');
+
+section('a session left open can be finished from History');
+const strand = await store.createRoutine({ name: 'Stranded', entries: [{ name: 'Row', sets: 2, reps: 8, weight: 40 }] });
+const ss2 = await store.startSession(strand.id);
+const sE = ss2.entries[0];
+await store.toggleSetDone(sE.id, sE.sets[0].id);
+const lastLogged = sE.sets[0].completedAt;
+const strandedId = ss2.id;
+// simulate the app being closed mid-workout: the session stays, unfinished
+state.active = null;
+ok(store.getSession(strandedId).finishedAt === null, 'it is unfinished');
+ok(fmt.logSummary(sE) !== '', 'but it does have a logged set');
+const finished = await store.markSessionFinished(strandedId);
+ok(finished.finishedAt === lastLogged,
+  'the finish time is the last set actually logged, not now');
+ok(store.markSessionFinished(strandedId) instanceof Promise, 'calling it again is safe');
+ok(await store.markSessionFinished(strandedId) === null, 'and does nothing the second time');
+ok(q.sessionsIn([store.getSession(strandedId)], hw({ mode: 'all' })).length === 1,
+  'and it now behaves like any finished session');
+await store.deleteSession(strandedId);
+await store.deleteRoutine(strand.id);
+
 section('the 10-day plan window');
 const planLib = await import(`${APP}/js/plan.js`);
 const T0 = new Date(2026, 9, 29, 9, 0, 0).getTime();   // Thu 29 Oct 2026, 09:00 local

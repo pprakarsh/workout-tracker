@@ -89,6 +89,31 @@ export function fmtReps(min, max) {
   return fmtNum(min ?? max);
 }
 
+/**
+ * Calendar boundaries, built from date parts so DST never shifts them.
+ *
+ * The week starts MONDAY. A training week is talked about as Monday-to-Sunday
+ * ("three sessions in by Wednesday"), and a Sunday-start week would split every
+ * weekend across two of them.
+ */
+export function startOfWeek(ts = Date.now()) {
+  const d = new Date(ts);
+  const back = (d.getDay() + 6) % 7;        // Mon=0 ... Sun=6
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - back).getTime();
+}
+export function startOfMonth(ts = Date.now()) {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+}
+export function addWeeks(ts, n) {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + (n * 7)).getTime();
+}
+export function addMonths(ts, n) {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth() + n, 1).getTime();
+}
+
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -131,7 +156,7 @@ export function download(filename, text, mime = 'text/plain') {
 export const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** Shown in the Routines tab so you can tell which build is actually loaded. */
-export const APP_VERSION = '21';
+export const APP_VERSION = '22';
 
 /** CSV field quoting. */
 export function csvCell(v) {

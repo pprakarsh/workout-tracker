@@ -2,8 +2,9 @@
 // editable mode for correcting a finished session.
 import {
   state, deleteSession, getSession, sessionProgress, sessionVolume,
-  setEditing, updateSessionTiming,
+  setEditing, updateSessionTiming, setHistFilter, markSessionFinished,
 } from '../store.js';
+import { historyWindow, sessionsIn, groupByMonth } from '../queries.js';
 import {
   esc, fmtDate, fmtTimeOfDay, fmtDur, fmtNum, relDay, isoDate,
 } from '../util.js';
@@ -107,29 +108,102 @@ export function render() {
     state.editSessionId = null;
   }
 
-  const list = state.sessions.filter((s) => !(state.active && s.id === state.active.id));
-  if (!list.length) {
+  const all = state.sessions.filter((s) => !(state.active && s.id === state.active.id));
+  const f = state.histFilter;
+  const win = historyWindow(f);
+  const list = sessionsIn(all, win);
+
+  if (!all.length) {
     return `<div class="empty">No finished workouts yet.${state.active ? '<br>Your current session shows up here once you finish it.' : ''}</div>`;
   }
 
   return `
-    <h2>${list.length} session${list.length === 1 ? '' : 's'}</h2>
-    ${list.map((s) => {
-    const { done, total } = sessionProgress(s);
-    const end = s.finishedAt || s.updatedAt || s.startedAt;
-    const top = s.entries.map((e) => logSummary(e) && e.name).filter(Boolean).slice(0, 4).join(' · ');
-    return `
-      <div class="sess-item" data-action="hist-open" data-id="${s.id}" role="button" tabindex="0">
-        <div class="body">
-          <div class="nm">${esc(s.routineName)}</div>
-          <div class="sub">${esc(relDay(s.startedAt))} · ${esc(fmtTimeOfDay(s.startedAt))} · ${esc(fmtDur((end - s.startedAt) / 1000))} · ${done}/${total} done${s.finishedAt ? '' : ' · unfinished'}</div>
-          ${top ? `<div class="loglines">${esc(top)}</div>` : ''}
-        </div>
-        <div class="dim">›</div>
-      </div>`;
-  }).join('')}
+    ${filterBar(f, win, all.length)}
+    ${summaryCard(list, win)}
+    ${list.length
+    ? groupByMonth(list).map((g) => `
+      ${f.mode === 'all' || f.mode === 'range' ? `<div class="hist-month">${esc(g.heading)}</div>` : ''}
+      ${g.sessions.map(sessionRow).join('')}`).join('')
+    : `<div class="empty">Nothing logged in ${esc(win.label.toLowerCase())}.</div>`}
     <div class="divider"></div>
     <button type="button" class="btn block ghost" data-action="hist-csv">Export all sessions as CSV</button>`;
+}
+
+/**
+ * One row. The DATE is always spelled out, not only the relative label: once
+ * there are a few hundred sessions, "3 days ago" stops being the thing you are
+ * looking for and "Tue 27 Oct" starts being it. Both are shown, because the
+ * relative form is still the faster read for anything recent.
+ */
+function sessionRow(s) {
+  const { done, total } = sessionProgress(s);
+  const end = s.finishedAt || s.updatedAt || s.startedAt;
+  const top = s.entries.map((e) => logSummary(e) && e.name).filter(Boolean).slice(0, 4).join(' · ');
+  const rel = relDay(s.startedAt);
+  const abs = fmtDate(s.startedAt);
+  return `
+    <div class="sess-item${s.finishedAt ? '' : ' open'}" data-action="hist-open" data-id="${s.id}" role="button" tabindex="0">
+      <div class="body">
+        <div class="nm">${esc(s.routineName)}
+          ${s.finishedAt ? '' : '<span class="pill skip">unfinished</span>'}</div>
+        <div class="sub"><b>${esc(abs)}</b>${rel === abs ? '' : ` · ${esc(rel)}`}
+          · ${esc(fmtTimeOfDay(s.startedAt))} · ${esc(fmtDur((end - s.startedAt) / 1000))} · ${done}/${total} done</div>
+        ${top ? `<div class="loglines">${esc(top)}</div>` : ''}
+        ${s.finishedAt ? '' : `<button type="button" class="btn xs" style="margin-top:6px"
+            data-action="hist-finish" data-id="${s.id}">Mark as done</button>`}
+      </div>
+      <div class="dim">›</div>
+    </div>`;
+}
+
+/** Week and month can be stepped; a range needs two date inputs. */
+function filterBar(f, win, totalCount) {
+  const chip = (mode, label) => `<button type="button"
+    class="chip ${f.mode === mode ? 'on' : ''}" data-action="hist-filter" data-mode="${mode}">${label}</button>`;
+  const steppable = f.mode === 'week' || f.mode === 'month';
+  return `
+    <div class="hist-filter">
+      <div class="hist-chips">
+        ${chip('all', 'All')}${chip('week', 'Week')}${chip('month', 'Month')}${chip('range', 'Dates')}
+      </div>
+      ${steppable ? `
+        <div class="hist-step">
+          <button type="button" class="btn icon ghost" data-action="hist-step" data-by="-1"
+                  aria-label="Previous ${f.mode}">‹</button>
+          <div class="hist-label">
+            <div class="strong">${esc(win.label)}</div>
+            ${win.sub && win.sub !== win.label ? `<div class="tiny dim">${esc(win.sub)}</div>` : ''}
+          </div>
+          <button type="button" class="btn icon ghost" data-action="hist-step" data-by="1"
+                  ${f.offset >= 0 ? 'disabled' : ''} aria-label="Next ${f.mode}">›</button>
+        </div>` : ''}
+      ${f.mode === 'range' ? `
+        <div class="grid2" data-histrange>
+          <label class="field"><span>From</span>
+            <input type="date" data-hf="from" value="${esc(f.from || '')}"></label>
+          <label class="field"><span>To — leave blank for a single day</span>
+            <input type="date" data-hf="to" value="${esc(f.to || '')}"></label>
+        </div>
+        <p class="hint" style="margin-top:-2px">Set both to the same day, or fill only one, to see
+          that one date.</p>` : ''}
+      ${f.mode === 'all' ? `<div class="tiny dim">All ${totalCount} session${totalCount === 1 ? '' : 's'}</div>` : ''}
+    </div>`;
+}
+
+/** What the visible slice adds up to. The reason to filter at all. */
+function summaryCard(list, win) {
+  if (!list.length) return '';
+  const secs = list.reduce((n, s) => n + (((s.finishedAt || s.updatedAt || s.startedAt) - s.startedAt) / 1000), 0);
+  const vol = list.reduce((n, s) => n + sessionVolume(s), 0);
+  const unit = list[0].unit || 'kg';
+  const days = new Set(list.map((s) => isoDate(s.startedAt))).size;
+  return `
+    <div class="card flat" style="margin-bottom:10px">
+      <div class="kv"><span>${esc(win.label)}</span>
+        <span class="strong">${list.length} session${list.length === 1 ? '' : 's'}${days !== list.length ? ` on ${days} day${days === 1 ? '' : 's'}` : ''}</span></div>
+      <div class="kv"><span>Time training</span><span>${esc(fmtDur(secs))}</span></div>
+      ${vol ? `<div class="kv"><span>Total volume</span><span>${fmtNum(Math.round(vol))} ${esc(unit)}</span></div>` : ''}
+    </div>`;
 }
 
 export const historyActions = {
@@ -172,6 +246,28 @@ export const historyActions = {
     });
   },
 
+  'hist-filter': ({ mode }) => {
+    setHistFilter({ mode, offset: 0 });
+  },
+
+  'hist-step': ({ by }) => {
+    // forward is capped at the current week/month: there is no history ahead
+    const next = Math.min(0, (state.histFilter.offset || 0) + Number(by));
+    setHistFilter({ offset: next });
+  },
+
+  'hist-finish': async ({ id }) => {
+    const s = getSession(id);
+    if (!s) return;
+    if (await confirmDialog(
+      `Mark the ${fmtDate(s.startedAt)} "${s.routineName}" session as done? Its finish time is set to the last set you logged.`,
+      { okText: 'Mark as done', danger: false },
+    )) {
+      const out = await markSessionFinished(id);
+      toast(out ? 'Marked as done' : 'Already done');
+    }
+  },
+
   'hist-md': ({ id }) => { const s = getSession(id); if (s) exportSessionMarkdown(s); },
   'hist-json': ({ id }) => { const s = getSession(id); if (s) exportSessionJson(s); },
   'hist-csv': () => { exportCsv(); toast('CSV exported'); },
@@ -186,3 +282,10 @@ export const historyActions = {
     }
   },
 };
+
+/** The two date inputs in the range filter. Called from app.js. */
+export function handleHistoryField(target) {
+  const field = target.dataset.hf;
+  if (!field) return;
+  setHistFilter({ [field]: target.value || null, mode: 'range' });
+}

@@ -124,6 +124,7 @@ document.addEventListener('input', async (ev) => {
   if (t.dataset?.f || t.dataset?.lf) return handleFieldInput(t);
   if (t.dataset?.sf) return sessionView.handleSessionField(t);
   if (t.dataset?.rf) return routinesView.handleRoutineField(t);
+  if (t.dataset?.hf) return historyView.handleHistoryField(t);
   return undefined;
 });
 

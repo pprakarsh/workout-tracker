@@ -26,6 +26,8 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Holds and carries — `measure: time` / `distance` | A plank is a lift measured in seconds, not a cardio entry |
 | Session progress bar | Entry completion, in the Now header |
 | 10-day Plan tab | Assign a routine per day, rest days, push/pull a day; done is derived from history |
+| History filters | All / week / month / a date or date range, steppable, with a per-window summary |
+| Explicit dates in History, and closing a stranded session | `markSessionFinished` times it to the last set logged |
 | "Do this next" | Moves a whole block behind the current one, from the session list |
 | Tap-driven interval builder | Steppers, presets and a live preview; typing is the fallback |
 | Units on every column, formats in every placeholder | A unit you can still see once a value is typed |
@@ -55,7 +57,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | **Muscle-group tags per exercise** → weekly volume and balance per muscle | Answers "am I neglecting pulling?" | M | Tag once per exercise in the library; don't guess from names |
 | **Repeat a past session** as a new workout | Covers ad-hoc days with no routine | S | — |
 | **Calendar / streak view** in History | Training pattern at a glance | M | — |
-| **Search and filter in History** | Only matters past a few hundred sessions | S | — |
+| **Search History by exercise or note** | Date filtering is done; text search is the other half | S | — |
 | **Distance-based interval legs** | `400m @ 4:00/km` instead of a time. Legs are timed today, which covers treadmill work; this is for track sessions | S | `parseLeg` must disambiguate `400m` from 400 minutes |
 | **Rest as an interval leg** | A rest leg is timed by the clock rather than planned | S | Would let the block drive the rest timer |
 | **Hold/carry PRs** | Longest plank, furthest carry at a load | S | Needs `measure` awareness in whatever PR code gets written |
