@@ -324,6 +324,35 @@ let notices = [];
 sy.setSyncNotifier((n) => notices.push(n));
 ok(sy.pendingPush() === false, 'nothing queued to begin with');
 
+// editing a FINISHED session must push too -- correcting last Tuesday on one
+// phone and never seeing it on the other was a standing gap
+sy.cancelPendingPush();
+const histSess = {
+  id: 'w_histpush', routineId: null, routineName: 'Pushed Edit', unit: 'kg',
+  startedAt: Date.now() - 86400000, finishedAt: Date.now() - 82800000,
+  updatedAt: Date.now() - 82800000, entries: [], currentIdx: 0,
+  rpe: null, bodyweight: null, notes: '', modified: false,
+};
+store.state.sessions.unshift(histSess);
+store.emit();
+await new Promise((r) => setTimeout(r, 20));
+ok(sy.pendingPush() === true, 'a finished session appearing schedules a push');
+sy.cancelPendingPush();
+
+// ...but a live workout must not, or every logged set spams a gist revision
+store.state.active = histSess;
+histSess.finishedAt = null;
+store.emit();
+await new Promise((r) => setTimeout(r, 20));
+histSess.finishedAt = Date.now();
+histSess.updatedAt = Date.now();
+store.emit();
+await new Promise((r) => setTimeout(r, 20));
+ok(sy.pendingPush() === false, 'nothing is scheduled while a workout is in progress');
+store.state.active = null;
+store.state.sessions = store.state.sessions.filter((x) => x.id !== 'w_histpush');
+sy.cancelPendingPush();
+
 const callsBeforeRoutine = hub.calls.length;
 const autoR = await store.createRoutine({ name: 'Auto Push Me', entries: [{ name: 'Squat' }] });
 await new Promise((r) => setTimeout(r, 20));

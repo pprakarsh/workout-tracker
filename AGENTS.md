@@ -237,6 +237,7 @@ Honest list, with the trigger for paying it off rather than a vague "someday":
 | A set's amount is stored in `reps` for every measure | If a set ever needs reps *and* a time together. Until then `measure` plus `fmtAmount`/`parseAmount` is cheaper than parallel fields and a migration |
 | ~~`store.js` is at its 1000-line cap~~ | **Done.** The plan's writes moved to `js/planstore.js`, the mirror of `queries.js`: both import `state` from the store and neither is imported by it. store.js is back to 913. The same seam is available again for the rest timer if needed |
 | Trends has no muscle-group view | When you want weekly volume per muscle. Nothing tags an exercise, and names must never be guessed from |
+| Sync is still blob last-write-wins | Two devices used in the same week. The triggers are now tight (routines, plan, finished sessions, launch, foreground) but two edits between pushes still means one wins. The fix is per-record sync with tombstones, or the Firebase move |
 | No charts, so years of logs stay a list | When you have enough history to want a trend |
 | Exercises have no muscle-group tags | When you want weekly volume per muscle |
 | Gist files over 1 MB rely on a raw-URL fallback | Around year 3–5 of daily logging |

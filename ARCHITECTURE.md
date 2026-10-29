@@ -37,6 +37,7 @@ js/views/entry.js   the exercise card and set rows, the exercise form, the libra
 js/views/cardio.js  the cardio card: a straight run, or an interval block and its rounds
 js/views/plan.js    "Plan" tab: ten day rows, assign a routine, mark done
 js/views/trends.js  "Trends" tab: weekly totals, and progress for one exercise
+js/views/settings.js "Settings" screen, reached from the header gear -- not a tab
 js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
@@ -234,6 +235,16 @@ Invariants worth knowing:
   kg/lb switch holds both; `toUnit` converts everything into the unit on display and the screen says
   how many sets were converted. A 2.2x step in the middle of a progress line is worse than a
   rounding difference.
+- **Settings is a screen, not a tab.** Six tabs is already past what a phone tab bar holds, and
+  settings is somewhere you visit rarely and leave. The gear in the header is one tap from anywhere,
+  which beats a seventh tab you have to hunt for. `state.lastTab` remembers where to go back to.
+  Its fields save on change (`data-cf`), with no Save button — a settings screen with one invites
+  you to leave without pressing it.
+- **Prefill mode changes where a new set's numbers come from, never how many there are.**
+  `settings.prefillFrom` is `'last'` (what you actually did) or `'plan'` (the routine's targets).
+  The SET COUNT always comes from the routine: taking it from last time too would ratchet a plan
+  down for good, since cutting a 5x5 short once would make every later session open as a 3x5.
+  `lastWorkingSets` is pure and takes sessions as an argument, so `model.js` never imports state.
 - **History's filter is a lens, not data.** `state.histFilter` lives on `state` rather than in
   `state.nav`, because `app.js` clears `nav` on every tab change and a filter you lose by glancing
   at Now is worse than no filter. It is never persisted and never appears in a backup. The window

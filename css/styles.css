@@ -196,6 +196,12 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 .legrow.edited .idx::after{content:"\2022";color:var(--warn);margin-left:1px}
 .warnmsg{color:var(--warn)}
 
+.hdr-btn{
+  background:none;border:none;color:var(--fg2);font-size:18px;line-height:1;
+  padding:6px 8px;cursor:pointer;border-radius:9px;font-family:inherit;
+}
+.hdr-btn:active{background:var(--bg3)}
+
 /* charts and trends ---------------------------------------------------- */
 .chart{display:block;width:100%;height:auto;overflow:visible}
 .chart .cg{stroke:var(--line);stroke-width:.6}

@@ -28,6 +28,10 @@ plate calculator is offered, and whether your history becomes more than a list.
 | 10-day Plan tab | Assign a routine per day, rest days, push/pull a day; done is derived from history |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |
 | Trends tab | Weekly volume and sets, most-trained list; per-exercise e1RM/hold/carry/pace charts, PRs, session log |
+| Intervals as their own exercise kind | Third option in the type list, with the tap builder inline |
+| Settings as its own screen | Header gear, saves on change; prefill mode lives here |
+| Prefill new sets from last time | Values from the last session, set count always from the routine |
+| Plan and finished-session edits auto-push | Previously only routines pushed on their own |
 | Dependency-free SVG charts | `js/chart.js` — scatter+line and bars, no library, no build step |
 | Weight unit conversion | A history spanning a kg/lb switch converts into the unit on display |
 | Explicit dates in History, and closing a stranded session | `markSessionFinished` times it to the last set logged |

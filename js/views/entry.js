@@ -10,7 +10,8 @@ import {
 } from '../store.js';
 import { exerciseLibrary, findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
-import { parsePace, patternText, parseIntervals } from '../cardio.js';
+import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
+import { builderHtml, wireBuilder, DEFAULT_LEGS } from './cardio.js';
 import {
   MEASURES, measureOf, fmtAmount, fmtAmountRange, parseAmount, amountFieldValue, parseMeasure,
 } from '../measure.js';
@@ -299,16 +300,23 @@ function planRows(e) {
 }
 
 export function exerciseFormHtml(e = {}) {
+  // Three choices on screen, two types underneath. An interval block is still a
+  // cardio entry with `legs`, but it was invisible as a field buried below the
+  // run targets -- the type selector is the first decision, so that is where a
+  // kind of workout has to be offered.
+  const kind = e.type === 'cardio' ? (isIntervals(e) ? 'intervals' : 'run') : 'lift';
   const type = e.type === 'cardio' ? 'cardio' : 'lift';
   const measure = e.measure || 'reps';
+  const du = e.distanceUnit || state.settings.distanceUnit;
   return `
     <label class="field"><span>Exercise name</span>
       <input name="name" list="exerciseNames" autocapitalize="words" placeholder="e.g. Back Squat"
              value="${esc(e.name || '')}" required></label>
     <label class="field"><span>Type</span>
       <select name="type" id="exType">
-        <option value="lift" ${type === 'lift' ? 'selected' : ''}>Lifting / bodyweight (sets & reps)</option>
-        <option value="cardio" ${type === 'cardio' ? 'selected' : ''}>Cardio / run (distance & time)</option>
+        <option value="lift" ${kind === 'lift' ? 'selected' : ''}>Lifting / bodyweight (sets &amp; reps)</option>
+        <option value="run" ${kind === 'run' ? 'selected' : ''}>Run &mdash; one effort (time, pace, distance)</option>
+        <option value="intervals" ${kind === 'intervals' ? 'selected' : ''}>Intervals &mdash; repeating legs (1:00 hard + 1:30 easy &times; 6)</option>
       </select></label>
 
     <div id="exLift" ${type === 'cardio' ? 'hidden' : ''}>
@@ -328,7 +336,17 @@ export function exerciseFormHtml(e = {}) {
       <p class="hint" style="margin-top:0">Leave the weight blank for an unloaded set.</p>
     </div>
 
-    <div id="exCardio" ${type === 'lift' ? 'hidden' : ''}>
+    <div id="exIntervals" ${kind === 'intervals' ? '' : 'hidden'}>
+      <div class="tiny" style="margin:2px 0 7px">Build the pattern &mdash; tap, no typing needed</div>
+      ${builderHtml(isIntervals(e) ? e.legs : DEFAULT_LEGS(), Math.max(1, e.rounds || 6), du)}
+      <input type="hidden" name="pattern" id="exPattern"
+             value="${esc(patternText(e.legs, e.rounds, du))}">
+      <p class="hint" style="margin-top:0">The whole block logs in <b>one tap</b> when you train it,
+        and any single round can still be corrected afterwards. Legs are <b>timed</b>, so a leg is a
+        time plus an optional pace &mdash; write the time a leg takes, not a distance.</p>
+    </div>
+
+    <div id="exCardio" ${kind === 'run' ? '' : 'hidden'}>
       <div class="grid3">
         <label class="field"><span>Target time (m:ss)</span>
           <input name="targetDuration" inputmode="text" placeholder="28:30"
@@ -344,19 +362,8 @@ export function exerciseFormHtml(e = {}) {
         <b>Time</b> <code>28:30</code> or <code>28m</code>. <b>Pace</b> <code>6:00</code>, or a
         bare <code>6</code> meaning 6 min/km.</p>
 
-      <label class="field"><span>Interval pattern - leave empty for one straight run</span>
-        <input name="pattern" autocapitalize="off" autocomplete="off" spellcheck="false"
-               placeholder="1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6"
-               value="${esc(patternText(e.legs, e.rounds, e.distanceUnit || 'km'))}"></label>
-      <p class="hint" style="margin-top:-4px"><b>Format</b>
-        <code>leg + leg &times; rounds</code>; a leg is a <b>time</b>, an optional name, then
-        <code>@ pace</code>. The whole block is then logged in <b>one tap</b>, and any single
-        round can still be changed afterwards.
-        <br><b>Example</b> <code>1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6</code>
-        <br><span class="dim">A bare leg time is <b>seconds</b> (<code>90</code> = 1:30); a bare
-        pace is <b>minutes</b> per km. <code>min</code>, <code>mins per km</code>, <code>-</code>
-        for <code>@</code> and brackets all work. Legs are timed, so write the time rather than
-        <code>400m</code>.</span></p>
+      <p class="hint" style="margin-top:-4px">For a repeating block of legs, choose
+        <b>Intervals</b> in the Type list above instead.</p>
     </div>
 
     <label class="field"><span>Rest between sets - 2:30, 90s, or a number of seconds</span>
@@ -391,11 +398,30 @@ export function wireExerciseForm(modal) {
     modal.querySelector('#exCopyDown').hidden = all.length < 2;
   };
 
-  type.addEventListener('change', () => {
-    const cardio = type.value === 'cardio';
-    modal.querySelector('#exLift').hidden = cardio;
-    modal.querySelector('#exCardio').hidden = !cardio;
-  });
+  const show = () => {
+    const k = type.value;
+    modal.querySelector('#exLift').hidden = k !== 'lift';
+    modal.querySelector('#exCardio').hidden = k !== 'run';
+    modal.querySelector('#exIntervals').hidden = k !== 'intervals';
+  };
+  type.addEventListener('change', show);
+  show();
+
+  // The interval builder keeps its own state; it writes the canonical pattern
+  // into a hidden field so readExerciseForm needs to know nothing about it.
+  const ivBox = modal.querySelector('#exIntervals');
+  if (ivBox) {
+    const du = state.settings.distanceUnit;
+    const seeded = parseIntervals(modal.querySelector('#exPattern').value);
+    wireBuilder(ivBox, {
+      legs: seeded ? seeded.legs : DEFAULT_LEGS(),
+      rounds: seeded ? seeded.rounds : 6,
+      du,
+      onChange: (legs, rounds) => {
+        modal.querySelector('#exPattern').value = legs.length ? patternText(legs, rounds, du) : '';
+      },
+    });
+  }
 
   // Switching measure relabels the amount column and swaps the hint, so the
   // unit you are typing in is never ambiguous.
@@ -451,7 +477,8 @@ export function wireExerciseForm(modal) {
 /** Read the exercise form. `modal` is required to read the set grid. */
 export function readExerciseForm(v, modal = null) {
   const base = {
-    type: v.type === 'cardio' ? 'cardio' : 'lift',
+    // 'run' and 'intervals' are both cardio underneath -- see exerciseFormHtml
+    type: (v.type === 'cardio' || v.type === 'run' || v.type === 'intervals') ? 'cardio' : 'lift',
     name: (v.name || '').trim(),
     targetDistance: num(v.targetDistance),
     targetDuration: parseDur(v.targetDuration, { bare: 'minutes' }),
@@ -464,7 +491,9 @@ export function readExerciseForm(v, modal = null) {
   };
 
   if (base.type === 'cardio' || !modal) {
-    const spec = base.type === 'cardio'
+    // only an "intervals" entry keeps its pattern; switching to a plain run
+    // must drop it, or the run would silently stay an interval block
+    const spec = v.type === 'intervals'
       ? parseIntervals(v.pattern || '') || { legs: null, rounds: null }
       : { legs: null, rounds: null };
     return {

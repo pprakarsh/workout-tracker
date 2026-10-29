@@ -16,6 +16,7 @@ import { entryActions, handleFieldInput } from './views/entry.js';
 import { cardioActions } from './views/cardio.js';
 import * as planView from './views/plan.js';
 import * as trendsView from './views/trends.js';
+import * as settingsView from './views/settings.js';
 
 const VIEWS = {
   now: nowView,
@@ -24,6 +25,7 @@ const VIEWS = {
   history: historyView,
   trends: trendsView,
   routines: routinesView,
+  settings: settingsView,
 };
 
 const TITLES = {
@@ -33,6 +35,7 @@ const TITLES = {
   history: 'History',
   trends: 'Trends',
   routines: 'Routines',
+  settings: 'Settings',
 };
 
 const ACTIONS = {
@@ -42,6 +45,7 @@ const ACTIONS = {
   ...sessionView.sessionActions,
   ...planView.planActions,
   ...trendsView.trendsActions,
+  ...settingsView.settingsActions,
   ...historyView.historyActions,
   ...routinesView.routineActions,
   ...timerActions,
@@ -123,12 +127,17 @@ document.addEventListener('click', async (ev) => {
 });
 
 // Live field edits persist silently (no re-render) so the keyboard and caret stay put.
+document.addEventListener('change', async (ev) => {
+  if (ev.target.dataset?.cf) await settingsView.handleSettingsField(ev.target);
+});
+
 document.addEventListener('input', async (ev) => {
   const t = ev.target;
   if (t.dataset?.f || t.dataset?.lf) return handleFieldInput(t);
   if (t.dataset?.sf) return sessionView.handleSessionField(t);
   if (t.dataset?.rf) return routinesView.handleRoutineField(t);
   if (t.dataset?.hf) return historyView.handleHistoryField(t);
+  if (t.dataset?.cf) return settingsView.handleSettingsField(t);
   return undefined;
 });
 

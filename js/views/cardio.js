@@ -241,37 +241,116 @@ const bRow = (lg, i, du) => `
  * move in the units the thing is measured in, so the only typing left is an
  * optional name. The text field is still there for anyone who prefers it.
  */
+/**
+ * The builder's markup, free of any entry. Used by the logging sheet and by the
+ * routine form, which is why it takes ids as a prefix rather than assuming one
+ * host -- two of these must be able to exist without colliding.
+ */
+export function builderHtml(legs, rounds, du) {
+  return `
+    <div class="bpresets">
+      <span class="tiny">Start from</span>
+      ${PRESETS.map((p, i) => `<button type="button" class="chip" data-b-preset="${i}">${esc(p.name)}</button>`).join('')}
+    </div>
+    <div data-b-legs></div>
+    <div class="btn-row" style="margin:2px 0 10px">
+      <button type="button" class="btn sm" data-b-add>+ Add leg</button>
+      <button type="button" class="btn sm ghost" data-b-dup>Duplicate last</button>
+    </div>
+    <div class="bleg-f" style="margin-bottom:10px">
+      <span class="tiny">Rounds</span>
+      <output data-b-rounds>${rounds}</output>
+      ${[-5, -1, 1, 5].map((d) => `<button type="button" class="chip" data-b-rounds-by="${d}"
+        >${d > 0 ? '+' : '\u2212'}${Math.abs(d)}</button>`).join('')}
+    </div>
+    <div class="bpreview" data-b-preview aria-live="polite"></div>`;
+}
+
+/**
+ * Wire a builder inside `root`. Returns a getter for the current plan, so the
+ * host decides when and where to save it. Nothing is persisted from here.
+ */
+export function wireBuilder(root, { legs, rounds, du, onChange = null }) {
+  let L = legs.map((lg) => ({ ...lg }));
+  let R = rounds;
+  const legBox = root.querySelector('[data-b-legs]');
+  const preview = root.querySelector('[data-b-preview]');
+  const usable = () => L.filter((lg) => lg.duration || lg.pace);
+
+  const repaintPreview = () => {
+    const u = usable();
+    const t = totalsText(u, R, du);
+    preview.innerHTML = u.length
+      ? `<code>${esc(patternText(u, R, du))}</code>${t ? `<div class="dim small">${esc(t)}</div>` : ''}`
+      : '<span class="warnmsg">Give at least one leg a time.</span>';
+    if (onChange) onChange(u, R);
+  };
+  const paint = () => {
+    legBox.innerHTML = L.map((lg, i) => bRow(lg, i, du)).join('');
+    root.querySelector('[data-b-rounds]').textContent = String(R);
+    repaintPreview();
+  };
+
+  legBox.addEventListener('click', (ev) => {
+    const row = ev.target.closest('[data-bleg]');
+    if (!row) return;
+    const i = Number(row.dataset.bleg);
+    if (ev.target.closest('[data-b-del]')) {
+      if (L.length > 1) L.splice(i, 1);
+      paint();
+      return;
+    }
+    const step = ev.target.closest('[data-b-step]');
+    if (!step) return;
+    const field = step.dataset.bStep;
+    if (step.dataset.d === 'clear') { L[i].pace = null; paint(); return; }
+    const base = L[i][field] ?? (field === 'pace' ? 360 : 0);
+    L[i][field] = Math.max(field === 'pace' ? 60 : 0, base + Number(step.dataset.d));
+    paint();
+  });
+
+  legBox.addEventListener('input', (ev) => {
+    const row = ev.target.closest('[data-bleg]');
+    if (!row || ev.target.dataset.b !== 'label') return;
+    L[Number(row.dataset.bleg)].label = ev.target.value.trim().slice(0, 16);
+    repaintPreview();        // not paint(): redrawing the rows would steal the caret
+  });
+
+  root.addEventListener('click', (ev) => {
+    const r = ev.target.closest('[data-b-rounds-by]');
+    if (r) { R = Math.min(50, Math.max(1, R + Number(r.dataset.bRoundsBy))); paint(); return; }
+    const p = ev.target.closest('[data-b-preset]');
+    if (p) {
+      const spec = parseIntervals(PRESETS[Number(p.dataset.bPreset)].pattern);
+      if (spec) { L = spec.legs.map((lg) => ({ ...lg })); R = spec.rounds; paint(); }
+      return;
+    }
+    if (ev.target.closest('[data-b-add]')) { L.push({ label: '', duration: 60, pace: null }); paint(); return; }
+    if (ev.target.closest('[data-b-dup]')) { L.push({ ...L[L.length - 1] }); paint(); }
+  });
+
+  paint();
+  return () => ({ legs: usable(), rounds: R });
+}
+
+/** The two legs a brand-new interval block starts from. */
+export const DEFAULT_LEGS = () => [
+  { label: '', duration: 60, pace: null },
+  { label: 'easy', duration: 60, pace: null },
+];
+
 function openPatternBuilder(entryId) {
   const e = findEntry(entryId);
   if (!e) return;
   const du = e.distanceUnit || state.settings.distanceUnit;
-
-  // working copy: nothing is committed until Save
-  let legs = isIntervals(e)
-    ? e.legs.map((lg) => ({ ...lg }))
-    : [{ label: '', duration: 60, pace: null }, { label: 'easy', duration: 60, pace: null }];
-  let rounds = Math.max(1, e.rounds || 6);
+  const legs = isIntervals(e) ? e.legs : DEFAULT_LEGS();
+  const rounds = Math.max(1, e.rounds || 6);
 
   const modal = openModal({
     title: isIntervals(e) ? 'Interval pattern' : 'Make it intervals',
     wide: true,
     bodyHtml: `
-      <div class="bpresets">
-        <span class="tiny">Start from</span>
-        ${PRESETS.map((p, i) => `<button type="button" class="chip" data-b-preset="${i}">${esc(p.name)}</button>`).join('')}
-      </div>
-      <div id="bLegs"></div>
-      <div class="btn-row" style="margin:2px 0 10px">
-        <button type="button" class="btn sm" id="bAdd">+ Add leg</button>
-        <button type="button" class="btn sm ghost" id="bDup">Duplicate last</button>
-      </div>
-      <div class="bleg-f" style="margin-bottom:10px">
-        <span class="tiny">Rounds</span>
-        <output id="bRounds">${rounds}</output>
-        ${[-5, -1, 1, 5].map((d) => `<button type="button" class="chip" data-b-rounds="${d}"
-          >${d > 0 ? '+' : '\u2212'}${Math.abs(d)}</button>`).join('')}
-      </div>
-      <div class="bpreview" id="bPreview" aria-live="polite"></div>
+      ${builderHtml(legs, rounds, du)}
       <details id="bRaw">
         <summary>Or type it instead</summary>
         <label class="field"><span>Pattern</span>
@@ -291,73 +370,17 @@ function openPatternBuilder(entryId) {
         toast(`Pattern set: ${patternText(spec.legs, spec.rounds, du)}`);
         return true;
       }
-      const usable = legs.filter((lg) => lg.duration || lg.pace);
-      if (!usable.length) { toast('Give at least one leg a time'); return false; }
-      await setIntervalPlan(entryId, { legs: usable, rounds });
-      toast(`Pattern set: ${patternText(usable, rounds, du)}`);
+      const built = read();
+      if (!built.legs.length) { toast('Give at least one leg a time'); return false; }
+      await setIntervalPlan(entryId, built);
+      toast(`Pattern set: ${patternText(built.legs, built.rounds, du)}`);
       return true;
     },
   });
 
-  const legBox = modal.querySelector('#bLegs');
-  const preview = modal.querySelector('#bPreview');
+  const read = wireBuilder(modal, { legs, rounds, du });
+
   const raw = modal.querySelector('#ivPattern');
-
-  const paint = () => {
-    legBox.innerHTML = legs.map((lg, i) => bRow(lg, i, du)).join('');
-    modal.querySelector('#bRounds').textContent = String(rounds);
-    const usable = legs.filter((lg) => lg.duration || lg.pace);
-    const t = totalsText(usable, rounds, du);
-    preview.innerHTML = usable.length
-      ? `<code>${esc(patternText(usable, rounds, du))}</code>${t ? `<div class="dim small">${esc(t)}</div>` : ''}`
-      : '<span class="warnmsg">Give at least one leg a time.</span>';
-  };
-
-  legBox.addEventListener('click', (ev) => {
-    const row = ev.target.closest('[data-bleg]');
-    if (!row) return;
-    const i = Number(row.dataset.bleg);
-    if (ev.target.closest('[data-b-del]')) {
-      if (legs.length > 1) legs.splice(i, 1);
-      paint();
-      return;
-    }
-    const step = ev.target.closest('[data-b-step]');
-    if (!step) return;
-    const field = step.dataset.bStep;
-    if (step.dataset.d === 'clear') { legs[i].pace = null; paint(); return; }
-    const by = Number(step.dataset.d);
-    const base = legs[i][field] ?? (field === 'pace' ? 360 : 0);
-    // a pace of nothing means "not set"; a time of nothing means zero
-    const next = Math.max(field === 'pace' ? 60 : 0, base + by);
-    legs[i][field] = next;
-    paint();
-  });
-
-  legBox.addEventListener('input', (ev) => {
-    const row = ev.target.closest('[data-bleg]');
-    if (!row || ev.target.dataset.b !== 'label') return;
-    legs[Number(row.dataset.bleg)].label = ev.target.value.trim().slice(0, 16);
-    // repaint only the preview: redrawing the rows would steal the caret
-    const usable = legs.filter((lg) => lg.duration || lg.pace);
-    preview.innerHTML = usable.length
-      ? `<code>${esc(patternText(usable, rounds, du))}</code>` : '';
-  });
-
-  modal.addEventListener('click', (ev) => {
-    const r = ev.target.closest('[data-b-rounds]');
-    if (r) { rounds = Math.min(50, Math.max(1, rounds + Number(r.dataset.bRounds))); paint(); return; }
-    const p = ev.target.closest('[data-b-preset]');
-    if (p) {
-      const spec = parseIntervals(PRESETS[Number(p.dataset.bPreset)].pattern);
-      if (spec) { legs = spec.legs.map((lg) => ({ ...lg })); rounds = spec.rounds; paint(); }
-      return;
-    }
-    if (ev.target.closest('#bAdd')) { legs.push({ label: '', duration: 60, pace: null }); paint(); return; }
-    if (ev.target.closest('#bDup')) { legs.push({ ...legs[legs.length - 1] }); paint(); }
-  });
-
-  // the raw field still echoes its parse, and wins when it has anything in it
   const echo = modal.querySelector('#ivEcho');
   const showEcho = () => {
     if (!raw.value.trim()) { echo.innerHTML = '<span class="dim">using the builder above</span>'; return; }
@@ -369,7 +392,6 @@ function openPatternBuilder(entryId) {
   };
   raw.addEventListener('input', showEcho);
   showEcho();
-  paint();
 }
 
 export const cardioActions = {

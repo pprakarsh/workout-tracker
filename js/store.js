@@ -6,13 +6,14 @@ import { setIsLoggableFor, countsTowardsVolume } from './measure.js';
 import { normalizePlan, prunePlan } from './plan.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
-  parseSetTargets, setLabels, workingSets,
+  parseSetTargets, setLabels, workingSets, lastWorkingSets,
 } from './model.js';
 
 // Re-exported so the store stays the single front door for callers: views ask
 // the store for everything about a session, shape helpers included.
 export {
   normalizeEntry, normalizeRoutine, parseSetTargets, setLabels, workingSets, materializePlan,
+  lastWorkingSets,
 };
 
 export const DEFAULT_SETTINGS = {
@@ -23,6 +24,9 @@ export const DEFAULT_SETTINGS = {
   keepAwake: true,       // hold a screen wake lock while a workout is running
   weightStep: 2.5,       // the +/- stepper increment for weight
   effortScale: 'rpe',    // 'rpe' | 'rir' | 'both' -- which effort column(s) to log
+  // 'plan' fills new sets from the routine's targets; 'last' fills them from
+  // what you actually did last time. The SET COUNT always comes from the plan.
+  prefillFrom: 'last',
 };
 
 export const state = {
@@ -40,6 +44,9 @@ export const state = {
   histFilter: { mode: 'all', offset: 0, from: null, to: null },
   // how far back the Trends charts look. Transient, like histFilter.
   trendRange: 'all',
+  // the tab to return to when Settings is closed. Settings is a screen
+  // reached from the header, deliberately not a seventh tab.
+  lastTab: 'now',
   // the 10-day plan: { 'YYYY-MM-DD': { routineId, rest, doneAt, note } }.
   // A blob in `meta`, like settings: ten records do not need their own store,
   // and it travels in the backup the same way.
@@ -104,10 +111,16 @@ export async function init() {
 /* settings                                                          */
 /* ------------------------------------------------------------------ */
 
-export async function updateSettings(patch) {
+/**
+ * `silent` skips the repaint, for a field being typed into. Re-rendering on
+ * every keystroke destroys the input under the caret and closes the keyboard --
+ * the same trap the set rows avoid. A select is a committed choice with no
+ * caret to lose, so those repaint normally.
+ */
+export async function updateSettings(patch, { silent = false } = {}) {
   state.settings = { ...state.settings, ...patch };
   await metaSet('settings', state.settings);
-  emit();
+  if (!silent) emit();
 }
 
 /* ------------------------------------------------------------------ */
@@ -181,7 +194,7 @@ export async function startSession(routineId) {
     startedAt: Date.now(),
     finishedAt: null,
     unit: state.settings.unit,
-    entries: (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings)),
+    entries: (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings, state.sessions)),
     currentIdx: 0,
     rpe: null,
     bodyweight: null,
@@ -329,7 +342,7 @@ export async function stepBlock(dir) {
 export async function addSessionEntry(raw) {
   const s = working();
   if (!s) return null;
-  const made = expandEntry(raw, state.settings);
+  const made = expandEntry(raw, state.settings, state.sessions);
   s.entries.push(...made);
   s.modified = true;
   await touch();

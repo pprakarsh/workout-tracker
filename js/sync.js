@@ -51,6 +51,21 @@ async function persist() {
 
 export const syncConfigured = () => !!sync.token;
 
+/** A one-glance summary for the Settings screen. Read-only. */
+export function syncState() {
+  const lastAt = Math.max(sync.lastPushedAt || 0, sync.lastPulledAt || 0) || null;
+  if (!sync.token) return { configured: false, label: 'Not set up', lastAt: null, pending: pendingPush() };
+  const unsynced = unsyncedLocalChanges();
+  return {
+    configured: true,
+    lastAt,
+    pending: pendingPush(),
+    label: pendingPush() ? 'Push queued'
+      : unsynced ? 'Changes not pushed yet'
+        : lastAt ? 'Up to date' : 'Connected',
+  };
+}
+
 export async function configureSync({
   token, gistId, autoPush, autoPushRoutines, autoPull, autoPullForeground,
 }) {
@@ -343,19 +358,40 @@ export async function flushPendingPush() {
   }
 }
 
+/** Finished sessions only, and only while no workout is in progress. */
+function historySignature() {
+  const done = state.sessions.filter((s) => s.finishedAt);
+  const newest = done.reduce((n, s) => Math.max(n, s.updatedAt || s.finishedAt || 0), 0);
+  return `${done.length}:${newest}`;
+}
+let lastHistorySig = '';
+
 /**
- * Watch the store for routine changes. Subscribing beats calling a push from
- * each of the ten mutation sites (create, edit, delete, duplicate, reorder,
- * import, save-back-to-routine...) where one would eventually be forgotten.
- * Session changes deliberately do not trigger this — a push per logged set
- * would spam gist revisions for no benefit.
+ * Watch the store and push what changed. Subscribing beats calling a push from
+ * each of the ten routine mutation sites (create, edit, delete, duplicate,
+ * reorder, import, save-back-to-routine...) where one would eventually be
+ * forgotten. The plan schedules its own push from planstore.js, since it writes
+ * without going through here.
+ *
+ * FINISHED sessions are watched too, so correcting last Tuesday's workout in
+ * History reaches your other phone -- that was a standing gap. A LIVE workout
+ * is not: a push per logged set would spam gist revisions for no benefit, and
+ * the session goes up in one piece when you finish it.
  */
 export function watchRoutines() {
   lastRoutineSig = routineSignature();
+  lastHistorySig = historySignature();
   subscribe(() => {
     const sig = routineSignature();
-    if (sig === lastRoutineSig) return;
-    lastRoutineSig = sig;
+    if (sig !== lastRoutineSig) {
+      lastRoutineSig = sig;
+      scheduleRoutinePush();
+      return;
+    }
+    if (state.active) return;                  // mid-workout: wait for Finish
+    const hist = historySignature();
+    if (hist === lastHistorySig) return;
+    lastHistorySig = hist;
     scheduleRoutinePush();
   });
 }

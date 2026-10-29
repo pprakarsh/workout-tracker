@@ -105,7 +105,7 @@ ok(cacheName === `workout-v${appVersion}`,
 console.log('\n== action registry integrity');
 const viewFiles = ['js/views/entry.js', 'js/views/cardio.js', 'js/views/now.js', 'js/views/session.js',
   'js/views/plan.js', 'js/views/history.js', 'js/views/trends.js', 'js/views/routines.js',
-  'js/timer.js'];
+  'js/views/settings.js', 'js/timer.js'];
 const sources = Object.fromEntries(viewFiles.map((f) => [f, readFileSync(`${APP}/${f}`, 'utf8')]));
 const allSource = Object.values(sources).join('\n');
 
@@ -123,7 +123,9 @@ for (const [file, src] of Object.entries(sources)) {
 ok(declared.size > 40, `${declared.size} actions declared across the view modules`);
 
 // actions referenced from rendered markup
-const used = new Set([...allSource.matchAll(/data-action="([a-z][a-z0-9-]*)"/g)].map((m) => m[1]));
+// index.html carries the app shell's own buttons (the settings gear), so it is
+// markup the registry has to be checked against as well.
+const used = new Set([...`${allSource}\n${html}`.matchAll(/data-action="([a-z][a-z0-9-]*)"/g)].map((m) => m[1]));
 // plus the ones dispatched from code rather than markup
 const dispatched = new Set([...allSource.matchAll(/entryActions\['([a-z-]+)'\]/g)].map((m) => m[1]));
 const appSrc = readFileSync(`${APP}/js/app.js`, 'utf8');
@@ -140,7 +142,7 @@ ok(unreachable.length === 0,
 
 // every actions map must actually be merged into ACTIONS in app.js
 for (const map of ['entryActions', 'cardioActions', 'nowActions', 'sessionActions', 'planActions',
-  'historyActions', 'trendsActions', 'routineActions', 'timerActions']) {
+  'historyActions', 'trendsActions', 'settingsActions', 'routineActions', 'timerActions']) {
   ok(appSrc.includes(map), `${map} is merged into the ACTIONS registry`);
 }
 

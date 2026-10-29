@@ -692,6 +692,17 @@ export const routineActions = {
     toast(`Pushed ${res.counts.sessions} sessions, ${res.counts.loggedSets} sets`, 3200);
   },
 
+  'sync-now': async () => {
+    // Pull first, then push. The other order would send this device's copy up
+    // before it had seen anything newer, which is how a blob sync loses a day.
+    toast('Syncing...');
+    const pulled = await pullNow();
+    if (pulled?.error) { toast(`Sync: ${pulled.error}`, 5000); return; }
+    const pushed = await pushNow();
+    if (pushed?.error) { toast(`Sync: ${pushed.error}`, 5000); return; }
+    toast(pulled?.ok ? 'Pulled, then pushed - both sides match' : 'Pushed - both sides match');
+  },
+
   'sync-pull': async () => {
     toast('Pulling…', 1200);
     const res = await pullNow();

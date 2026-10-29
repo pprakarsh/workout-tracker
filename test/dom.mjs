@@ -342,11 +342,12 @@ ok(reSplit.setTargets?.length === 3 && reSplit.setTargets[2].weight === 80,
 section('switching type hides the set grid');
 await openBlankExerciseForm('[data-action="rentry-add"]', '+ Add exercise');
 $('[name="name"]').value = 'Easy Run';
-$('#exType').value = 'cardio';
+$('#exType').value = 'run';
 $('#exType').dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 await sleep(30);
-ok($('#exLift').hidden === true, 'set grid hidden for cardio');
-ok($('#exCardio').hidden === false, 'cardio fields shown');
+ok($('#exLift').hidden === true, 'set grid hidden for a run');
+ok($('#exCardio').hidden === false, 'run fields shown');
+ok($('#exIntervals').hidden === true, 'and the interval builder stays out of the way');
 $('[name="targetDistance"]').value = '5';
 $('[name="targetDuration"]').value = '27:00';
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -636,10 +637,10 @@ ok(view().includes('Log all 6 rounds'), 'with a single button for the whole bloc
 section('the pattern is built by tapping, not typing');
 ok($('[data-action="cardio-pattern"]') !== null, 'the pattern is editable from the card');
 await click('[data-action="cardio-pattern"]');
-ok($('#bLegs') !== null, 'the builder opened');
+ok($('#modalRoot [data-b-legs]') !== null, 'the builder opened');
 ok($$('[data-bleg]').length === 2, `the existing two legs are loaded for editing (${$$('[data-bleg]').length})`);
-ok($('#bRounds').textContent === '6', `and its round count (${$('#bRounds').textContent})`);
-ok($('#bPreview').textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km'),
+ok($('#modalRoot [data-b-rounds]').textContent === '6', `and its round count (${$('#modalRoot [data-b-rounds]').textContent})`);
+ok($('#modalRoot [data-b-preview]').textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km'),
   'with a live preview of the canonical pattern');
 ok($$('[data-b-preset]').length >= 4, 'common blocks are one tap away');
 
@@ -650,7 +651,7 @@ plus15.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancela
 await sleep(20);
 ok($('[data-bleg="0"] [data-b-out="duration"]').textContent === '1:15',
   `+15s stepped the first leg to 1:15 (${$('[data-bleg="0"] [data-b-out="duration"]').textContent})`);
-ok($('#bPreview').textContent.includes('1:15 @ 8:00/km'), 'and the preview followed');
+ok($('#modalRoot [data-b-preview]').textContent.includes('1:15 @ 8:00/km'), 'and the preview followed');
 
 const minus5 = [...$('[data-bleg="0"]').querySelectorAll('[data-b-step="pace"]')].find((b) => b.textContent === '\u22125s');
 minus5.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -658,12 +659,12 @@ await sleep(20);
 ok($('[data-bleg="0"] [data-b-out="pace"]').textContent === '7:55',
   `pace steps in seconds per km (${$('[data-bleg="0"] [data-b-out="pace"]').textContent})`);
 
-await click('[data-b-rounds="1"]');
-ok($('#bRounds').textContent === '7', `rounds step too (${$('#bRounds').textContent})`);
-await click('[data-b-rounds="-1"]');
+await click('#modalRoot [data-b-rounds-by="1"]');
+ok($('#modalRoot [data-b-rounds]').textContent === '7', `rounds step too (${$('#modalRoot [data-b-rounds]').textContent})`);
+await click('#modalRoot [data-b-rounds-by="-1"]');
 
 const legsBefore = $$('[data-bleg]').length;
-await click('#bDup');
+await click('#modalRoot [data-b-dup]');
 ok($$('[data-bleg]').length === legsBefore + 1, 'a leg can be duplicated rather than re-entered');
 await click('[data-bleg="2"] [data-b-del]');
 ok($$('[data-bleg]').length === legsBefore, 'and removed again');
@@ -672,9 +673,9 @@ section('a preset replaces the whole block in one tap');
 const tabata = [...$$('[data-b-preset]')].find((b) => /Tabata/.test(b.textContent));
 tabata.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
 await sleep(20);
-ok($('#bPreview').textContent.includes('0:20 hard + 0:10 rest'),
-  `the preset loaded (${$('#bPreview').textContent.trim().slice(0, 40)})`);
-ok($('#bRounds').textContent === '8', 'including its round count');
+ok($('#modalRoot [data-b-preview]').textContent.includes('0:20 hard + 0:10 rest'),
+  `the preset loaded (${$('#modalRoot [data-b-preview]').textContent.trim().slice(0, 40)})`);
+ok($('#modalRoot [data-b-rounds]').textContent === '8', 'including its round count');
 
 section('typing is still available, and still explains the format');
 const pat = $('#ivPattern');
@@ -774,22 +775,44 @@ await click('#tabBar .tab[data-tab="routines"]');
 await click(`[data-action="routine-open"][data-id="${prR.id}"]`);
 await openBlankExerciseForm('[data-action="rentry-add"]', '+ Add exercise');
 const form = $('#modalForm');
-ok(form !== null && form.querySelector('[name="pattern"]') !== null,
-  'the exercise form has a pattern field');
-ok(form.querySelector('[name="targetPace"]') !== null, 'and a target pace field');
+ok(form !== null && form.querySelector('[name="targetPace"]') !== null,
+  'the exercise form has a target pace field');
+ok([...form.querySelectorAll('#exType option')].map((o) => o.value).join(',') === 'lift,run,intervals',
+  'and Intervals is offered as its own kind of exercise, not a buried field');
 // the cardio half is revealed by the type selector, not a separate screen
 const typeSel = form.querySelector('#exType');
-typeSel.value = 'cardio';
+typeSel.value = 'run';
 typeSel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 await sleep(20);
 const exCardio = form.querySelector('#exCardio');
 ok(exCardio.hidden === false, 'choosing cardio reveals the cardio fields');
-ok(exCardio.textContent.includes('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6'),
-  'with the worked example beside the field');
-ok(/leg \+ leg/.test(exCardio.textContent), 'the format spelled out');
-ok(/one tap/i.test(exCardio.textContent), 'and what logging it will feel like');
-ok(/bare leg time is/i.test(exCardio.textContent), 'including the bare-number rule');
-ok(/any two/i.test(exCardio.textContent), 'and the any-two rule for a straight run');
+ok(/any two/i.test(exCardio.textContent), 'the any-two rule for a straight run');
+ok(/Intervals/.test(exCardio.textContent), 'and it points at Intervals for a repeating block');
+
+section('choosing Intervals gives the same tap builder as logging does');
+typeSel.value = 'intervals';
+typeSel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+await sleep(30);
+const exIv = form.querySelector('#exIntervals');
+ok(exIv.hidden === false, 'the interval section is revealed');
+ok(form.querySelector('#exCardio').hidden === true, 'and the run fields step aside');
+ok(exIv.querySelector('[data-b-legs]') !== null, 'with the builder, not a text box');
+ok(exIv.querySelectorAll('[data-bleg]').length === 2, 'seeded with two legs');
+ok(exIv.querySelectorAll('[data-b-preset]').length >= 4, 'and the presets');
+ok(form.querySelector('#exPattern').value.length > 0,
+  `the hidden field already holds a pattern (${form.querySelector('#exPattern').value})`);
+ok(/one tap/i.test(exIv.textContent), 'it says what logging will feel like');
+ok(/timed/i.test(exIv.textContent), 'and that legs are timed, not measured');
+
+const ivPlus = [...exIv.querySelectorAll('[data-b-step="duration"]')].find((b) => b.textContent === '+15s');
+ivPlus.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(20);
+ok(/1:15/.test(form.querySelector('#exPattern').value),
+  `stepping a leg updates the saved pattern (${form.querySelector('#exPattern').value})`);
+await click('[data-b-rounds-by="1"]');
+await sleep(20);
+ok(/\u00d7 7$/.test(form.querySelector('#exPattern').value),
+  `and so does the round count (${form.querySelector('#exPattern').value})`);
 await click('[data-mclose]');
 
 section('the header shows a progress bar you can read at a glance');
@@ -965,6 +988,66 @@ ok(store.getSession(openId).finishedAt === loggedAt,
 const closedRow = [...$$('.sess-item')].find((r) => r.dataset.id === openId);
 ok(!closedRow.textContent.includes('unfinished'), 'and the row stops saying unfinished');
 await store.deleteSession(openId);
+
+section('Settings is a screen reached from the header, not a seventh tab');
+ok($$('#tabBar .tab').length === 6, 'the tab bar stays at six');
+ok($('#appHeader [data-action="settings-go"]') !== null, 'the gear is in the header, visible everywhere');
+await click('#tabBar .tab[data-tab="history"]');
+await click('[data-action="settings-go"]');
+ok(store.state.tab === 'settings', 'it opens as its own screen');
+ok($('#appTitle').textContent === 'Settings', `with its own title (${$('#appTitle').textContent})`);
+ok(view().includes('Units') && view().includes('Rest timer') && view().includes('Sync'),
+  'carrying every section');
+ok($('[data-cf="unit"]') !== null && $('[data-cf="prefillFrom"]') !== null, 'and the controls');
+ok($('[data-action="settings-close"]') !== null, 'with a way out');
+
+section('settings save as you change them, with no Save button');
+ok($('#modalForm') === null, 'it is not a modal');
+const startUnit = store.state.settings.unit;
+const other = startUnit === 'kg' ? 'lb' : 'kg';
+// a select repaints the screen, so the element has to be looked up again
+const setUnit = async (v) => {
+  const el = $('[data-cf="unit"]');
+  el.value = v;
+  el.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  await sleep(50);
+};
+await setUnit(other);
+ok(store.state.settings.unit === other, `the unit saved immediately (${store.state.settings.unit})`);
+await setUnit(startUnit);
+ok(store.state.settings.unit === startUnit, `and back again (${store.state.settings.unit})`);
+
+const stepIn = $('[data-cf="weightStep"]');
+stepIn.focus();
+stepIn.value = '5';
+stepIn.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(50);
+ok(store.state.settings.weightStep === 5, `typing saves too (${store.state.settings.weightStep})`);
+ok(document.activeElement === stepIn, 'without stealing the keyboard');
+stepIn.value = '2.5';
+stepIn.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(40);
+
+section('closing settings returns you where you were');
+await click('[data-action="settings-close"]');
+ok(store.state.tab === 'history', `back to History (${store.state.tab})`);
+
+section('the prefill mode is switchable from Settings');
+await click('[data-action="settings-go"]');
+const pfSel = $('[data-cf="prefillFrom"]');
+ok(pfSel.value === store.state.settings.prefillFrom, 'the control reflects the setting');
+ok(/ratchet|shrink/i.test(view()), 'and the screen warns that the set count never shrinks');
+const setPrefill = async (v) => {
+  const el = $('[data-cf="prefillFrom"]');
+  el.value = v;
+  el.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  await sleep(50);
+};
+await setPrefill('plan');
+ok(store.state.settings.prefillFrom === 'plan', 'switched to plan targets');
+await setPrefill('last');
+ok(store.state.settings.prefillFrom === 'last', 'and back to last time');
+await click('[data-action="settings-close"]');
 
 section('the Trends tab opens on an overview of everything logged');
 await click('#tabBar .tab[data-tab="trends"]');

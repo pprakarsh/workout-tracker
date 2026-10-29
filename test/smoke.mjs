@@ -319,6 +319,9 @@ ok(sq.notes.split('\n').length === 3, `notes kept as 3 lines (${JSON.stringify(s
 ok(sq.notes.includes('Warmup: 2x5 @ 40%') && sq.notes.includes('Tempo 3-1-1'), 'warmup and tempo text preserved');
 
 section('logging against a per-set plan');
+// pinned: this section asserts the PLAN filling the rows. The other mode, which
+// fills them from last time instead, has its own section further down.
+await store.updateSettings({ prefillFrom: 'plan' });
 const ws = await store.startSession(pr.id);
 const wsq = ws.entries[0];
 ok(wsq.sets.length === 3, `the wave plan materialised 3 rows (${wsq.sets.length})`);
@@ -924,6 +927,78 @@ ok(ss.entries.map((e) => e.name).join(',') === 'Lead,Tail,A1,A2',
 await store.discardSession();
 await store.deleteRoutine(sr.id);
 await store.deleteRoutine(hr.id);
+
+section('new sets can be prefilled from what you actually did last time');
+const pfR = await store.createRoutine({
+  name: 'Prefill Check',
+  entries: [{ name: 'Prefill Press', sets: 3, reps: 5, weight: 100, rest: '2:00' }],
+});
+await store.updateSettings({ prefillFrom: 'plan' });
+const pf1 = await store.startSession(pfR.id);
+const pfE1 = pf1.entries[0];
+ok(pfE1.sets.map((x) => `${x.weight}x${x.reps}`).join(',') === '100x5,100x5,100x5',
+  `plan mode fills from the routine (${pfE1.sets.map((x) => `${x.weight}x${x.reps}`).join(',')})`);
+// log something different from the plan, then finish
+await store.updateSet(pfE1.id, pfE1.sets[0].id, { weight: 105, reps: 5 });
+await store.updateSet(pfE1.id, pfE1.sets[1].id, { weight: 105, reps: 4 });
+await store.updateSet(pfE1.id, pfE1.sets[2].id, { weight: 102.5, reps: 4 });
+for (const st of pfE1.sets) await store.toggleSetDone(pfE1.id, st.id);
+await store.finishSession();
+
+await store.updateSettings({ prefillFrom: 'last' });
+const pf2 = await store.startSession(pfR.id);
+const pfE2 = pf2.entries[0];
+ok(pfE2.sets.map((x) => `${x.weight}x${x.reps}`).join(',') === '105x5,105x4,102.5x4',
+  `last mode fills from the previous session, set for set (${pfE2.sets.map((x) => `${x.weight}x${x.reps}`).join(',')})`);
+ok(pfE2.sets.every((x) => !x.done), 'and nothing arrives pre-ticked -- it is still a plan');
+ok(pfE2.targetSets === 3 && pfE2.weight === 100,
+  'the routine itself is untouched, so the target is still 100');
+await store.discardSession();
+
+section('a short session must not ratchet the plan down');
+const pf3 = await store.startSession(pfR.id);
+const pfE3 = pf3.entries[0];
+await store.updateSet(pfE3.id, pfE3.sets[0].id, { weight: 90, reps: 5 });
+await store.toggleSetDone(pfE3.id, pfE3.sets[0].id);
+// only ONE set logged, out of three planned
+await store.finishSession();
+const pf4 = await store.startSession(pfR.id);
+ok(pf4.entries[0].sets.length === 3,
+  `still three rows, because the COUNT comes from the plan (${pf4.entries[0].sets.length})`);
+ok(pf4.entries[0].sets.map((x) => x.weight).join(',') === '90,90,90',
+  `the single logged set carries forward to fill them (${pf4.entries[0].sets.map((x) => x.weight).join(',')})`);
+await store.discardSession();
+
+section('prefill falls back to the plan when there is no history');
+const freshR = await store.createRoutine({
+  name: 'Never Done', entries: [{ name: 'Brand New Lift', sets: 2, reps: 8, weight: 50 }],
+});
+const nf = await store.startSession(freshR.id);
+ok(nf.entries[0].sets.map((x) => `${x.weight}x${x.reps}`).join(',') === '50x8,50x8',
+  'a first-ever session uses the routine targets');
+await store.discardSession();
+
+section('prefill matches on the measure, not just the name');
+const holdPf = await store.createRoutine({
+  name: 'Hold Prefill',
+  entries: [{ name: 'Shared Name', measure: 'time', sets: 2, reps: '45' }],
+});
+const hp1 = await store.startSession(holdPf.id);
+await store.updateSet(hp1.entries[0].id, hp1.entries[0].sets[0].id, { reps: 70 });
+await store.toggleSetDone(hp1.entries[0].id, hp1.entries[0].sets[0].id);
+await store.finishSession();
+const hp2 = await store.startSession(holdPf.id);
+ok(hp2.entries[0].sets[0].reps === 70, `the hold carries its seconds forward (${hp2.entries[0].sets[0].reps})`);
+ok(store.lastWorkingSets(state.sessions, 'Shared Name', 'reps') === null,
+  'and a rep-measured exercise of the same name would not borrow them');
+await store.discardSession();
+await store.deleteRoutine(holdPf.id);
+await store.deleteRoutine(freshR.id);
+for (const x of state.sessions.filter((z) => /Prefill|Hold Prefill/.test(z.routineName))) {
+  await store.deleteSession(x.id);
+}
+await store.deleteRoutine(pfR.id);
+await store.updateSettings({ prefillFrom: 'last' });
 
 section('estimated 1RM, and when it refuses to guess');
 const tr = await import(`${APP}/js/trends.js`);

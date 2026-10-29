@@ -11,10 +11,15 @@
 import { state, emit } from './store.js';
 import { metaSet } from './db.js';
 import { blankDay, prunePlan } from './plan.js';
+import { scheduleRoutinePush } from './sync.js';
 
 async function persistPlan() {
   state.plan = prunePlan(state.plan);
   await metaSet('plan', state.plan);
+  // The plan rides in the same blob as the routines, so a plan edit has to
+  // schedule a push too -- otherwise the one thing you most want on your other
+  // phone (what you are doing tomorrow) is the one thing that never syncs.
+  scheduleRoutinePush();
   emit();
 }
 

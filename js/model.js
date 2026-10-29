@@ -6,7 +6,7 @@
 // migration framework, so every field here must tolerate its own absence: old
 // IndexedDB rows, old gist backups and hand-written JSON all arrive through
 // this function and must come out valid.
-import { uid, num, parseReps, parseDur } from './util.js';
+import { uid, num, parseReps, parseDur, normName } from './util.js';
 import { parsePace, intervalSpec, isIntervals, plannedLegs, resolveRun, storedSeconds } from './cardio.js';
 import { parseMeasure, parseAmountRange } from './measure.js';
 
@@ -202,16 +202,43 @@ export function toSessionEntry(entry, settings) {
  * entry is now always ONE entry: the rounds live inside its log, where they can
  * be confirmed in a single tap and still edited one at a time.
  */
-export function expandEntry(entry, settings) {
-  return [materializePlan(toSessionEntry(normalizeEntry(entry), settings))];
+export function expandEntry(entry, settings, sessions = null) {
+  const e = normalizeEntry(entry);
+  const prior = sessions && settings.prefillFrom === 'last'
+    ? lastWorkingSets(sessions, e.name, e.measure || 'reps') : null;
+  return [materializePlan(toSessionEntry(e, settings), prior)];
+}
+
+/**
+ * The working sets of the most recent FINISHED session that logged this
+ * exercise. Pure -- sessions come in as an argument -- so the store can call it
+ * without this module ever importing state.
+ */
+export function lastWorkingSets(sessions = [], name, measure = 'reps') {
+  const key = normName(name);
+  if (!key) return null;
+  const done = sessions.filter((s) => s.finishedAt).sort((a, b) => b.startedAt - a.startedAt);
+  for (const s of done) {
+    const hit = s.entries.find((e) => e.type === 'lift' && normName(e.name) === key
+      && (e.measure || 'reps') === measure);
+    const sets = (hit?.sets || []).filter((x) => x.done && !x.warmup);
+    if (sets.length) return sets;
+  }
+  return null;
 }
 
 /**
  * Create the rows the plan calls for, so a session opens as a checklist to tick
  * off rather than an empty form with an "add set" button. Logging a set is
  * confirming one, not creating one.
+ *
+ * `prior` is the last performance, supplied when settings.prefillFrom is
+ * 'last'. THE SET COUNT ALWAYS COMES FROM THE PLAN, only the numbers inside the
+ * rows come from last time. Taking the count from last time too would ratchet a
+ * routine down for good: cut a 5x5 short at three sets once and every session
+ * after it would open as a 3x5.
  */
-export function materializePlan(entry) {
+export function materializePlan(entry, prior = null) {
   if (entry.type !== 'lift') return entry;
   const want = entry.setTargets ? entry.setTargets.length : (entry.targetSets ?? 0);
   for (let i = entry.sets.length; i < want; i++) {
@@ -220,8 +247,18 @@ export function materializePlan(entry) {
         ? { weight: entry.weight, repsMin: entry.repsMin, repsMax: entry.repsMax } : null);
     const set = blankSet(entry.unit);
     set.bodyweight = !!entry.bodyweight;
-    set.weight = plan ? (plan.weight ?? null) : null;
-    set.reps = plan ? (plan.repsMin ?? plan.repsMax ?? null) : null;
+    // last time's matching set, else the one before it, so a longer plan still
+    // fills to the end rather than trailing off into blanks
+    const was = prior ? (prior[i] || prior[prior.length - 1]) : null;
+    if (was) {
+      set.weight = was.weight ?? null;
+      set.reps = was.reps ?? null;
+      set.bodyweight = !!was.bodyweight;
+      set.unit = was.unit || entry.unit;
+    } else {
+      set.weight = plan ? (plan.weight ?? null) : null;
+      set.reps = plan ? (plan.repsMin ?? plan.repsMax ?? null) : null;
+    }
     entry.sets.push(set);
   }
   return entry;
