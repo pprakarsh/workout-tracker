@@ -1272,6 +1272,95 @@ ok(win0.length === 10, `the window is ten days (${win0.length})`);
 ok(win0[0].key === '2026-10-29' && win0[9].key === '2026-11-07', `today first (${win0[0].key}) then nine more (${win0[9].key})`);
 ok(win0.every((d) => d.status.state === 'open'), 'an empty plan is all open days');
 
+section('recording a workout that already happened');
+const bdR = await store.createRoutine({
+  name: 'Backdate Me',
+  entries: [
+    { name: 'Backdate Squat', sets: 3, reps: 5, weight: 100, rest: '2:00' },
+    { name: 'Backdate Plank', measure: 'time', sets: 2, reps: '45' },
+  ],
+});
+const threeAgo = new Date(2026, 9, 26, 18, 0, 0).getTime();
+const bd = await store.createPastSession({
+  routineId: bdR.id, startedAt: threeAgo, finishedAt: threeAgo + 3600000,
+});
+ok(bd !== null, 'the session was created');
+ok(bd.startedAt === threeAgo, 'dated when it happened, not now');
+ok(bd.finishedAt === threeAgo + 3600000, 'with the duration given');
+ok(bd.backdated === true, 'and flagged as recorded after the fact');
+ok(state.active === null, 'it never becomes the active workout');
+ok(bd.entries.length === 2, 'the routine was snapshotted');
+ok(bd.entries[0].sets.length === 3 && bd.entries[1].sets.length === 2,
+  'with every set laid out ready to fill in');
+ok(bd.entries[0].sets.every((x) => !x.done), 'none of them pre-ticked -- you log what you did');
+ok(store.getSession(bd.id) !== null, 'and it is in the store');
+ok(state.sessions[0].startedAt >= state.sessions[state.sessions.length - 1].startedAt,
+  'the session list is still newest-first');
+
+section('a backdated session is logged through the History editor');
+const bdSq = bd.entries[0];
+// findEntry only sees the session being WORKED ON -- active, or opened for
+// editing. A backdated session is neither until setEditing opens it, which is
+// exactly what the UI flow does on creating one.
+await store.setEditing(null);
+const bdPrefilled = bdSq.sets[0].weight;
+ok(bdPrefilled === 100, `the rows arrive prefilled from the plan (${bdPrefilled})`);
+await store.updateSet(bdSq.id, bdSq.sets[0].id, { weight: 95, reps: 5 });
+ok(bdSq.sets[0].weight === bdPrefilled, 'and are not editable until the session is opened');
+await store.setEditing(bd.id);
+await store.updateSet(bdSq.id, bdSq.sets[0].id, { weight: 95, reps: 5 });
+await store.toggleSetDone(bdSq.id, bdSq.sets[0].id);
+ok(bdSq.sets[0].weight === 95 && bdSq.sets[0].done === true, 'then it logs like any other set');
+ok(store.getSession(bd.id).entries[0].sets[0].weight === 95, 'and persists');
+await store.setEditing(null);
+
+section('a future date is refused outright');
+ok(await store.createPastSession({ routineId: bdR.id, startedAt: Date.now() + 86400000 }) === null,
+  'tomorrow is not the past');
+ok(await store.createPastSession({ routineId: bdR.id, startedAt: NaN }) === null,
+  'and nor is nonsense');
+
+section('an end before the start collapses rather than going negative');
+const bdZ = await store.createPastSession({
+  routineId: bdR.id, startedAt: threeAgo, finishedAt: threeAgo - 9999,
+});
+ok(bdZ.finishedAt === bdZ.startedAt, 'the duration is zero, never below it');
+await store.deleteSession(bdZ.id);
+
+section('a backdated session prefills from what came BEFORE it, not after');
+await store.updateSettings({ prefillFrom: 'last' });
+// log a heavy session TODAY
+const todaySess = await store.createPastSession({
+  routineId: bdR.id, startedAt: new Date(2026, 9, 29, 18).getTime(),
+});
+await store.setEditing(todaySess.id);
+await store.updateSet(todaySess.entries[0].id, todaySess.entries[0].sets[0].id, { weight: 130, reps: 5 });
+await store.toggleSetDone(todaySess.entries[0].id, todaySess.entries[0].sets[0].id);
+await store.setEditing(null);
+// then record one from a week earlier: it must not borrow today's 130
+const weekBefore = await store.createPastSession({
+  routineId: bdR.id, startedAt: new Date(2026, 9, 22, 18).getTime(),
+});
+ok(weekBefore.entries[0].sets[0].weight !== 130,
+  `the earlier session did not prefill from the later one (${weekBefore.entries[0].sets[0].weight})`);
+ok(weekBefore.entries[0].sets[0].weight === 100,
+  'it fell back to the routine target, there being nothing before it');
+ok(store.lastWorkingSets(state.sessions, 'Backdate Squat', 'reps')?.[0]?.weight === 130,
+  'while an unbounded lookup still finds the latest');
+ok(store.lastWorkingSets(state.sessions, 'Backdate Squat', 'reps',
+  new Date(2026, 9, 23).getTime()) === null,
+  'and a bounded one sees nothing before the cutoff');
+await store.deleteSession(weekBefore.id);
+await store.deleteSession(todaySess.id);
+await store.deleteSession(bd.id);
+await store.deleteRoutine(bdR.id);
+
+section('an ad-hoc past workout needs no routine at all');
+const adhoc = await store.createPastSession({ routineId: null, startedAt: threeAgo });
+ok(adhoc !== null && adhoc.entries.length === 0, 'it starts empty');
+ok(adhoc.routineName === 'Ad-hoc workout', 'and is named as such');
+await store.deleteSession(adhoc.id);
+
 section('the week behind, most recent first');
 const past0 = planLib.pastWindow({}, [], T0);
 ok(past0.length === 7, `seven days (${past0.length})`);

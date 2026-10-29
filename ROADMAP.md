@@ -35,6 +35,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Dependency-free SVG charts | `js/chart.js` — scatter+line and bars, no library, no build step |
 | Weight unit conversion | A history spanning a kg/lb switch converts into the unit on display |
 | Explicit dates in History, and closing a stranded session | `markSessionFinished` times it to the last set logged |
+| Log a workout for a past day | From a missed day in Plan, or from History; created finished and opened in the editor |
 | "Do this next" | Moves a whole block behind the current one, from the session list |
 | Tap-driven interval builder | Steppers, presets and a live preview; typing is the fallback |
 | Units on every column, formats in every placeholder | A unit you can still see once a value is typed |

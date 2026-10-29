@@ -259,6 +259,15 @@ Invariants worth knowing:
   **Monday**, because a training week is counted Monday-to-Sunday and a Sunday start splits every
   weekend across two of them. Stepping forward is capped at the current week or month — there is no
   history ahead of today.
+- **A backdated session is created FINISHED and handed to the History editor**, never made
+  `state.active`. `createPastSession` exists because the alternative — starting a real session with
+  an old `startedAt` — breaks three things at once: a workout already in progress would block it,
+  a rest clock would start for a session that ended on Tuesday, and the Now header would report
+  "3 days elapsed". The finished-session editor is already the right surface: the same set grid,
+  minus the timing machinery you do not want when backfilling. Its sets prefill from the last
+  session *before* that date (`lastWorkingSets(..., before)`) — filling Tuesday's rows from
+  Thursday's numbers would be prefilling from the future. Future dates are refused outright, and a
+  finish time before the start collapses to zero rather than going negative.
 - **A session can be stranded unfinished** if the app closes mid-workout. `markSessionFinished`
   closes it from History, and sets `finishedAt` to the **last thing actually logged**, not now, so a
   workout abandoned on Tuesday does not claim to have ended on Friday. Until it is closed it reads

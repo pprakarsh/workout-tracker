@@ -90,6 +90,8 @@ function dayRow(day, { past = false } = {}) {
       <div class="pd-acts">
         ${r && isToday && !state.active && status.state !== 'done'
     ? `<button type="button" class="btn sm primary" data-action="plan-start" data-key="${key}">Start</button>` : ''}
+        ${past && status.state === 'missed'
+    ? `<button type="button" class="btn sm" data-action="past-log" data-id="${entry.routineId}" data-key="${key}">Log it</button>` : ''}
         ${sess
     ? `<button type="button" class="btn icon ghost" title="Open this workout" data-action="plan-open" data-id="${sess.id}">↗</button>` : ''}
         ${entry.routineId || entry.rest || past
@@ -176,6 +178,8 @@ function openDayMenu(key) {
       <div class="btn-row" style="flex-direction:column;gap:8px">
         <button type="button" class="btn block" data-action="plan-pick" data-key="${key}">
           ${r ? 'Change routine' : 'Plan a routine'}</button>
+        <button type="button" class="btn block" data-action="past-log"
+                ${entry.routineId ? `data-id="${entry.routineId}" ` : ''}data-key="${key}">Log a workout for this day</button>
         <button type="button" class="btn block" data-action="plan-shift" data-key="${key}" data-by="1">Push to the next day &rarr;</button>
         <button type="button" class="btn block" data-action="plan-shift" data-key="${key}" data-by="-1">Pull to the day before &larr;</button>
         <button type="button" class="btn block" data-action="plan-note" data-key="${key}">${entry.note ? 'Edit note' : 'Add a note'}</button>

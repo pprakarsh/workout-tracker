@@ -222,6 +222,47 @@ export async function finishSession() {
   return s;
 }
 
+/**
+ * Record a workout that already happened.
+ *
+ * It is created ALREADY FINISHED and handed to the History editor, rather than
+ * becoming `state.active`. Three reasons: a real workout can be in progress at
+ * the same time without either getting in the other's way; no rest clock starts
+ * for a session that ended on Tuesday; and the Now header does not end up
+ * reporting "3 days elapsed". The finished-session editor is already the right
+ * surface for this -- the same set grid, minus the timing machinery you do not
+ * want when backfilling.
+ *
+ * Sets are prefilled from the last session BEFORE this date, so a backdated
+ * entry is not filled in from workouts that came after it.
+ */
+export async function createPastSession({ routineId = null, startedAt, finishedAt = null }) {
+  const start = Number(startedAt);
+  if (!Number.isFinite(start)) return null;
+  if (start > Date.now()) return null;            // the past only
+  const r = getRoutine(routineId);
+  const session = {
+    id: uid('w'),
+    routineId: r ? r.id : null,
+    routineName: r ? r.name : 'Ad-hoc workout',
+    routineDescription: r ? r.description : '',
+    startedAt: start,
+    finishedAt: Number.isFinite(finishedAt) && finishedAt >= start ? Number(finishedAt) : start,
+    unit: state.settings.unit,
+    entries: (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings, state.sessions, start)),
+    currentIdx: 0,
+    rpe: null,
+    bodyweight: null,
+    notes: '',
+    modified: false,
+    backdated: true,       // recorded after the fact, not logged as it happened
+  };
+  await persistSession(session);
+  state.sessions.sort((a, b) => b.startedAt - a.startedAt);
+  emit();
+  return session;
+}
+
 export async function discardSession() {
   const s = state.active;
   if (!s) return;

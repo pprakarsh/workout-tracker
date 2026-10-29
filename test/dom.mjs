@@ -1220,6 +1220,59 @@ ok(mRow2.textContent.includes('by hand'), 'and the row admits it was manual');
 store.state.sessions = store.state.sessions.filter((x) => x.id !== 'w_yesterday');
 await planStore.clearPlanDay(mKey);
 
+section('a missed day can be logged after the fact, from the Plan tab');
+const lateKey = planLib.dayKey(planLib.addDays(Date.now(), -4));
+await planStore.setPlanDay(lateKey, { routineId: pgR.id });
+await sleep(50);
+const lateRow = [...$$('.pd-row.is-past')].find((r) => r.dataset.planRow === lateKey);
+ok(lateRow.classList.contains('missed'), 'the day reads missed');
+ok(lateRow.querySelector('[data-action="past-log"]') !== null,
+  'and offers "Log it" right on the row, where the intent is obvious');
+await click(`[data-action="past-log"][data-key="${lateKey}"]`);
+ok($('input[name="date"]') !== null, 'the when-did-you-do-it sheet opened');
+ok($('input[name="date"]').value === lateKey,
+  `with the date already set from the row (${$('input[name="date"]').value})`);
+ok($('input[name="date"]').max === planLib.dayKey(Date.now()),
+  'and no future date selectable');
+ok($('input[name="start"]').value.length === 5 && $('input[name="end"]').value.length === 5,
+  'plus start and end times');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(140);
+ok(store.state.tab === 'history', 'it lands in History');
+const madeId = store.state.nav.sessionId;
+ok(madeId && store.getSession(madeId) !== null, 'with the new session open');
+ok(store.state.editSessionId === madeId, 'and already in edit mode, ready to fill in');
+ok(planLib.dayKey(store.getSession(madeId).startedAt) === lateKey,
+  'dated to the day it happened');
+ok(store.state.active === null, 'no workout was started -- this is a recording, not a session');
+ok($$('.set-row').length >= 1, `the set grid is there to fill in (${$$('.set-row').length} rows)`);
+ok($('[data-action="rest-start"]') === null && $('[data-action="set-rest-toggle"]') === null,
+  'but no rest timer, which a four-day-old workout has no use for');
+
+section('filling it in flips the planned day to done');
+const madeE = store.getSession(madeId).entries.find((e) => e.sets && e.sets.length);
+for (const st of madeE.sets) await store.toggleSetDone(madeE.id, st.id);
+await sleep(60);
+await click('[data-action="hist-edit-done"]');
+await click('#tabBar .tab[data-tab="plan"]');
+const fixedRow = [...$$('.pd-row.is-past')].find((r) => r.dataset.planRow === lateKey);
+ok(fixedRow.classList.contains('done'),
+  `the missed day now reads done, straight from the session (${fixedRow.className})`);
+ok(fixedRow.querySelector('[data-action="past-log"]') === null, 'and stops offering to log it');
+ok(store.state.plan[lateKey].doneAt === null, 'with no manual flag needed');
+await store.deleteSession(madeId);
+await planStore.clearPlanDay(lateKey);
+
+section('a past workout can also be logged from History, routine chosen there');
+await click('#tabBar .tab[data-tab="history"]');
+ok($('[data-action="past-log"]') !== null, 'the list offers it too');
+await click('[data-action="past-log"]');
+ok($$('#modalRoot [data-action="past-log"]').length >= 2,
+  'which asks which routine, plus an empty-workout option');
+await click('[data-mclose]');
+// hand the following section the tab it expects to be on
+await click('#tabBar .tab[data-tab="plan"]');
+
 section('starting from the plan begins the workout and lands on Now');
 await click('[data-action="plan-start"]');
 await sleep(80);

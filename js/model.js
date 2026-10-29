@@ -202,10 +202,10 @@ export function toSessionEntry(entry, settings) {
  * entry is now always ONE entry: the rounds live inside its log, where they can
  * be confirmed in a single tap and still edited one at a time.
  */
-export function expandEntry(entry, settings, sessions = null) {
+export function expandEntry(entry, settings, sessions = null, before = null) {
   const e = normalizeEntry(entry);
   const prior = sessions && settings.prefillFrom === 'last'
-    ? lastWorkingSets(sessions, e.name, e.measure || 'reps') : null;
+    ? lastWorkingSets(sessions, e.name, e.measure || 'reps', before) : null;
   return [materializePlan(toSessionEntry(e, settings), prior)];
 }
 
@@ -214,10 +214,14 @@ export function expandEntry(entry, settings, sessions = null) {
  * exercise. Pure -- sessions come in as an argument -- so the store can call it
  * without this module ever importing state.
  */
-export function lastWorkingSets(sessions = [], name, measure = 'reps') {
+export function lastWorkingSets(sessions = [], name, measure = 'reps', before = null) {
   const key = normName(name);
   if (!key) return null;
-  const done = sessions.filter((s) => s.finishedAt).sort((a, b) => b.startedAt - a.startedAt);
+  const done = sessions
+    // `before` matters for a backdated session: filling Tuesday's rows from
+    // Thursday's numbers would be prefilling from the future
+    .filter((s) => s.finishedAt && (before === null || s.startedAt < before))
+    .sort((a, b) => b.startedAt - a.startedAt);
   for (const s of done) {
     const hit = s.entries.find((e) => e.type === 'lift' && normName(e.name) === key
       && (e.measure || 'reps') === measure);

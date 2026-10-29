@@ -2,7 +2,7 @@
 // editable mode for correcting a finished session.
 import {
   state, deleteSession, getSession, sessionProgress, sessionVolume,
-  setEditing, updateSessionTiming, setHistFilter, markSessionFinished,
+  setEditing, updateSessionTiming, setHistFilter, markSessionFinished, createPastSession,
 } from '../store.js';
 import { historyWindow, sessionsIn, groupByMonth } from '../queries.js';
 import {
@@ -126,7 +126,8 @@ export function render() {
       ${g.sessions.map(sessionRow).join('')}`).join('')
     : `<div class="empty">Nothing logged in ${esc(win.label.toLowerCase())}.</div>`}
     <div class="divider"></div>
-    <button type="button" class="btn block ghost" data-action="hist-csv">Export all sessions as CSV</button>`;
+    <button type="button" class="btn block" data-action="past-log">+ Log a past workout</button>
+    <button type="button" class="btn block ghost" style="margin-top:8px" data-action="hist-csv">Export all sessions as CSV</button>`;
 }
 
 /**
@@ -206,7 +207,92 @@ function summaryCard(list, win) {
     </div>`;
 }
 
+/** Default training hour, taken from when you usually train rather than guessed. */
+function usualHour() {
+  const done = state.sessions.filter((s) => s.finishedAt).slice(0, 20);
+  if (!done.length) return 18;
+  const hours = done.map((s) => new Date(s.startedAt).getHours()).sort((a, b) => a - b);
+  return hours[Math.floor(hours.length / 2)];      // median, so one odd session cannot skew it
+}
+
+const hhmm = (h, m = 0) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+
+/**
+ * Record a workout that already happened: pick the routine, confirm when, and
+ * land in the editor with every set laid out ready to fill in.
+ *
+ * `dayKey` pre-selects the date, which is how the Plan tab hands a past day
+ * straight to this without asking again.
+ */
+function openPastLogger(routineId = null, dayKey = null) {
+  if (!routineId) {
+    const rs = state.routines;
+    if (!rs.length) { toast('No routines yet - create one first', 4000); return; }
+    openModal({
+      title: 'Log a past workout',
+      bodyHtml: `
+        <p class="hint" style="margin-top:0">Which routine did you do?</p>
+        <div class="btn-row" style="flex-direction:column;gap:8px">
+          ${rs.map((r) => `<button type="button" class="btn block" data-action="past-log"
+            data-id="${r.id}"${dayKey ? ` data-key="${dayKey}"` : ''}>${esc(r.name)}
+            <span class="dim small">${r.entries.length} exercise${r.entries.length === 1 ? '' : 's'}</span></button>`).join('')}
+          <div class="divider"></div>
+          <button type="button" class="btn block ghost" data-action="past-log" data-id="adhoc"${
+  dayKey ? ` data-key="${dayKey}"` : ''}>Empty workout &mdash; add exercises as you go</button>
+        </div>`,
+      cancelText: 'Cancel',
+    });
+    return;
+  }
+
+  const h = usualHour();
+  const date = dayKey || isoDate(Date.now() - 86400000);     // yesterday by default
+  const r = routineId === 'adhoc' ? null : getRoutineSafe(routineId);
+  openModal({
+    title: r ? `When did you do ${r.name}?` : 'When was this workout?',
+    bodyHtml: `
+      <label class="field"><span>Date</span>
+        <input type="date" name="date" value="${esc(date)}" max="${esc(isoDate(Date.now()))}"></label>
+      <div class="grid2">
+        <label class="field"><span>Started</span>
+          <input type="time" name="start" value="${esc(hhmm(h))}"></label>
+        <label class="field"><span>Finished</span>
+          <input type="time" name="end" value="${esc(hhmm((h + 1) % 24))}"></label>
+      </div>
+      <p class="hint">The times are a best guess and only affect the duration shown &mdash; correct
+        them later from <b>Change date &amp; time</b> if it matters. Every set arrives laid out and
+        empty-ticked, so you only fill in what you actually did.</p>`,
+    okText: 'Create and log it',
+    onSubmit: async (v) => {
+      const [y, mo, d] = String(v.date || '').split('-').map(Number);
+      if (!y || !mo || !d) { toast('Pick a valid date'); return false; }
+      const at = (t, dayOffset = 0) => {
+        const [hh, mi] = String(t || '00:00').split(':').map(Number);
+        return new Date(y, mo - 1, d + dayOffset, hh || 0, mi || 0).getTime();
+      };
+      const startedAt = at(v.start);
+      if (startedAt > Date.now()) { toast('That is in the future'); return false; }
+      let finishedAt = at(v.end);
+      if (finishedAt < startedAt) finishedAt = at(v.end, 1);   // crossed midnight
+      const made = await createPastSession({
+        routineId: routineId === 'adhoc' ? null : routineId, startedAt, finishedAt,
+      });
+      if (!made) { toast('Could not create that session'); return false; }
+      state.nav.sessionId = made.id;
+      state.tab = 'history';
+      await setEditing(made.id);
+      toast(`${fmtDate(startedAt)} created - fill in what you did`, 3600);
+      return true;
+    },
+  });
+}
+
+/** getRoutine without importing it twice; the list is small. */
+const getRoutineSafe = (id) => state.routines.find((x) => x.id === id) || null;
+
 export const historyActions = {
+  'past-log': ({ id = null, key = null }) => { openPastLogger(id, key); },
+
   'hist-open': ({ id }) => { state.nav.sessionId = id; },
   'hist-back': async () => { state.nav.sessionId = null; await setEditing(null); },
   'hist-edit': async ({ id }) => { state.nav.sessionId = id; await setEditing(id); },
