@@ -1132,6 +1132,56 @@ const mixWk = tr.weeklyTotals([{
 ok(mixWk[0].sets === 2 && mixWk[0].volume === 500,
   `both sets counted, only the squat in volume (${mixWk[0].sets} sets, ${mixWk[0].volume} volume)`);
 
+section('work that looks logged but is not confirmed is findable');
+const ucR = await store.createRoutine({
+  name: 'Unconfirmed Check',
+  entries: [
+    { name: 'UC Press', sets: 2, reps: 5, weight: 50 },
+    { type: 'cardio', name: 'UC Run', duration: '30:00', pace: '6:00' },
+  ],
+});
+const ucS = await store.startSession(ucR.id);
+const [ucLift, ucRun] = ucS.entries;
+ok(ucLift.sets[0].weight === 50, 'the lift arrives pre-filled');
+ok(ucRun.log.duration === 1800 && ucRun.log.pace === 360, 'and so does the run');
+ok(ucRun.log.done === false, 'but the run is not confirmed');
+const loose = q.unconfirmedWork(ucS);
+ok(loose.length === 2, `both are flagged as filled-but-unlogged (${loose.length})`);
+ok(loose.find((x) => x.name === 'UC Run').what === 'the run', 'the run names itself');
+ok(loose.find((x) => x.name === 'UC Press').what === '2 sets', 'the lift counts its rows');
+
+section('confirming removes it from the warning');
+await store.updateLog(ucRun.id, { done: true, completedAt: Date.now() });
+ok(q.unconfirmedWork(ucS).length === 1, 'the run drops off once logged');
+for (const st of ucLift.sets) await store.toggleSetDone(ucLift.id, st.id);
+ok(q.unconfirmedWork(ucS).length === 0, 'and so does the lift');
+
+section('an empty row is not a warning, and a skipped entry is not either');
+const ucS2 = await (async () => { await store.discardSession(); return store.startSession(ucR.id); })();
+await store.updateLog(ucS2.entries[1].id, { duration: null, pace: null, distance: null });
+ok(!q.unconfirmedWork(ucS2).some((x) => x.name === 'UC Run'),
+  'a run with no numbers at all has nothing to lose');
+await store.toggleSkip(ucS2.entries[0].id);
+ok(!q.unconfirmedWork(ucS2).some((x) => x.name === 'UC Press'),
+  'and a skipped exercise was never going to be logged');
+ok(q.unconfirmedWork(null).length === 0, 'no session, no warning');
+
+section('an interval block only warns when NOT ONE round is logged');
+const ucIv = await store.createRoutine({
+  name: 'UC Intervals',
+  entries: [{ type: 'cardio', name: 'UC Block', pattern: '1:00 @ 8:00/km + 1:00 easy x 3' }],
+});
+await store.discardSession();
+const ivS = await store.startSession(ucIv.id);
+ok(q.unconfirmedWork(ivS).length === 1, 'a wholly unlogged block warns');
+ok(q.unconfirmedWork(ivS)[0].what === '3 rounds', 'naming the rounds at stake');
+await store.toggleLeg(ivS.entries[0].id, ivS.entries[0].log.legs[0].id);
+ok(q.unconfirmedWork(ivS).length === 0,
+  'but a partly logged block does not -- something was recorded, so nothing is silently lost');
+await store.discardSession();
+await store.deleteRoutine(ucIv.id);
+await store.deleteRoutine(ucR.id);
+
 section('an interval block counts as running, everywhere a run does');
 const ivLegs = (n) => Array.from({ length: n * 2 }, (_, i) => ({
   round: Math.floor(i / 2) + 1, leg: i % 2,

@@ -308,6 +308,14 @@ Invariants worth knowing:
   because on a treadmill pace is the dial you hold while the time changes.
 - A leg marked `edited` was changed by hand, which exempts it from a later edit of the pattern.
   "Round 4 was slower" has to survive "the plan was actually 1:15 throughout" (`reconcileLegs`).
+- **Pre-filling makes a filled row and a recorded row look identical, so finishing warns about the
+  difference.** Every row opens pre-filled, which is what makes logging a confirmation rather than
+  typing — but an unconfirmed row contributes to nothing: not History, not the exports, not Trends,
+  not the plan's done check. A run is the easy one to lose, because a lifter learns to tick each set
+  while a runner sees numbers already in the boxes. Two defences: the run's confirm is a full-width
+  `.confirm` bar carrying the same weight as a lift's, and `unconfirmedWork(session)` feeds the
+  finish prompt a list of what would be saved as nothing, with a one-tap fix. A partly logged
+  interval block does not warn — something was recorded, so nothing is silently lost.
 - **`cardioLogged(log)` is the only way to ask whether a cardio entry recorded anything.** The log
   opens pre-filled from its targets, so `log.distance !== null` stopped meaning "was run" — exactly
   the plan-vs-history trap the lift side already had. Three call sites had to be corrected when the

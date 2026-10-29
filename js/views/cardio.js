@@ -13,7 +13,7 @@ import {
 } from '../store.js';
 import {
   isIntervals, patternText, totalsText, byRound, parseIntervals,
-  parsePace, intervalSummary, roundLines,
+  parsePace, fmtPace, intervalSummary, roundLines,
 } from '../cardio.js';
 import { esc, fmtNum, fmtClock, parseDur } from '../util.js';
 import { openModal, toast } from '../ui.js';
@@ -48,6 +48,15 @@ const PATTERN_HINT = `
 /* a straight run                                                     */
 /* ------------------------------------------------------------------ */
 
+/** What the confirm bar commits: "28:30 - 6:00/km - 4.75 km". */
+function runLabel(l, du) {
+  const bits = [];
+  if (l.duration) bits.push(fmtClock(l.duration));
+  if (l.pace) bits.push(fmtPace(l.pace, du));
+  if (l.distance !== null && l.distance !== undefined) bits.push(`${fmtNum(l.distance)} ${du}`);
+  return bits.length ? bits.join(' \u00b7 ') : 'Log this run';
+}
+
 function runBody(e, allowRest) {
   const l = e.log || {};
   const du = l.distanceUnit || state.settings.distanceUnit;
@@ -80,9 +89,11 @@ function runBody(e, allowRest) {
           <input type="text" data-f="note" value="${esc(l.note || '')}"></label>
       </div>
     </div>
+    <button type="button" class="confirm${l.done ? ' done-all' : ''}" data-action="cardio-done" data-entry="${e.id}">
+      <span class="big">${l.done ? '\u2713 Logged' : `\u2713\u00a0 ${esc(runLabel(l, du))}`}</span>
+      <span class="sub">${l.done ? 'tap to un-log it' : 'nothing is recorded until you tap this'}</span>
+    </button>
     <div class="set-foot">
-      <button type="button" class="btn sm ${l.done ? 'ok' : 'primary'}" data-action="cardio-done" data-entry="${e.id}">
-        ${l.done ? '\u2713 Logged' : 'Log run'}</button>
       <button type="button" class="btn sm ghost" data-action="cardio-pattern" data-entry="${e.id}">Make it intervals</button>
       ${allowRest ? `<button type="button" class="btn sm ghost" data-action="rest-start" data-entry="${e.id}">\u23f1 Rest</button>` : ''}
     </div>`;

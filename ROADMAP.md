@@ -83,7 +83,7 @@ Not things the commercial apps do — they fall out of this app's particular sha
 | Feature | Why |
 |---|---|
 | **Sync health badge** — warn when the last push is more than a few days old | Blob sync is manual-ish, and Safari evicts storage after 7 idle days if the app isn't home-screen-installed. This guards the one failure mode that loses everything |
-| **Post-workout completeness nudge** — after finishing, list sets with no rest or no effort logged and offer to fill them | Finished sessions are already editable; catch gaps while you still remember |
+| **Post-workout completeness nudge for rest and effort** — the unconfirmed-work warning is done; this is the softer version for sets missing rest or RPE | Finished sessions are already editable; catch gaps while you still remember |
 | **Routine linting** — warn on a superset label spread across non-adjacent entries, a one-row per-set plan, or a routine with no rest targets | Each of those is a real footgun already documented in ARCHITECTURE.md |
 | **Scope check** — compare actual session duration against the sum of targets plus rests | Tells you whether your "60 minute" routine is really a 90 minute routine |
 

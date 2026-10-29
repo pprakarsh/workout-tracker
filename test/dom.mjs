@@ -1098,6 +1098,50 @@ await click('[data-action="trend-back"]');
 ok(store.state.nav.trendName === null, 'back returns to the overview');
 ok(view().includes('Sets per week'), 'which is the overview again');
 
+section('a run is confirmed with the same big bar a lift uses');
+await xi.importFromText(JSON.stringify({
+  name: 'Confirm Run Check',
+  entries: [{ type: 'cardio', name: 'CR Run', duration: '30:00', pace: '6:00' }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const crR = store.state.routines.find((r) => r.name === 'Confirm Run Check');
+await click(`[data-action="routine-start"][data-id="${crR.id}"]`, 'Start');
+const crE = store.state.active.entries[0];
+const crBar = $('.confirm[data-action="cardio-done"]');
+ok(crBar !== null, 'the run has a full-width confirm bar, not a small footer button');
+ok(crBar.textContent.includes('30:00') && crBar.textContent.includes('6:00/km'),
+  `showing what it will record (${crBar.textContent.replace(/\s+/g, ' ').trim().slice(0, 50)})`);
+ok(/nothing is recorded until/i.test(crBar.textContent),
+  'and saying plainly that the numbers on screen are not yet logged');
+ok(crE.log.done === false, 'it starts unconfirmed');
+
+section('finishing warns about work that was never confirmed');
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-finish"]');
+ok(/Filled in but not logged/i.test($('#modalForm').textContent),
+  'the finish prompt flags it');
+ok($('#modalForm').textContent.includes('CR Run'), 'naming the run');
+ok(/saved as .{0,12}nothing/i.test($('#modalForm').textContent.replace(/\s+/g, ' ')),
+  'and spelling out that it would be saved as nothing');
+ok($('[data-action="sess-confirm-loose"]') !== null, 'with a one-tap fix');
+
+section('the one-tap fix logs it and returns to finishing');
+await click('[data-action="sess-confirm-loose"]');
+await sleep(90);
+ok(crE.log.done === true, 'the run is logged');
+ok($('#modalForm') !== null, 'and the finish prompt is back');
+ok(!/Filled in but not logged/i.test($('#modalForm').textContent), 'with nothing left to warn about');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(140);
+ok(store.state.active === null, 'the workout finished');
+
+section('and now it reaches Trends');
+await click('#tabBar .tab[data-tab="trends"]');
+ok(view().includes('Running per week'), 'the running chart appears');
+ok([...$$('[data-action="trend-open"]')].some((b) => b.dataset.name === 'CR Run'),
+  'and the run is listed as something you train');
+
 section('an interval block gets a running trend of its own');
 await xi.importFromText(JSON.stringify({
   name: 'Trend Intervals',

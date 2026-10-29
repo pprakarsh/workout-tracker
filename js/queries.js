@@ -332,3 +332,53 @@ export function weeklyVolume(weeks = 12, unit = state.settings.unit) {
 export function trainedExercises(sessions = state.sessions, unit = state.settings.unit) {
   return exerciseTotals(sessions, normName, unit, state.settings.distanceUnit);
 }
+
+/* ------------------------------------------------------------------ */
+/* completeness                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Work that LOOKS logged but is not confirmed, and would therefore be lost.
+ *
+ * Every row in a session opens pre-filled -- a lift's sets from the plan or
+ * last time, a run's numbers from its targets -- because logging is meant to be
+ * confirming rather than typing. The cost is that a filled-in row and a
+ * recorded one look identical, and an unconfirmed one contributes to nothing:
+ * not History, not the exports, not Trends, not the plan's done check. A run is
+ * the easy one to lose, since a lifter learns to tick each set but a runner
+ * sees numbers already in the boxes.
+ *
+ * So this is what the finish prompt warns about.
+ */
+export function unconfirmedWork(session) {
+  if (!session) return [];
+  const out = [];
+  session.entries.forEach((e) => {
+    if (e.skipped) return;
+    if (e.type === 'cardio') {
+      const l = e.log || {};
+      const legs = l.legs || [];
+      if (legs.length) {
+        const unticked = legs.filter((x) => !x.done && (x.duration || x.pace));
+        if (unticked.length && unticked.length === legs.length) {
+          out.push({ id: e.id, name: e.name, kind: 'cardio', what: `${new Set(legs.map((x) => x.round)).size} rounds` });
+        }
+        return;
+      }
+      const hasNumbers = l.duration || l.distance !== null || l.pace;
+      if (!l.done && hasNumbers) {
+        out.push({ id: e.id, name: e.name, kind: 'cardio', what: 'the run' });
+      }
+      return;
+    }
+    const filled = (e.sets || []).filter((x) => !x.done && !x.warmup
+      && (x.reps !== null || x.weight !== null));
+    if (filled.length) {
+      out.push({
+        id: e.id, name: e.name, kind: 'lift',
+        what: `${filled.length} set${filled.length === 1 ? '' : 's'}`,
+      });
+    }
+  });
+  return out;
+}

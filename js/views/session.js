@@ -3,10 +3,12 @@
 import {
   state, entryStatus, sessionProgress, sessionVolume, setCurrent, finishSession,
   discardSession, saveSessionBackToRoutine, updateSessionMeta, blockAt, working,
+  findEntry, updateLog, logAllRounds, toggleSetDone,
 } from '../store.js';
+import { unconfirmedWork } from '../queries.js';
 import { esc, fmtDur, fmtNum, num } from '../util.js';
 import { targetLine, logSummary } from '../format.js';
-import { confirmDialog, toast, openModal } from '../ui.js';
+import { confirmDialog, toast, openModal, closeModal } from '../ui.js';
 import { autoPushIfEnabled } from '../sync.js';
 
 const PILL = {
@@ -78,6 +80,31 @@ export function render() {
 }
 
 export const sessionActions = {
+  /** Confirm every filled-but-unconfirmed row, then reopen the finish prompt. */
+  'sess-confirm-loose': async () => {
+    const s = state.active;
+    if (!s) return;
+    let n = 0;
+    for (const x of unconfirmedWork(s)) {
+      const e = findEntry(x.id);
+      if (!e) continue;
+      if (e.type === 'cardio') {
+        if ((e.log?.legs || []).length) n += await logAllRounds(e.id);
+        else { await updateLog(e.id, { done: true, completedAt: Date.now() }); n++; }
+      } else {
+        for (const st of (e.sets || [])) {
+          if (!st.done && !st.warmup && (st.reps !== null || st.weight !== null)) {
+            await toggleSetDone(e.id, st.id);
+            n++;
+          }
+        }
+      }
+    }
+    closeModal();
+    toast(n ? `Logged ${n} &mdash; now finish the workout` : 'Nothing to log');
+    sessionActions['sess-finish']();
+  },
+
   'go-now': () => { state.tab = 'now'; },
 
   'sess-jump': async ({ idx }) => {
@@ -97,10 +124,25 @@ export const sessionActions = {
     const warn = done < total
       ? `${total - done} of ${total} exercises are not finished. `
       : '';
+    // Rows that look filled in but were never confirmed record NOTHING. Saying
+    // so here is the last chance to catch it -- afterwards the numbers are
+    // still on screen in History, so there is nothing to notice.
+    const loose = unconfirmedWork(s);
     openModal({
       title: 'Finish workout?',
       bodyHtml: `
         <p class="muted" style="margin-top:0">${esc(warn)}It will be saved to History and you can export it from there.</p>
+        ${loose.length ? `
+          <div class="card" style="margin:0 0 12px;border-color:var(--warn)">
+            <div class="tiny" style="color:var(--warn)">Filled in but not logged</div>
+            <p class="hint" style="margin:4px 0 8px">These have numbers on screen but were never
+              confirmed, so they will be saved as <b>nothing</b> &mdash; no History, no exports, no
+              Trends.</p>
+            ${loose.map((x) => `<div class="kv"><span>${esc(x.name)}</span>
+              <span class="dim">${esc(x.what)}</span></div>`).join('')}
+            <button type="button" class="btn block" style="margin-top:8px"
+                    data-action="sess-confirm-loose">Log them all now</button>
+          </div>` : ''}
         <div class="grid2">
           <label class="field"><span>Overall effort (RPE)</span>
             <input name="rpe" inputmode="decimal" value="${esc(fmtNum(s.rpe))}"></label>

@@ -80,6 +80,19 @@ function overview() {
       <div class="small dim center">working sets, warmups excluded</div>
     </div>
 
+    ${trained.some((x) => x.type === 'cardio') && !weeks.some((w) => w.cardioDistance > 0 || w.cardioSeconds > 0) ? `
+      <h2>Running per week</h2>
+      <div class="card">
+        <p class="hint" style="margin:0">You have logged running, but none in the last
+          ${weeks.length} weeks. Pick it from the list below to see its whole history.</p>
+      </div>` : ''}
+    ${!trained.some((x) => x.type === 'cardio') ? `
+      <h2>Running per week</h2>
+      <div class="card">
+        <p class="hint" style="margin:0">Nothing yet. A run or an interval block only counts once
+          its card is <b>confirmed</b> &mdash; the big tick on the run, or <b>Log all rounds</b> on
+          a block. Numbers sitting in the fields are the plan until you tap it.</p>
+      </div>` : ''}
     ${weeks.some((w) => w.cardioDistance > 0 || w.cardioSeconds > 0) ? `
       <h2>Running per week</h2>
       <div class="card">
