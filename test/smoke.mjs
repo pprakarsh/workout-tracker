@@ -1132,6 +1132,95 @@ const mixWk = tr.weeklyTotals([{
 ok(mixWk[0].sets === 2 && mixWk[0].volume === 500,
   `both sets counted, only the squat in volume (${mixWk[0].sets} sets, ${mixWk[0].volume} volume)`);
 
+section('an interval block counts as running, everywhere a run does');
+const ivLegs = (n) => Array.from({ length: n * 2 }, (_, i) => ({
+  round: Math.floor(i / 2) + 1, leg: i % 2,
+  duration: i % 2 ? 90 : 95, pace: i % 2 ? 540 : 240, done: true,
+}));
+const ivSess = (d, rounds = 6) => ({
+  id: `w_civ${d}`, routineName: 'R', unit: 'kg',
+  startedAt: new Date(2026, 9, d, 9).getTime(), finishedAt: new Date(2026, 9, d, 10).getTime(),
+  entries: [{
+    name: '400m Repeat', type: 'cardio', rounds,
+    log: { done: false, distanceUnit: 'km', distance: null, duration: null, pace: null, legs: ivLegs(rounds) },
+  }],
+});
+const runSess = (d) => ({
+  id: `w_crun${d}`, routineName: 'R', unit: 'kg',
+  startedAt: new Date(2026, 9, d, 9).getTime(), finishedAt: new Date(2026, 9, d, 10).getTime(),
+  entries: [{
+    name: 'Easy Run', type: 'cardio',
+    log: { done: true, distanceUnit: 'km', distance: 5, duration: 1800, pace: 360, legs: null },
+  }],
+});
+const cWeek = tr.weeklyTotals([ivSess(27), runSess(28)], 'kg', 1,
+  util.startOfWeek, util.addWeeks, new Date(2026, 9, 29, 10).getTime(), 'km');
+// 6 x 95s @ 4:00/km = 2.375 km, 6 x 90s @ 9:00/km = 1.0 km
+ok(Math.abs(cWeek[0].cardioDistance - 8.38) < 0.02,
+  `the week counts the intervals AND the run (${cWeek[0].cardioDistance} km)`);
+ok(cWeek[0].cardioSeconds === 2910, `and their time together (${cWeek[0].cardioSeconds}s)`);
+ok(cWeek[0].cardioEfforts === 2, 'as two efforts');
+ok(cWeek[0].volume === 0 && cWeek[0].sets === 0, 'without touching the lifting totals');
+
+const ivOnly = tr.weeklyTotals([ivSess(27)], 'kg', 1,
+  util.startOfWeek, util.addWeeks, new Date(2026, 9, 29, 10).getTime(), 'km');
+ok(ivOnly[0].cardioDistance > 0 && ivOnly[0].cardioSeconds > 0,
+  'a week of nothing but intervals still registers as running');
+
+const cTotals = tr.exerciseTotals([ivSess(27), runSess(28)], nk, 'kg', 'km');
+const ivRow = cTotals.find((r) => r.name === '400m Repeat');
+const runRow = cTotals.find((r) => r.name === 'Easy Run');
+ok(ivRow.distance > 0 && ivRow.seconds === 1110,
+  `the interval row carries distance and time (${ivRow.distance} km, ${ivRow.seconds}s)`);
+ok(ivRow.rounds === 6 && ivRow.intervals === true, 'plus the rounds completed');
+ok(runRow.distance === 5 && runRow.seconds === 1800, 'and a straight run the same fields');
+ok(ivRow.volume === 0 && runRow.volume === 0, 'neither invents a tonnage figure');
+
+section('miles and kilometres are reconciled before being summed');
+const miSess = {
+  id: 'w_mi', routineName: 'R', unit: 'kg',
+  startedAt: new Date(2026, 9, 28, 9).getTime(), finishedAt: new Date(2026, 9, 28, 10).getTime(),
+  entries: [{
+    name: 'Easy Run', type: 'cardio',
+    log: { done: true, distanceUnit: 'mi', distance: 3.10686, duration: 1800, pace: 580, legs: null },
+  }],
+};
+const mixWeek = tr.weeklyTotals([miSess], 'kg', 1,
+  util.startOfWeek, util.addWeeks, new Date(2026, 9, 29, 10).getTime(), 'km');
+ok(Math.abs(mixWeek[0].cardioDistance - 5) < 0.02,
+  `3.1 miles is counted as 5 km (${mixWeek[0].cardioDistance})`);
+ok(util.toDistance(5, 'km', 'mi') === 3.107 && util.toDistance(1, 'mi', 'km') === 1.609,
+  'and the conversion goes both ways');
+ok(util.toDistance(5, 'km', 'km') === 5 && util.toDistance(5, 'km', 'furlong') === 5,
+  'same or unknown units pass through');
+
+section('the work leg is the interval metric, not the blended average');
+const ivRuns = tr.cardioRuns([ivSess(27)], '400m repeat', nk);
+ok(ivRuns.length === 1, 'one effort');
+ok(ivRuns[0].workPace === 240, `the fastest leg is the work leg (${ivRuns[0].workPace}s/km)`);
+ok(ivRuns[0].restPace === 540, 'and the slowest is the recovery');
+ok(ivRuns[0].metricPace === 240, 'the metric charted is the work leg');
+ok(ivRuns[0].pace > 240 && ivRuns[0].pace < 540,
+  `while the blended average sits between them (${ivRuns[0].pace}) -- which is why it is not the metric`);
+ok(ivRuns[0].rounds === 6 && ivRuns[0].roundsPlanned === 6, 'rounds done and planned are both kept');
+
+// walking the recovery faster must NOT look like progress
+const lazyRest = JSON.parse(JSON.stringify(ivSess(27)));
+lazyRest.entries[0].log.legs.forEach((l) => { if (l.leg === 1) l.pace = 400; });
+const lazyRuns = tr.cardioRuns([lazyRest], '400m repeat', nk);
+ok(lazyRuns[0].metricPace === ivRuns[0].metricPace,
+  'speeding up the rest leg leaves the metric untouched');
+ok(lazyRuns[0].pace < ivRuns[0].pace,
+  'even though it would have improved the blended average');
+
+section('a partly finished block reports what was actually done');
+const partial = JSON.parse(JSON.stringify(ivSess(27)));
+partial.entries[0].log.legs.forEach((l, i) => { if (i >= 6) l.done = false; });
+const pRuns = tr.cardioRuns([partial], '400m repeat', nk);
+ok(pRuns[0].rounds === 3, `three rounds done (${pRuns[0].rounds})`);
+ok(pRuns[0].roundsPlanned === 6, 'out of six planned');
+ok(pRuns[0].duration === 555, `only the logged legs counted (${pRuns[0].duration}s)`);
+
 section('cardio trends are about pace');
 const runs = tr.cardioRuns([{
   id: 'w_r1', routineName: 'R', unit: 'kg',

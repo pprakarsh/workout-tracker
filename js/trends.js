@@ -10,7 +10,7 @@
 // "progress" will therefore tell a lifter they are regressing when they are
 // not. So every series here keeps the RAW SETS alongside the summary, and the
 // views plot both.
-import { num, fmtNum, fmtClock, toUnit } from './util.js';
+import { num, fmtNum, fmtClock, toUnit, toDistance } from './util.js';
 import { measureOf } from './measure.js';
 
 /** Past this many reps an estimate stops meaning anything. See e1rm. */
@@ -234,13 +234,14 @@ export function trendDelta(rows) {
 /* ------------------------------------------------------------------ */
 
 /** Monday-keyed buckets of total volume and set count, oldest first. */
-export function weeklyTotals(sessions, unit, weeks, startOfWeek, addWeeks, now = Date.now()) {
+export function weeklyTotals(sessions, unit, weeks, startOfWeek, addWeeks, now = Date.now(), distUnit = 'km') {
   const first = addWeeks(startOfWeek(now), -(weeks - 1));
   const buckets = [];
   for (let i = 0; i < weeks; i++) {
     const from = addWeeks(first, i);
     buckets.push({
       from, to: addWeeks(from, 1), volume: 0, sets: 0, sessions: 0,
+      cardioDistance: 0, cardioSeconds: 0, cardioEfforts: 0,
     });
   }
   const find = (ts) => buckets.find((b) => ts >= b.from && ts < b.to) || null;
@@ -250,7 +251,16 @@ export function weeklyTotals(sessions, unit, weeks, startOfWeek, addWeeks, now =
     if (!b) return;
     b.sessions++;
     s.entries.forEach((e) => {
-      if (e.type !== 'lift') return;
+      if (e.type === 'cardio') {
+        // A runner's week is distance and time, not tonnage. Without this the
+        // overview showed a runner nothing at all.
+        const r = cardioEffort(e, s);
+        if (!r) return;
+        b.cardioEfforts++;
+        b.cardioSeconds += r.duration || 0;
+        if (r.distance) b.cardioDistance += toDistance(r.distance, r.unit, distUnit);
+        return;
+      }
       const m = measureOf(e);
       (e.sets || []).forEach((x) => {
         if (!x.done || x.warmup) return;
@@ -259,11 +269,15 @@ export function weeklyTotals(sessions, unit, weeks, startOfWeek, addWeeks, now =
       });
     });
   });
-  return buckets.map((b) => ({ ...b, volume: Math.round(b.volume) }));
+  return buckets.map((b) => ({
+    ...b,
+    volume: Math.round(b.volume),
+    cardioDistance: Math.round(b.cardioDistance * 100) / 100,
+  }));
 }
 
 /** Exercises by how much they were trained in a window, most first. */
-export function exerciseTotals(sessions, normKey, unit) {
+export function exerciseTotals(sessions, normKey, unit, distUnit = 'km') {
   const map = new Map();
   sessions.forEach((s) => {
     if (!s.finishedAt) return;
@@ -273,6 +287,10 @@ export function exerciseTotals(sessions, normKey, unit) {
       const row = map.get(key) || {
         key, name: e.name, type: e.type, measure: e.measure || 'reps',
         sets: 0, volume: 0, sessions: new Set(), lastAt: 0,
+        // a run's "how much" is distance and time, not tonnage. An interval
+        // block counts here on exactly the same footing as a straight run:
+        // cardioEffort sums its legs, so six 400s are six 400s of running.
+        distance: 0, seconds: 0, rounds: 0, intervals: false,
       };
       let touched = false;
       if (e.type === 'lift') {
@@ -282,9 +300,15 @@ export function exerciseTotals(sessions, normKey, unit) {
           touched = true;
           if ((e.measure || 'reps') === 'reps') row.volume += setVolume(x, unit, num(s.bodyweight));
         });
-      } else if (e.log && (e.log.done || (e.log.legs || []).some((l) => l.done))) {
-        row.sets++;
-        touched = true;
+      } else if (e.type === 'cardio') {
+        const r = cardioEffort(e, s);
+        if (r) {
+          row.sets++;
+          touched = true;
+          row.seconds += r.duration || 0;
+          if (r.distance) row.distance += toDistance(r.distance, r.unit, distUnit);
+          if (r.intervals) { row.intervals = true; row.rounds += r.rounds || 0; }
+        }
       }
       if (!touched) return;
       row.sessions.add(s.id);
@@ -293,7 +317,13 @@ export function exerciseTotals(sessions, normKey, unit) {
     });
   });
   return [...map.values()]
-    .map((r) => ({ ...r, sessions: r.sessions.size, volume: Math.round(r.volume) }))
+    .map((r) => ({
+      ...r,
+      sessions: r.sessions.size,
+      volume: Math.round(r.volume),
+      distance: Math.round(r.distance * 100) / 100,
+      seconds: Math.round(r.seconds),
+    }))
     .sort((a, b) => b.sets - a.sets || b.lastAt - a.lastAt);
 }
 
@@ -306,37 +336,66 @@ export function exerciseTotals(sessions, normKey, unit) {
  * both move freely between runs and neither alone says you got faster.
  * Intervals contribute the average pace of their logged legs.
  */
+export function cardioEffort(e, s) {
+  const l = e.log || {};
+  const unit = l.distanceUnit || 'km';
+  const legs = (l.legs || []).filter((x) => x.done);
+
+  if (legs.length) {
+    let secs = 0;
+    let dist = 0;
+    legs.forEach((x) => {
+      secs += x.duration || 0;
+      if (x.duration && x.pace) dist += x.duration / x.pace;
+    });
+    const paces = legs.map((x) => x.pace).filter((p) => Number.isFinite(p) && p > 0);
+    // THE WORK LEG IS THE METRIC, not the average across the block. Blending the
+    // recovery leg in means the trend "improves" when you walk your rest faster,
+    // which is the opposite of what the session is for. The fastest leg is the
+    // work leg -- a lower pace is faster.
+    const workPace = paces.length ? Math.min(...paces) : null;
+    const restPace = paces.length ? Math.max(...paces) : null;
+    const overall = dist ? Math.round(secs / dist) : null;
+    if (workPace === null && overall === null) return null;
+    return {
+      at: s.startedAt, sessionId: s.id, unit, intervals: true,
+      rounds: new Set(legs.map((x) => x.round)).size,
+      roundsPlanned: e.rounds || null,
+      legs: legs.length,
+      duration: secs,
+      distance: dist ? Math.round(dist * 1000) / 1000 : null,
+      pace: overall,
+      workPace,
+      restPace: restPace === workPace ? null : restPace,
+      metricPace: workPace ?? overall,
+    };
+  }
+
+  if (!l.done) return null;
+  const pace = l.pace ?? (l.distance && l.duration ? Math.round(l.duration / l.distance) : null);
+  if (pace === null && !l.duration) return null;
+  return {
+    at: s.startedAt, sessionId: s.id, unit, intervals: false, rounds: 0,
+    roundsPlanned: null, legs: 0,
+    duration: l.duration ?? null, distance: l.distance ?? null,
+    pace, workPace: null, restPace: null, metricPace: pace,
+  };
+}
+
+/**
+ * One point per logged effort of this exercise, oldest first.
+ *
+ * `metricPace` is the number to chart: the overall pace for a straight run, the
+ * WORK LEG's pace for an interval block. See cardioEffort for why.
+ */
 export function cardioRuns(sessions, key, normKey) {
   const out = [];
   sessions.forEach((s) => {
     if (!s.finishedAt) return;
     s.entries.forEach((e) => {
       if (e.type !== 'cardio' || normKey(e.name) !== key) return;
-      const l = e.log || {};
-      const unit = l.distanceUnit || 'km';
-      const legs = (l.legs || []).filter((x) => x.done);
-      if (legs.length) {
-        let secs = 0;
-        let dist = 0;
-        legs.forEach((x) => {
-          secs += x.duration || 0;
-          if (x.duration && x.pace) dist += x.duration / x.pace;
-        });
-        if (!dist) return;
-        out.push({
-          at: s.startedAt, sessionId: s.id, unit, intervals: true,
-          rounds: new Set(legs.map((x) => x.round)).size,
-          duration: secs, distance: Math.round(dist * 1000) / 1000, pace: Math.round(secs / dist),
-        });
-        return;
-      }
-      if (!l.done) return;
-      const pace = l.pace ?? (l.distance && l.duration ? Math.round(l.duration / l.distance) : null);
-      if (pace === null) return;
-      out.push({
-        at: s.startedAt, sessionId: s.id, unit, intervals: false, rounds: 0,
-        duration: l.duration ?? null, distance: l.distance ?? null, pace,
-      });
+      const r = cardioEffort(e, s);
+      if (r) out.push(r);
     });
   });
   return out.sort((a, b) => a.at - b.at);

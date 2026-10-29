@@ -233,6 +233,17 @@ Invariants worth knowing:
   `sessionVolume` does. And a single rep returns the weight itself: Epley would return 103.3 for a
   100 kg single, inventing a PR you did not lift. Sets of 10+ reps or logged at RPE <= 7 / RIR >= 3
   still compute but are drawn hollow, because the estimate means less there.
+- **An interval block's metric is its WORK LEG's pace, not the average across the block.** Blending
+  the recovery leg in means the trend "improves" when you simply walk your rest faster, which is the
+  opposite of what the session is for. `cardioEffort` reports `workPace` (the fastest logged leg),
+  `restPace` (the slowest) and the blended `pace` separately, and `metricPace` is the one to chart:
+  the work leg for intervals, the overall pace for a straight run. A test pins that speeding up the
+  recovery leg leaves `metricPace` untouched.
+- **Intervals count as running on exactly the same footing as a straight run.** `cardioEffort` is
+  the single place a cardio entry becomes numbers, so the weekly distance/time chart and the
+  per-exercise totals both get a block's legs summed without either caller knowing the difference.
+  Distances are reconciled through `toDistance` before being added, so a mile run and a kilometre
+  run do not silently sum.
 - **A trend needs three sessions.** Below that the view says how many more are needed instead of
   drawing a line through two points. The headline is a plain delta ("+9 kg over 6 sessions") — never
   a verdict, no regression line, no "stalled" warning, because four flat weeks during a deload is

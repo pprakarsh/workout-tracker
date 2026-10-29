@@ -80,6 +80,20 @@ function overview() {
       <div class="small dim center">working sets, warmups excluded</div>
     </div>
 
+    ${weeks.some((w) => w.cardioDistance > 0 || w.cardioSeconds > 0) ? `
+      <h2>Running per week</h2>
+      <div class="card">
+        ${barPlot({
+    bars: weeks.map((w, i) => ({
+      v: w.cardioDistance, label: shortDate(w.from), now: i === weeks.length - 1,
+    })),
+    yFmt: (v) => fmtNum(Math.round(v * 10) / 10),
+    label: `Distance per week for the last ${weeks.length} weeks, in ${state.settings.distanceUnit}`,
+  })}
+        <div class="small dim center">distance each week in ${esc(state.settings.distanceUnit)} &mdash;
+          ${esc(fmtDur(weeks.reduce((n, w) => n + w.cardioSeconds, 0)))} of running logged in total</div>
+      </div>` : ''}
+
     <h2>What you train</h2>
     ${trained.map((x) => `
       <div class="sess-item" data-action="trend-open" data-name="${esc(x.name)}" role="button" tabindex="0">
@@ -89,7 +103,10 @@ function overview() {
             ${x.measure !== 'reps' ? `<span class="pill">${esc((MEASURES[x.measure] || MEASURES.reps).label.toLowerCase())}</span>` : ''}</div>
           <div class="sub">${x.sessions} session${x.sessions === 1 ? '' : 's'} ·
             ${x.sets} ${x.type === 'cardio' ? 'effort' : 'set'}${x.sets === 1 ? '' : 's'}${
-  x.volume ? ` · ${fmtNum(x.volume)} ${esc(unit)} total` : ''} ·
+  x.rounds ? ` · ${x.rounds} rounds` : ''}${
+  x.volume ? ` · ${fmtNum(x.volume)} ${esc(unit)} total` : ''}${
+  x.distance ? ` · ${fmtNum(x.distance)} ${esc(state.settings.distanceUnit)}` : ''}${
+  x.seconds ? ` · ${esc(fmtDur(x.seconds))}` : ''} ·
             last ${esc(relDay(x.lastAt).toLowerCase())}</div>
         </div>
         <div class="dim">›</div>
@@ -120,38 +137,80 @@ function cardioDetail(t) {
     return `<div class="empty">Nothing logged for ${esc(t.name)} in this range.</div>`;
   }
   const unit = runs[runs.length - 1].unit || 'km';
-  const best = runs.reduce((a, b) => (a === null || b.pace < a.pace ? b : a), null);
+  const anyIv = runs.some((r) => r.intervals);
+  // a LOWER pace is faster, so the axis is inverted by negating the values
+  const paced = runs.filter((r) => Number.isFinite(r.metricPace));
+  const best = paced.reduce((a, b) => (a === null || b.metricPace < a.metricPace ? b : a), null);
   const far = runs.reduce((a, b) => (a === null || (b.distance || 0) > (a.distance || 0) ? b : a), null);
+  const longest = runs.reduce((a, b) => (a === null || (b.duration || 0) > (a.duration || 0) ? b : a), null);
   const totalDist = Math.round(runs.reduce((n, r) => n + (r.distance || 0), 0) * 100) / 100;
-  // a LOWER pace is better, so the axis is inverted by negating the values
+  const totalSecs = runs.reduce((n, r) => n + (r.duration || 0), 0);
+  const mostRounds = anyIv
+    ? runs.reduce((a, b) => (a === null || b.rounds > a.rounds ? b : a), null) : null;
+
   return `
     <div class="card">
-      <div class="kv"><span>Best pace</span>
-        <span class="strong">${esc(fmtPace(best.pace, unit))}</span></div>
-      <div class="kv"><span>Runs in range</span><span>${runs.length}</span></div>
-      <div class="kv"><span>Distance covered</span><span>${fmtNum(totalDist)} ${esc(unit)}</span></div>
-      ${far && far.distance ? `<div class="kv"><span>Furthest</span><span>${fmtNum(far.distance)} ${esc(unit)} on ${esc(shortDate(far.at))}</span></div>` : ''}
+      <div class="row">
+        <div style="flex:1;min-width:0">
+          <div class="tiny">${anyIv ? 'Best work-leg pace' : 'Best pace'}</div>
+          <div class="trend-big">${best ? esc(fmtPace(best.metricPace, unit)) : '--'}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="tiny dim">${runs.length} effort${runs.length === 1 ? '' : 's'}</div>
+          <div class="tiny dim">${esc(fmtDur(totalSecs))} total</div>
+        </div>
+      </div>
+      ${anyIv ? `<p class="hint" style="margin-bottom:0">For an interval block the pace charted is
+        the <b>work leg</b>, not the average across the block &mdash; blending the recovery in would
+        make the trend improve when you simply walk your rest faster.</p>` : ''}
     </div>
-    <div class="card">
-      ${linePlot({
-    points: runs.map((r) => ({ x: r.at, y: -r.pace })),
-    best: runs.map((r) => ({ x: r.at, y: -r.pace, pr: r === best })),
+
+    ${paced.length > 1 ? `
+      <div class="card">
+        ${linePlot({
+    points: paced.map((r) => ({ x: r.at, y: -r.metricPace })),
+    best: paced.map((r) => ({ x: r.at, y: -r.metricPace, pr: r === best })),
     yFmt: (v) => fmtClock(-v),
-    xLeft: shortDate(runs[0].at),
-    xRight: shortDate(runs[runs.length - 1].at),
-    label: `Pace per ${unit} over ${runs.length} runs, faster is higher`,
+    xLeft: shortDate(paced[0].at),
+    xRight: shortDate(paced[paced.length - 1].at),
+    label: `${anyIv ? 'Work-leg pace' : 'Pace'} per ${unit} across ${paced.length} efforts, faster is higher`,
   })}
-      <div class="small dim center">pace per ${esc(unit)} &mdash; higher is faster</div>
+        <div class="small dim center">pace per ${esc(unit)} &mdash; higher is faster</div>
+      </div>` : ''}
+
+    <h2>Personal bests</h2>
+    <div class="card">
+      ${best ? `<div class="kv"><span>${anyIv ? 'Fastest work leg' : 'Fastest pace'}</span>
+        <span><b>${esc(fmtPace(best.metricPace, unit))}</b> <span class="dim small">${esc(shortDate(best.at))}</span></span></div>` : ''}
+      ${far && far.distance ? `<div class="kv"><span>Furthest</span>
+        <span><b>${fmtNum(far.distance)} ${esc(unit)}</b> <span class="dim small">${esc(shortDate(far.at))}</span></span></div>` : ''}
+      ${longest && longest.duration ? `<div class="kv"><span>Longest</span>
+        <span><b>${esc(fmtClock(longest.duration))}</b> <span class="dim small">${esc(shortDate(longest.at))}</span></span></div>` : ''}
+      ${mostRounds && mostRounds.rounds ? `<div class="kv"><span>Most rounds</span>
+        <span><b>${mostRounds.rounds}</b> <span class="dim small">${esc(shortDate(mostRounds.at))}</span></span></div>` : ''}
     </div>
-    <h2>Runs</h2>
+
+    <div class="card flat">
+      <div class="kv"><span>Distance covered</span><span>${fmtNum(totalDist)} ${esc(unit)}</span></div>
+      <div class="kv"><span>Time running</span><span>${esc(fmtDur(totalSecs))}</span></div>
+    </div>
+
+    <h2>${anyIv ? 'Efforts' : 'Runs'}</h2>
     <div class="trend-table">
-      <div class="tr hd"><div>Date</div><div>Dist</div><div>Time</div><div>Pace</div></div>
+      <div class="tr hd"><div>Date</div><div>${anyIv ? 'Rounds' : 'Distance'}</div><div>${anyIv ? 'Work' : 'Pace'}</div></div>
       ${[...runs].reverse().map((r) => `
         <div class="tr">
           <div>${esc(shortDate(r.at))}</div>
-          <div>${r.distance ? `${fmtNum(r.distance)} ${esc(r.unit)}` : '--'}</div>
-          <div>${r.duration ? esc(fmtClock(r.duration)) : '--'}</div>
-          <div class="strong">${esc(fmtPace(r.pace, r.unit))}${r.intervals ? ` <span class="dim">${r.rounds}&times;</span>` : ''}</div>
+          <div class="sets">
+            ${r.intervals
+    ? `<code>${r.rounds}${r.roundsPlanned && r.roundsPlanned !== r.rounds ? ` of ${r.roundsPlanned}` : ''} rounds</code>
+               ${r.distance ? `<code>${fmtNum(r.distance)} ${esc(r.unit)}</code>` : ''}
+               <code>${esc(fmtClock(r.duration || 0))}</code>
+               ${r.restPace ? `<code class="dim">rest ${esc(fmtPace(r.restPace, r.unit))}</code>` : ''}`
+    : `<code>${r.distance ? `${fmtNum(r.distance)} ${esc(r.unit)}` : '--'}</code>
+               <code>${r.duration ? esc(fmtClock(r.duration)) : '--'}</code>`}
+          </div>
+          <div class="strong">${Number.isFinite(r.metricPace) ? esc(fmtPace(r.metricPace, r.unit)) : '--'}</div>
         </div>`).join('')}
     </div>`;
 }

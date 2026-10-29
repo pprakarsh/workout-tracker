@@ -324,10 +324,11 @@ export function exerciseTrend(name, unit = state.settings.unit) {
 
 /** Weekly volume and set counts for the whole log. */
 export function weeklyVolume(weeks = 12, unit = state.settings.unit) {
-  return weeklyTotals(state.sessions, unit, weeks, startOfWeek, addWeeks);
+  return weeklyTotals(state.sessions, unit, weeks, startOfWeek, addWeeks, Date.now(),
+    state.settings.distanceUnit);
 }
 
 /** Every exercise ever logged, ranked by how much work went into it. */
 export function trainedExercises(sessions = state.sessions, unit = state.settings.unit) {
-  return exerciseTotals(sessions, normName, unit);
+  return exerciseTotals(sessions, normName, unit, state.settings.distanceUnit);
 }

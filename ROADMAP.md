@@ -33,6 +33,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Prefill new sets from last time | Values from the last session, set count always from the routine |
 | Plan and finished-session edits auto-push | Previously only routines pushed on their own |
 | Dependency-free SVG charts | `js/chart.js` — scatter+line and bars, no library, no build step |
+| Running trends, intervals included | Distance/time per week, work-leg pace, rounds completed; distances reconciled across km/mi |
 | Weight unit conversion | A history spanning a kg/lb switch converts into the unit on display |
 | Explicit dates in History, and closing a stranded session | `markSessionFinished` times it to the last set logged |
 | Log a workout for a past day | From a missed day in Plan, or from History; created finished and opened in the editor |

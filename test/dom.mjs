@@ -1098,6 +1098,49 @@ await click('[data-action="trend-back"]');
 ok(store.state.nav.trendName === null, 'back returns to the overview');
 ok(view().includes('Sets per week'), 'which is the overview again');
 
+section('an interval block gets a running trend of its own');
+await xi.importFromText(JSON.stringify({
+  name: 'Trend Intervals',
+  entries: [{
+    type: 'cardio', name: 'Trend 400s', rest: '2:00',
+    pattern: '1:35 @ 4:00/km + 1:30 walk @ 9:00/km x 4',
+  }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const tiR = store.state.routines.find((r) => r.name === 'Trend Intervals');
+await click(`[data-action="routine-start"][data-id="${tiR.id}"]`, 'Start');
+await click('[data-action="cardio-log-all"]');
+await sleep(40);
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-finish"]', 'Finish');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(140);
+
+await click('#tabBar .tab[data-tab="trends"]');
+ok(view().includes('Running per week'), 'the overview now has a running chart');
+const ivListRow = [...$$('[data-action="trend-open"]')].find((b) => b.dataset.name === 'Trend 400s');
+ok(ivListRow !== undefined, 'the interval block is listed as something you train');
+ok(/rounds/.test(ivListRow.textContent), `with its rounds counted (${ivListRow.querySelector('.sub').textContent.replace(/\s+/g, ' ').trim()})`);
+ok(/km/.test(ivListRow.textContent), 'and the distance it came to');
+
+await click('[data-action="trend-open"][data-name="Trend 400s"]');
+ok(view().includes('Best work-leg pace'),
+  'the headline is the WORK leg, not an average across the block');
+ok(view().includes('4:00/km'), `which is the fast leg (${/4:00\/km/.test(view())})`);
+ok(!view().includes('9:00/km') || view().includes('rest'),
+  'the recovery pace only appears labelled as rest');
+ok(/work leg/i.test(view()), 'and the card explains why that is the metric');
+ok(view().includes('Personal bests'), 'PRs apply to running too');
+ok(/Fastest work leg/.test(view()), 'named for intervals');
+ok(/Most rounds/.test(view()), 'including rounds completed');
+ok(/Distance covered/.test(view()) && /Time running/.test(view()),
+  'with the totals the block contributed');
+ok($('.trend-table') !== null, 'and a table of efforts');
+ok(/4 of 4 rounds|4 rounds/.test($('.trend-table').textContent),
+  `whose row reports the rounds done (${$('.trend-table').textContent.replace(/\s+/g, ' ').slice(0, 70)})`);
+await click('[data-action="trend-back"]');
+
 section('a plank trend is measured in seconds, with no estimated 1RM');
 await xi.importFromText(JSON.stringify({
   name: 'Trend Hold', entries: [{ name: 'Trend Plank', measure: 'time', sets: 2, reps: '45' }],

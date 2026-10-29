@@ -92,6 +92,21 @@ export function fmtReps(min, max) {
 /** 1 kg in lb. Exact enough that a converted history never drifts visibly. */
 const LB_PER_KG = 2.20462262;
 
+/** 1 km in miles. */
+const MI_PER_KM = 0.621371;
+
+/** Convert a distance between km and mi. Unknown units pass through. */
+export function toDistance(value, from, to) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const a = String(from || '').toLowerCase();
+  const b = String(to || '').toLowerCase();
+  if (!a || !b || a === b) return n;
+  if (a === 'km' && b === 'mi') return Math.round(n * MI_PER_KM * 1000) / 1000;
+  if (a === 'mi' && b === 'km') return Math.round((n / MI_PER_KM) * 1000) / 1000;
+  return n;
+}
+
 /**
  * Convert a weight between kg and lb.
  *
@@ -179,7 +194,7 @@ export function download(filename, text, mime = 'text/plain') {
 export const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** Shown in the Routines tab so you can tell which build is actually loaded. */
-export const APP_VERSION = '26';
+export const APP_VERSION = '27';
 
 /** CSV field quoting. */
 export function csvCell(v) {
