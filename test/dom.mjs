@@ -1220,6 +1220,46 @@ ok(mRow2.textContent.includes('by hand'), 'and the row admits it was manual');
 store.state.sessions = store.state.sessions.filter((x) => x.id !== 'w_yesterday');
 await planStore.clearPlanDay(mKey);
 
+section('an empty past day can be called a rest day in one tap');
+const restKey = planLib.dayKey(planLib.addDays(Date.now(), -5));
+const restRow = () => [...$$('.pd-row.is-past')].find((r) => r.dataset.planRow === restKey);
+ok(restRow().textContent.includes('nothing logged'), 'it starts as an empty day');
+ok(restRow().querySelector('[data-action="plan-rest"]') !== null,
+  'with the rest button right on the row');
+await click(`[data-action="plan-rest"][data-key="${restKey}"]`);
+await sleep(60);
+ok(store.state.plan[restKey].rest === true, 'tapping it marks the day');
+ok(restRow().classList.contains('rest'), 'the row restyles');
+ok(restRow().textContent.includes('Rest day'), 'and says Rest day');
+ok(restRow().querySelector('[data-action="plan-rest"]') === null,
+  'the inline button steps aside once there is something on the day');
+ok(/1 rest/.test([...$$('.card.flat .small.dim')].map((d) => d.textContent).join(' ')),
+  'and the week behind counts it');
+
+section('and un-marked again from its menu');
+await click(`[data-action="plan-menu"][data-key="${restKey}"]`);
+ok(/Not a rest day after all/.test($('#modalRoot').textContent),
+  'the menu offers to undo it, worded for a day already marked');
+await click('#modalRoot [data-action="plan-rest"]');
+await sleep(60);
+ok(store.state.plan[restKey] === undefined || store.state.plan[restKey].rest === false,
+  'it is no longer a rest day');
+ok(restRow().textContent.includes('nothing logged'), 'and reads as empty again');
+
+section('a planned day can be turned into a rest day from the menu too');
+const swapKey = planLib.dayKey(planLib.addDays(Date.now(), 3));
+await planStore.setPlanDay(swapKey, { routineId: pgR.id });
+await sleep(50);
+await click(`[data-action="plan-menu"][data-key="${swapKey}"]`);
+ok(/Mark as a rest day/.test($('#modalRoot').textContent),
+  'the option is there for a planned day, which previously needed clearing first');
+await click('#modalRoot [data-action="plan-rest"]');
+await sleep(60);
+ok(store.state.plan[swapKey].rest === true && store.state.plan[swapKey].routineId === null,
+  'and it replaces the routine rather than sitting alongside it');
+await planStore.clearPlanDay(swapKey);
+await sleep(40);
+
 section('a missed day can be logged after the fact, from the Plan tab');
 const lateKey = planLib.dayKey(planLib.addDays(Date.now(), -4));
 await planStore.setPlanDay(lateKey, { routineId: pgR.id });

@@ -71,10 +71,15 @@ export function dayStatus(key, entry, sessions = [], now = Date.now()) {
   if (onDay.length && e.routineId) {
     return { state: 'swapped', offset, session: onDay[0] };
   }
-  if (e.rest) return { state: 'rest', offset, session: onDay[0] || null };
-  if (!e.routineId) {
-    return { state: onDay.length ? 'done' : 'open', offset, session: onDay[0] || null };
+  // A finished session beats a rest day. Marking a day rest and then training
+  // anyway is common -- plans change -- and reporting it as rest would hide the
+  // workout from the row, the week's count and the adherence line. Reality wins
+  // over intent, so this is checked BEFORE e.rest.
+  if (onDay.length) {
+    return { state: 'done', offset, session: onDay[0], restPlanned: !!e.rest };
   }
+  if (e.rest) return { state: 'rest', offset, session: null };
+  if (!e.routineId) return { state: 'open', offset, session: null };
   if (offset < 0) return { state: 'missed', offset, session: null };
   return { state: offset === 0 ? 'today' : 'upcoming', offset, session: null };
 }

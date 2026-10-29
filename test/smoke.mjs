@@ -1397,6 +1397,52 @@ ok(ps.trained === 2 && ps.missed === 1 && ps.rest === 1,
   `counted up: ${ps.trained} trained, ${ps.missed} missed, ${ps.rest} rest`);
 ok(ps.days === 7, 'over seven days');
 
+section('a past day can be marked as a deliberate rest day');
+await planStore.setPlanDay(k(-2), { rest: true });
+ok(state.plan[k(-2)].rest === true, 'the flag is set');
+const restBack = planLib.pastWindow(state.plan, [], T0);
+ok(restBack[1].status.state === 'rest', `and the day reads rest (${restBack[1].status.state})`);
+ok(planLib.pastSummary(restBack).rest === 1, 'the week counts one rest day');
+ok(planLib.pastSummary(restBack).missed === 0, 'and does not also call it missed');
+await planStore.setPlanDay(k(-2), { rest: false });
+ok(planLib.pastWindow(state.plan, [], T0)[1].status.state === 'open',
+  'un-marking it leaves an ordinary empty day');
+await planStore.clearPlanDay(k(-2));
+
+section('marking a planned past day as rest replaces the plan');
+await planStore.setPlanDay(k(-3), { routineId: 'r_some' });
+await planStore.setPlanDay(k(-3), { rest: true });
+ok(state.plan[k(-3)].rest === true && state.plan[k(-3)].routineId === null,
+  'the two are still mutually exclusive, whichever direction you go');
+await planStore.clearPlanDay(k(-3));
+
+section('a rest day you trained on anyway reports the workout, not the rest');
+const restButTrained = {
+  id: 'w_rbt', routineId: null, routineName: 'Unexpected Session', entries: [],
+  startedAt: planLib.keyToTs(k(-4)), finishedAt: planLib.keyToTs(k(-4)) + 2700000,
+};
+const rbtWin = planLib.pastWindow(
+  { [k(-4)]: { routineId: null, rest: true, doneAt: null, note: '' } },
+  [restButTrained], T0,
+);
+ok(rbtWin[3].status.state === 'done',
+  `reality beats intent -- the day reads done (${rbtWin[3].status.state})`);
+ok(rbtWin[3].status.session.id === 'w_rbt', 'and carries the session');
+ok(rbtWin[3].status.restPlanned === true, 'while remembering it was down as rest');
+ok(planLib.pastSummary(rbtWin).trained === 1 && planLib.pastSummary(rbtWin).rest === 0,
+  'so the week counts it as trained, not rested');
+
+section('a rest day with nothing logged is still rest');
+const quietRest = planLib.pastWindow(
+  { [k(-4)]: { routineId: null, rest: true, doneAt: null, note: '' } }, [], T0,
+);
+ok(quietRest[3].status.state === 'rest', 'unchanged when no session exists');
+ok(quietRest[3].status.session === null, 'with no session attached');
+
+section('a rest day survives pruning');
+ok(planLib.prunePlan({ [k(-2)]: { routineId: null, rest: true, doneAt: null, note: '' } }, T0)[k(-2)],
+  'it is real data, not an empty day');
+
 section('a past day that was planned but swapped names what you did instead');
 const swapped = planLib.pastWindow(
   { [k(-2)]: { routineId: 'r_a', rest: false, doneAt: null, note: '' } },

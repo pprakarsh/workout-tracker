@@ -84,6 +84,7 @@ function dayRow(day, { past = false } = {}) {
         ${status.state === 'swapped' && sess
     ? `<div class="pd-sub dim">logged: ${esc(sess.routineName)}</div>` : ''}
         ${status.state === 'done' && status.manual ? '<div class="pd-sub dim">ticked by hand</div>' : ''}
+        ${status.restPlanned ? '<div class="pd-sub dim">was down as a rest day</div>' : ''}
         ${status.state === 'done' && sess
     ? `<div class="pd-sub dim">${esc(fmtDur((sess.finishedAt - sess.startedAt) / 1000))} · ${sess.entries.length} exercises</div>` : ''}
       </div>
@@ -94,6 +95,8 @@ function dayRow(day, { past = false } = {}) {
     ? `<button type="button" class="btn sm" data-action="past-log" data-id="${entry.routineId}" data-key="${key}">Log it</button>` : ''}
         ${sess
     ? `<button type="button" class="btn icon ghost" title="Open this workout" data-action="plan-open" data-id="${sess.id}">↗</button>` : ''}
+        ${past && !entry.routineId && !entry.rest && !sess
+    ? `<button type="button" class="btn icon ghost" title="Mark as a rest day" data-action="plan-rest" data-key="${key}">z</button>` : ''}
         ${entry.routineId || entry.rest || past
     ? `<button type="button" class="btn icon ghost" title="Day options" data-action="plan-menu" data-key="${key}">⋯</button>`
     : `<button type="button" class="btn icon ghost" title="Mark as a rest day" data-action="plan-rest" data-key="${key}">z</button>`}
@@ -182,6 +185,8 @@ function openDayMenu(key) {
                 ${entry.routineId ? `data-id="${entry.routineId}" ` : ''}data-key="${key}">Log a workout for this day</button>
         <button type="button" class="btn block" data-action="plan-shift" data-key="${key}" data-by="1">Push to the next day &rarr;</button>
         <button type="button" class="btn block" data-action="plan-shift" data-key="${key}" data-by="-1">Pull to the day before &larr;</button>
+        <button type="button" class="btn block" data-action="plan-rest" data-key="${key}">
+          ${entry.rest ? 'Not a rest day after all' : 'Mark as a rest day'}</button>
         <button type="button" class="btn block" data-action="plan-note" data-key="${key}">${entry.note ? 'Edit note' : 'Add a note'}</button>
         <button type="button" class="btn block" data-action="plan-done" data-key="${key}">
           ${entry.doneAt ? 'Un-mark done' : 'Mark done'}</button>
