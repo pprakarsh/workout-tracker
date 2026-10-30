@@ -24,6 +24,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | ± stepper on weight and reps | Keeps focus, no re-render |
 | Cardio: a run is time + pace + distance, any two | The third is derived; duration is the anchor |
 | Holds and carries — `measure: time` / `distance` | A plank is a lift measured in seconds, not a cardio entry |
+| Timing an isometric hold on the clock | Same timestamp clock as rest (`kind:'hold'`), counts up, writes the seconds it measured into the set |
 | Session progress bar | Entry completion, in the Now header |
 | Plan tab: 10 days ahead, 7 behind | Assign a routine per day, rest days, push/pull a day; done is derived from history, and the week behind shows adherence |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |

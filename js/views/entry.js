@@ -5,7 +5,7 @@ import {
   removeSessionEntry, moveEntryNext, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
   addSessionEntry, working, editingPast, plannedSet, fillPlannedSets,
   setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
-  setIsLoggable, setBlocker, setEffort, startRestForSet, stopRest,
+  setIsLoggable, setBlocker, setEffort, startRestForSet, stopRest, startHold,
 } from '../store.js';
 import { findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
@@ -99,7 +99,8 @@ function rowClass() {
 
 function setRow(e, s, label, workingIdx, allowRest) {
   const t = state.timer;
-  const running = !!(t && t.entryId === e.id && t.setId === s.id);
+  const running = !!(t && t.kind !== 'hold' && t.entryId === e.id && t.setId === s.id);
+  const holding = !!(t && t.kind === 'hold' && t.entryId === e.id && t.setId === s.id);
   const unit = s.unit || e.unit || state.settings.unit;
   const plan = s.warmup ? null : plannedSet(e, workingIdx);
   const wPh = s.bodyweight ? 'BW'
@@ -125,7 +126,12 @@ function setRow(e, s, label, workingIdx, allowRest) {
       <button type="button" class="chk ${s.done ? 'on' : ''}"
               title="${s.done ? 'Un-tick this set' : 'Tick without starting rest'}"
               data-action="set-done" data-entry="${e.id}" data-set="${s.id}">✓</button>
-      ${allowRest ? `<button type="button" class="rest-btn ${running ? 'running' : ''}"
+      ${allowRest && m.key === 'time' ? (holding
+    ? `<button type="button" class="rest-btn hold running" title="Stop the hold and log the time"
+              data-action="hold-stop" data-entry="${e.id}" data-set="${s.id}">■</button>`
+    : `<button type="button" class="rest-btn hold" title="Time this hold"
+              data-action="hold-start" data-entry="${e.id}" data-set="${s.id}">⧗</button>`)
+    : allowRest ? `<button type="button" class="rest-btn ${running ? 'running' : ''}"
               title="${running ? 'Stop resting and record the time' : 'Start resting after this set'}"
               data-action="set-rest-toggle" data-entry="${e.id}" data-set="${s.id}"
               >${running ? '■' : '⏱'}</button>` : '<div></div>'}
@@ -236,6 +242,36 @@ function setHeader(e) {
  * "I did not judge this one" distinguishable from "I forgot", which a blank
  * cannot do.
  */
+/**
+ * Start the clock on a hold, rather than guessing the seconds afterwards.
+ *
+ * Only for a time-measured exercise, and only the active set -- a plank is
+ * timed while it happens or not at all. Manual entry stays: the row's box is
+ * still there, and stopping the clock just fills it in for you.
+ */
+function holdBar(e, allowRest) {
+  if (measureOf(e).key !== 'time' || !allowRest) return '';
+  const s = activeSet(e);
+  if (!s) return '';
+  const t = state.timer;
+  const holding = !!(t && t.kind === 'hold' && t.setId === s.id);
+  const labels = setLabels(e.sets || []);
+  const label = labels[(e.sets || []).indexOf(s)];
+  const planned = s.reps ? fmtAmount(s.reps, 'time') : null;
+  return `
+    ${holding
+    ? `<button type="button" class="confirm holding" data-action="hold-stop"
+               data-entry="${e.id}" data-set="${s.id}">
+        <span class="big">\u25a0\u00a0 Stop the hold</span>
+        <span class="sub">the time goes straight into the set</span>
+      </button>`
+    : `<button type="button" class="confirm" data-action="hold-start"
+               data-entry="${e.id}" data-set="${s.id}">
+        <span class="big">\u29d7\u00a0 Start set ${esc(label)}</span>
+        <span class="sub">time it instead of guessing${planned ? ` \u2014 planned ${esc(planned)}` : ''}</span>
+      </button>`}`;
+}
+
 function effortBar(e) {
   const s = activeSet(e);
   if (!s) return '';
@@ -302,6 +338,7 @@ function liftBody(e, allowRest) {
       ${setHeader(e)}
       ${rows || '<p class="hint" style="margin:2px 0 8px">No sets planned. Add one below.</p>'}
     </div>
+    ${holdBar(e, allowRest)}
     ${stepBar(e)}
     ${effortBar(e)}
     ${confirmBar(e, allowRest)}
@@ -400,6 +437,13 @@ export const entryActions = {
   },
 
   // The one action during a set: tick it and start the clock in a single tap.
+  'hold-start': async ({ entry, set }) => {
+    if (editingPast()) { toast('No timer on a workout already finished'); return; }
+    unlockAudio();
+    const res = await startHold(entry, set);
+    if (!res) { toast('Only a timed exercise can be held'); return; }
+  },
+
   'set-effort-then': async ({ entry, set }) => {
     const e = findEntry(entry);
     const s = e?.sets?.find((x) => x.id === set);

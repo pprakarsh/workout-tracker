@@ -30,7 +30,7 @@ js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
 js/timefield.js     a duration as h/m/s boxes, so no colon is ever typed. Markup only
 js/db.js            thin promise wrapper over IndexedDB
 js/sync.js          Gist sync: push/pull, conflict guards, device pairing
-js/timer.js         rest timer bar: ticking, beep, audio unlock
+js/timer.js         rest + hold timer bar: ticking, beep, audio unlock
 js/ui.js            modal / toast / confirm / clipboard primitives
 js/util.js          formatting + parsing helpers, APP_VERSION
 js/format.js        entry -> summary strings (targetLine, logSummary, restLine, pace)
@@ -130,7 +130,7 @@ state = {
   active,           // the in-progress session object, or null
   editSessionId,    // a FINISHED session opened for correction in History
   settings,         // { unit, distanceUnit, defaultRest, beep }
-  timer,            // { startedAt, target, sessionId, entryId, setId, label, beeped }
+  timer,            // { kind:'rest'|'hold', startedAt, target, sessionId, entryId, setId, label, beeped }
   tab,              // 'now' | 'session' | 'history' | 'routines'
   nav,              // { sessionId?, routineId? } sub-navigation per tab
 }
@@ -429,6 +429,35 @@ global, so it works whichever realm the element belongs to (and is therefore tes
 repaints the clock on a 250 ms interval and re-syncs on `visibilitychange`. The target beep needs an
 `AudioContext` unlocked inside a user gesture, which is why `app.js` calls `unlockAudio()` on every
 tap. iOS cannot vibrate from a PWA and cannot fire a sound while fully backgrounded.
+
+### Timing a hold on the same clock
+
+A plank, a dead hang and an L-sit are timed *work*, not recovery, but the timing problem is
+identical — so `state.timer` carries `kind: 'rest' | 'hold'` and one ticking mechanism serves both.
+Building a second one would mean re-earning reload-, lock- and app-switch-survival, and two clocks
+eventually disagree.
+
+What `kind` changes:
+
+| | `rest` | `hold` |
+|---|---|---|
+| direction | counts toward `target`, beeps at it | counts up; passing `target` is doing well, not an alarm |
+| on stop | elapsed → `set.rest` | elapsed → `set.reps` (the measured seconds) |
+| ticks the set | if it has numbers | only once effort is answered too |
+
+- `startHold(entryId, setId)` refuses any exercise whose `measure` is not `time` — there would be no
+  field to write seconds into. It banks a running clock first, exactly as `startRestForSet` does.
+- `stopHold()` writes what the clock *saw*, overwriting the planned seconds. That is the whole point
+  of timing it.
+- `stopRest()` delegates to `stopHold()` when `kind === 'hold'`, so there is one stop path and a hold
+  can never be mistakenly recorded as rest.
+- Neither one auto-ticks. `stopHold` returns `{ elapsed, entryId, setId, loggable }`; `timer.js` ticks
+  the set when `loggable`, and otherwise opens the effort prompt (`askHoldEffort`) so stopping a plank
+  still runs through to a logged set in one gesture.
+
+Manual entry is untouched: the seconds box is still on the row, and the clock is an offer that fills
+it in for you. The card shows a full-width **⧗ Start set N** button, and every timed row keeps its own
+`⧗` so a set you forgot to time can still be timed.
 
 ### Editing a finished session
 

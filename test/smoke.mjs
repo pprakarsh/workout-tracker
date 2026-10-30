@@ -2037,5 +2037,91 @@ await store.stopRest();
 await store.discardSession();
 await store.deleteRoutine(freeR.id);
 
+
+/* ------------------------------------------------------------------ */
+/* timing a hold instead of guessing it afterwards                    */
+/* ------------------------------------------------------------------ */
+
+section('a hold can only be timed on an exercise measured in time');
+const holdR = await store.createRoutine({
+  name: 'Hold Day',
+  entries: [
+    { name: 'Plank', measure: 'time', sets: 3, reps: '45', rest: '1:00' },
+    { name: 'Curl', sets: 2, reps: 10 },
+  ],
+});
+const hdS = await store.startSession(holdR.id);
+const [hdPlank, hdCurl] = hdS.entries;
+ok(await store.startHold(hdCurl.id, hdCurl.sets[0].id) === null,
+  'a reps exercise cannot start a hold — there would be nothing to write the seconds into');
+ok(state.timer === null, 'and no clock is left running after the refusal');
+ok(await store.startHold(hdPlank.id, 'no-such-set') === null, 'an unknown set is refused too');
+
+section('a hold uses the same clock as a rest, marked as a hold');
+const h1 = await store.startHold(hdPlank.id, hdPlank.sets[0].id);
+ok(h1 && h1.started === true, 'the hold started');
+ok(state.timer.kind === 'hold', `the clock knows it is a hold, not a rest (${state.timer.kind})`);
+ok(state.timer.entryId === hdPlank.id && state.timer.setId === hdPlank.sets[0].id,
+  'attached to the set being held');
+ok(state.timer.target === 45, `the planned hold is the target (${state.timer.target}s)`);
+ok(/Plank set 1/.test(state.timer.label), `label names the set (${state.timer.label})`);
+
+section('stopping a hold writes the seconds it measured, not the seconds planned');
+state.timer.startedAt -= 52_000;
+const h1stop = await store.stopHold();
+ok(h1stop.elapsed === 52, `the clock reports what it saw (${h1stop.elapsed}s)`);
+ok(hdPlank.sets[0].reps === 52,
+  `and that is what lands in the set, overwriting the planned 45 (${hdPlank.sets[0].reps})`);
+ok(state.timer === null, 'the clock is cleared');
+ok(hdPlank.sets[0].rest == null, 'a hold writes no rest — it was work, not recovery');
+
+section('stopping a hold does NOT tick the set, because effort may still be owed');
+ok(hdPlank.sets[0].done === false, 'the set is left unticked for the caller to finish');
+ok(h1stop.loggable === true, 'but the caller is told it now has enough to log');
+ok(h1stop.entryId === hdPlank.id && h1stop.setId === hdPlank.sets[0].id,
+  'and which set it was, so the caller can ask for the effort');
+
+section('stopRest delegates to stopHold rather than treating a hold as rest');
+await store.startHold(hdPlank.id, hdPlank.sets[1].id);
+state.timer.startedAt -= 38_000;
+const h2stop = await store.stopRest();
+ok(h2stop.elapsed === 38, 'stopRest stopped the hold');
+ok(hdPlank.sets[1].reps === 38, `the time went into reps, not rest (${hdPlank.sets[1].reps})`);
+ok(hdPlank.sets[1].rest == null, 'nothing was recorded as rest');
+ok(await store.stopHold() === null, 'stopping with no clock running is a no-op');
+
+section('starting a hold banks whatever was already running');
+await store.startRestForSet(hdCurl.id, hdCurl.sets[0].id);
+state.timer.startedAt -= 25_000;
+await store.startHold(hdPlank.id, hdPlank.sets[2].id);
+ok(hdCurl.sets[0].rest === 25,
+  `the rest that was running kept its measurement (${hdCurl.sets[0].rest}s)`);
+ok(state.timer.kind === 'hold' && state.timer.setId === hdPlank.sets[2].id,
+  'and the clock moved to the hold');
+
+section('a second hold banks the first one as a measured hold');
+await store.startHold(hdPlank.id, hdPlank.sets[2].id);
+state.timer.startedAt -= 11_000;
+await store.startHold(hdPlank.id, hdPlank.sets[0].id);
+ok(hdPlank.sets[2].reps === 11, `the abandoned hold still wrote its time (${hdPlank.sets[2].reps}s)`);
+ok(state.timer.setId === hdPlank.sets[0].id, 'and the clock is on the new set');
+await store.stopHold();
+
+section('a running hold survives a reload, because it stores a start, not a count');
+await store.startHold(hdPlank.id, hdPlank.sets[1].id);
+state.timer.startedAt -= 9_000;
+await store.setRestTarget(state.timer.target);   // persists the clock with its shifted start
+await store.init();                              // a cold start, as after a reload
+ok(state.timer !== null && state.timer.kind === 'hold', 'the hold came back after a reload');
+ok(state.timer.setId === hdPlank.sets[1].id, 'still on the same set');
+const hAfter = store.findEntry(hdPlank.id);
+ok(hAfter !== null, 'and the session it belongs to came back too');
+state.timer.startedAt -= 1_000;
+const h3stop = await store.stopHold();
+ok(h3stop.elapsed === 10, `and it kept counting across the reload (${h3stop.elapsed}s)`);
+ok(hAfter.sets[1].reps === 10, 'writing to the reloaded session');
+await store.discardSession();
+await store.deleteRoutine(holdR.id);
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

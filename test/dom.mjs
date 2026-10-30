@@ -1710,5 +1710,102 @@ await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
+section('timing a hold instead of guessing the seconds afterwards');
+await xi.importFromText(JSON.stringify({
+  name: 'Hold Day',
+  entries: [
+    { name: 'Front Plank', measure: 'time', sets: 3, reps: '45', rest: '1:00' },
+    { name: 'Biceps Curl', sets: 2, reps: 10, weight: 20 },
+  ],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const hbR = store.state.routines.find((r) => r.name === 'Hold Day');
+await click(`[data-action="routine-start"][data-id="${hbR.id}"]`, 'Start');
+const hbPlank = () => store.state.active.entries[0];
+ok(/Front Plank/.test(view()), 'the plank is the first exercise');
+ok($('.confirm[data-action="hold-start"]') !== null, 'a timed exercise offers to start the clock');
+ok(/Start set 1/.test($('.confirm[data-action="hold-start"]').textContent),
+  `the big button names the set (${$('.confirm[data-action="hold-start"] .big').textContent.trim()})`);
+ok(/planned 45s/.test($('.confirm[data-action="hold-start"]').textContent),
+  `and states the planned hold (${$('.confirm[data-action="hold-start"] .sub').textContent.trim()})`);
+ok($$('.set-row .rest-btn.hold').length === 3,
+  `every timed row has its own hold button too (${$$('.set-row .rest-btn.hold').length})`);
+ok($('.set-row input[data-f="reps"]') !== null,
+  'and the seconds box is still there — timing it is an offer, not the only way');
+
+section('the hold bar counts up while holding');
+await click('.confirm[data-action="hold-start"]', 'Start set 1');
+ok(!$('#restBar').hidden, 'the bar is up');
+ok(store.state.timer.kind === 'hold', `and it knows it is a hold (${store.state.timer.kind})`);
+ok(/Holding/.test($('#restBar').textContent), `the bar says what is happening (${$('#restBar .t1').textContent.trim()})`);
+ok(/Front Plank set 1/.test($('#restBar').textContent), 'naming the set being held');
+ok($('#restBar .clock').classList.contains('hold'),
+  'the clock is styled as a hold, not a countdown');
+ok($('#restBar [data-action="hold-stop"]') !== null, 'stopping is the primary action');
+ok($('#restBar [data-action="rest-nudge"]') === null,
+  'and there is nothing to nudge — a hold has no target to extend');
+ok($('[data-action="hold-stop"].confirm') !== null, 'the card button flipped to Stop as well');
+
+section('stopping writes the measured seconds into the set and logs it');
+store.state.timer.startedAt -= 52_000;
+await click('#restBar [data-action="hold-stop"]', 'Stop the hold');
+await sleep(60);
+ok($('#restBar').hidden, 'the bar is gone');
+ok(hbPlank().sets[0].reps === 52,
+  `the set holds what the clock saw, not the planned 45 (${hbPlank().sets[0].reps})`);
+ok(hbPlank().sets[0].done === true, 'and the set is logged in the same gesture');
+ok(hbPlank().sets[0].rest == null, 'the time counted as work, not as rest');
+ok(/Start set 2/.test(view()), 'the card has moved on to set 2');
+
+section('a per-row hold button times a row that is not the active one');
+$$('.set-row')[2].querySelector('.rest-btn.hold')
+  .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(70);
+ok(store.state.timer && store.state.timer.kind === 'hold', 'a hold started from the row');
+ok(store.state.timer.setId === hbPlank().sets[2].id, 'for row 3 specifically');
+store.state.timer.startedAt -= 61_000;
+await click('#restBar [data-action="hold-stop"]', 'Stop');
+await sleep(60);
+ok(hbPlank().sets[2].reps === 61, `row 3 got its 61s (${hbPlank().sets[2].reps})`);
+
+section('with the effort gate on, stopping a hold asks for effort before logging');
+await store.updateSettings({ requireEffort: true, effortScale: 'rpe' });
+await sleep(40);
+await click('.confirm[data-action="hold-start"]', 'Start set 2');
+ok(store.state.timer !== null && store.state.timer.kind === 'hold', 'the hold started');
+store.state.timer.startedAt -= 40_000;
+await click('#restBar [data-action="hold-stop"]', 'Stop');
+await sleep(80);
+ok(hbPlank().sets[1].reps === 40, `the time is saved first (${hbPlank().sets[1].reps}s)`);
+ok(hbPlank().sets[1].done === false, 'but the set is not logged yet');
+ok(!$('#modalRoot').hidden, 'a prompt opened instead of silently dropping the set');
+ok(/Held 0:40/.test($('#modalRoot').textContent),
+  `the prompt states what was held (${($('#modalRoot .modal-title') || $('#modalRoot')).textContent.trim().slice(0, 40)})`);
+ok(/already saved/.test($('#modalRoot').textContent),
+  'and reassures that the time is not at risk');
+const hbChip = $$('#modalRoot [data-hold-field="rpe"]').find((b) => b.textContent.trim() === '8');
+ok(!!hbChip, `RPE chips are offered (${$$('#modalRoot [data-hold-field="rpe"]').length})`);
+ok($('#modalRoot [data-hold-field="unknown"]') !== null, "and an honest \"I don't know\"");
+hbChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(90);
+ok(hbPlank().sets[1].rpe === 8, `the effort landed (RPE ${hbPlank().sets[1].rpe})`);
+ok(hbPlank().sets[1].done === true, 'and answering logged the set');
+ok($('#modalRoot').hidden, 'the prompt closed itself');
+
+section('a reps exercise is never offered a hold');
+await click('[data-action="now-next"]', 'next exercise');
+await sleep(60);
+ok(/Biceps Curl/.test(view()), 'now on the curl');
+ok($('.confirm[data-action="hold-start"]') === null, 'no hold button on a reps exercise');
+ok($('.set-row .rest-btn.hold') === null, 'and none on its rows either');
+ok($('.set-row .rest-btn') !== null, 'but the ordinary rest timer is still there');
+
+await store.updateSettings({ requireEffort: false });
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

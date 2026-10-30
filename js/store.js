@@ -55,7 +55,7 @@ export const state = {
   // and it travels in the backup the same way.
   plan: {},
   settings: { ...DEFAULT_SETTINGS },
-  timer: null,           // { startedAt, target, sessionId, entryId, setId, label, beeped }
+  timer: null,           // { kind:'rest'|'hold', startedAt, target, sessionId, entryId, setId, label, beeped }
   tab: 'now',
   nav: {},               // per-tab sub-navigation, e.g. { routineId, sessionId }
 };
@@ -713,8 +713,9 @@ export async function updateSessionTiming(sessionId, { startedAt, finishedAt }) 
 /* rest timer state (ticking lives in timer.js)                       */
 /* ------------------------------------------------------------------ */
 
-export async function startRest({ target, entryId = null, setId = null, label = '' }) {
+export async function startRest({ target, entryId = null, setId = null, label = '', kind = 'rest' }) {
   state.timer = {
+    kind,
     startedAt: Date.now(),
     target: target ?? state.settings.defaultRest,
     sessionId: working() ? working().id : null,
@@ -722,6 +723,54 @@ export async function startRest({ target, entryId = null, setId = null, label = 
   };
   await metaSet('timer', state.timer);
   emit();
+}
+
+/**
+ * Time a HOLD rather than a rest -- a plank, a dead hang, an L-sit.
+ *
+ * The same clock does both. It already survives a reload, a screen lock and an
+ * app switch because it stores a start timestamp rather than counting, and
+ * building a second ticking mechanism to get those properties again is how two
+ * timers end up disagreeing. `kind` is the only difference: a rest counts
+ * toward a target and beeps, a hold counts up and writes what it measured.
+ */
+export async function startHold(entryId, setId) {
+  const e = findEntry(entryId);
+  const set = e?.sets?.find((x) => x.id === setId);
+  if (!set || (e.measure || 'reps') !== 'time') return null;
+  if (state.timer) await stopRest();          // bank whatever was running first
+  const labels = setLabels(e.sets);
+  await startRest({
+    kind: 'hold',
+    target: set.reps ?? e.repsMin ?? 0,       // the planned hold, for the progress ring
+    entryId,
+    setId,
+    label: `${e.name} set ${labels[e.sets.indexOf(set)]}`,
+  });
+  return { started: true };
+}
+
+/**
+ * Stop a hold and write the measured seconds into the set.
+ *
+ * The time is what the clock saw, not what was planned -- that is the whole
+ * point of timing it. The set is NOT auto-ticked, because effort may still be
+ * owed; the caller decides what to do next, exactly as stopRest does.
+ */
+export async function stopHold() {
+  const t = state.timer;
+  if (!t || t.kind !== 'hold') return null;
+  const elapsed = Math.max(0, Math.round((Date.now() - t.startedAt) / 1000));
+  state.timer = null;
+  await metaSet('timer', null);
+  const e = findEntry(t.entryId);
+  const set = e?.sets?.find((x) => x.id === t.setId);
+  if (set) {
+    set.reps = elapsed;
+    await touch({ silent: true });
+  }
+  emit();
+  return { elapsed, entryId: t.entryId, setId: t.setId, loggable: set ? setIsLoggable(set, 'time') : false };
 }
 
 export async function setRestTarget(target) {
@@ -736,6 +785,7 @@ export async function setRestTarget(target) {
 export async function stopRest() {
   const t = state.timer;
   if (!t) return null;
+  if (t.kind === 'hold') return stopHold();   // a hold is stopped on its own terms
   const elapsed = Math.round((Date.now() - t.startedAt) / 1000);
   state.timer = null;
   await metaSet('timer', null);

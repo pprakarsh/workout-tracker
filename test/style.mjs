@@ -80,15 +80,30 @@ console.log('\n== test suites must be loadable');
 // its first assertion, printing neither a pass nor a failure. That silence once
 // shipped a release. These files are long and append-only, so collisions are
 // easy; this catches them without running anything.
+//
+// Destructuring counts: `const [hPlank, hCurl] = ...` binds two names, and an
+// earlier version of this check only looked at plain `const x =`, so a repeated
+// `const [hPlank, ...]` sailed past it and crashed the suite anyway.
+const bindingsIn = (line) => {
+  const m = line.match(/^(?:const|let)\s+(\[[^\]]*\]|\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=/);
+  if (!m) return [];
+  const target = m[1];
+  if (!/^[[{]/.test(target)) return [target];
+  return target.slice(1, -1).split(',')
+    // `{ state }` and `{ a: b }` both bind the LAST identifier of the part
+    .map((part) => (part.split(':').pop().match(/[A-Za-z_$][\w$]*/) || [])[0])
+    .filter(Boolean);
+};
 for (const suite of ['style.mjs', 'smoke.mjs', 'sync.mjs', 'dom.mjs']) {
-  const src = readFileSync(`${APP}/test/${suite}`, 'utf8');
+  const lines = readFileSync(`${APP}/test/${suite}`, 'utf8').split('\n');
   const seen = new Map();
   const dupes = [];
-  for (const m of src.matchAll(/^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=/gm)) {
-    const line = src.slice(0, m.index).split('\n').length;
-    if (seen.has(m[1])) dupes.push(`${m[1]} (lines ${seen.get(m[1])} and ${line})`);
-    else seen.set(m[1], line);
-  }
+  lines.forEach((line, i) => {
+    for (const name of bindingsIn(line)) {
+      if (seen.has(name)) dupes.push(`${name} (lines ${seen.get(name)} and ${i + 1})`);
+      else seen.set(name, i + 1);
+    }
+  });
   ok(dupes.length === 0,
     `${suite} declares each top-level binding once${dupes.length ? ` — repeated: ${dupes.join(', ')}` : ` (${seen.size})`}`);
 }
