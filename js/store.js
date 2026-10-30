@@ -459,6 +459,57 @@ export async function swapEntryExercise(entryId, name) {
   return { from, to, measure };
 }
 
+/**
+ * The drop stage waiting immediately after this set, if there is one.
+ *
+ * This is the question the confirm button has to ask. A drop set's defining
+ * property is that there is NO rest before the next stage, so confirming a set
+ * that has a drop after it must not start a rest clock -- it must say "strip it
+ * and go". Returns the set, so the caller can name the load to strip to.
+ */
+export function nextDropAfter(entryId, setId) {
+  const e = findEntry(entryId);
+  const sets = e?.sets || [];
+  const i = sets.findIndex((x) => x.id === setId);
+  if (i < 0) return null;
+  const next = sets[i + 1];
+  return next && next.drop && !next.done ? next : null;
+}
+
+/**
+ * Add a drop stage straight after a set, mid-workout.
+ *
+ * Deciding to drop is often a decision made at the moment the bar stops moving,
+ * so it has to be one tap rather than a trip to the exercise editor. The load
+ * starts at 20% off the set being dropped from -- the usual first guess -- and
+ * is rounded to the weight step so it is a load you can actually make with the
+ * plates you have. It is an editable prefill, not a prescription.
+ */
+export async function addDropSet(entryId, setId) {
+  const e = findEntry(entryId);
+  const sets = e?.sets || [];
+  const i = sets.findIndex((x) => x.id === setId);
+  if (i < 0 || e.type !== 'lift') return null;
+  const from = sets[i];
+  if (from.warmup) return null;             // a warmup has nothing to drop from
+  const set = blankSet(from.unit || e.unit);
+  set.drop = true;
+  set.bodyweight = !!from.bodyweight;
+  const step = state.settings.weightStep || 2.5;
+  if (from.weight !== null && from.weight !== undefined && !from.bodyweight) {
+    set.weight = Math.max(0, Math.round((from.weight * 0.8) / step) * step);
+  } else if (set.bodyweight) {
+    set.weight = 0;
+  }
+  // drop stages run until failure, so a rep target would be a guess; the box is
+  // left blank and filled in with what actually happened
+  sets.splice(i + 1, 0, set);
+  const s = working();
+  if (s) s.modified = true;
+  await touch();
+  return set;
+}
+
 export async function removeSessionEntry(entryId) {
   const s = working();
   if (!s) return;
@@ -575,33 +626,6 @@ export async function addSet(entryId, { warmup = false } = {}) {
   e.sets.push(set);
   await touch();
   return set;
-}
-
-/**
- * Start resting after a specific set, whatever state that set is in.
- *
- * Deliberately independent of whether a weight or reps have been entered: the
- * clock is time-critical and the numbers are not. If a timer is already running
- * for another set it is stopped first, recording what it measured, rather than
- * silently discarded.
- */
-export async function startRestForSet(entryId, setId) {
-  const e = findEntry(entryId);
-  const set = e?.sets?.find((x) => x.id === setId);
-  if (!set) return null;
-  const t = state.timer;
-  if (t) {
-    if (t.entryId === entryId && t.setId === setId) return { already: true };
-    await stopRest();                 // records the previous set's rest first
-  }
-  const labels = setLabels(e.sets);
-  await startRest({
-    target: e.rest ?? state.settings.defaultRest,
-    entryId,
-    setId,
-    label: `Rest after ${e.name} set ${labels[e.sets.indexOf(set)]}`,
-  });
-  return { started: true };
 }
 
 /**
@@ -767,114 +791,6 @@ export async function updateSessionTiming(sessionId, { startedAt, finishedAt }) 
 }
 
 /* ------------------------------------------------------------------ */
-/* rest timer state (ticking lives in timer.js)                       */
-/* ------------------------------------------------------------------ */
-
-export async function startRest({ target, entryId = null, setId = null, label = '', kind = 'rest' }) {
-  state.timer = {
-    kind,
-    startedAt: Date.now(),
-    target: target ?? state.settings.defaultRest,
-    sessionId: working() ? working().id : null,
-    entryId, setId, label, beeped: false,
-  };
-  await metaSet('timer', state.timer);
-  emit();
-}
-
-/**
- * Time a HOLD rather than a rest -- a plank, a dead hang, an L-sit.
- *
- * The same clock does both. It already survives a reload, a screen lock and an
- * app switch because it stores a start timestamp rather than counting, and
- * building a second ticking mechanism to get those properties again is how two
- * timers end up disagreeing. `kind` is the only difference: a rest counts
- * toward a target and beeps, a hold counts up and writes what it measured.
- */
-export async function startHold(entryId, setId) {
-  const e = findEntry(entryId);
-  const set = e?.sets?.find((x) => x.id === setId);
-  if (!set || (e.measure || 'reps') !== 'time') return null;
-  if (state.timer) await stopRest();          // bank whatever was running first
-  const labels = setLabels(e.sets);
-  await startRest({
-    kind: 'hold',
-    target: set.reps ?? e.repsMin ?? 0,       // the planned hold, for the progress ring
-    entryId,
-    setId,
-    label: `${e.name} set ${labels[e.sets.indexOf(set)]}`,
-  });
-  return { started: true };
-}
-
-/**
- * Stop a hold and write the measured seconds into the set.
- *
- * The time is what the clock saw, not what was planned -- that is the whole
- * point of timing it. The set is NOT auto-ticked, because effort may still be
- * owed; the caller decides what to do next, exactly as stopRest does.
- */
-export async function stopHold() {
-  const t = state.timer;
-  if (!t || t.kind !== 'hold') return null;
-  const elapsed = Math.max(0, Math.round((Date.now() - t.startedAt) / 1000));
-  state.timer = null;
-  await metaSet('timer', null);
-  const e = findEntry(t.entryId);
-  const set = e?.sets?.find((x) => x.id === t.setId);
-  if (set) {
-    set.reps = elapsed;
-    await touch({ silent: true });
-  }
-  emit();
-  return { elapsed, entryId: t.entryId, setId: t.setId, loggable: set ? setIsLoggable(set, 'time') : false };
-}
-
-export async function setRestTarget(target) {
-  if (!state.timer) return;
-  state.timer.target = Math.max(0, Math.round(target));
-  state.timer.beeped = false;
-  await metaSet('timer', state.timer);
-  emit();
-}
-
-/** Stop the timer and record the actual rest against the set it was started from. */
-export async function stopRest() {
-  const t = state.timer;
-  if (!t) return null;
-  if (t.kind === 'hold') return stopHold();   // a hold is stopped on its own terms
-  const elapsed = Math.round((Date.now() - t.startedAt) / 1000);
-  state.timer = null;
-  await metaSet('timer', null);
-  const s = working();
-  let pending = null;
-  if (t.entryId && t.setId && s && s.id === t.sessionId) {
-    await updateSet(t.entryId, t.setId, { rest: elapsed }, { silent: true });
-    // The numbers may have been typed during the rest. If the set is complete
-    // now, tick it; if not, say so rather than silently leaving it unlogged.
-    const e = findEntry(t.entryId);
-    const set = e?.sets?.find((x) => x.id === t.setId);
-    if (set && !set.done) {
-      if (setIsLoggable(set, e.measure)) {
-        set.done = true;
-        set.completedAt = Date.now();
-        await touch({ silent: true });
-      } else {
-        pending = { entryId: t.entryId, setId: t.setId };
-      }
-    }
-  }
-  emit();
-  return { elapsed, pending };
-}
-
-export async function markBeeped() {
-  if (!state.timer) return;
-  state.timer.beeped = true;
-  await metaSet('timer', state.timer);
-}
-
-/* ------------------------------------------------------------------ */
 /* progress helpers                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -926,6 +842,7 @@ export function sessionVolume(s) {
  */
 export function setIsLoggable(set, measure = 'reps') {
   if (!setIsLoggableFor(set, measure)) return false;
+  if (set.drop) return true;                  // see setBlocker: drops are exempt
   if (state.settings.requireEffort && !effortAnswered(set, state.settings.effortScale)) return false;
   return true;
 }
@@ -935,6 +852,12 @@ export function setBlocker(set, measure = 'reps') {
   if (!set) return 'amount';
   if (set.reps === null || set.reps === undefined) return 'amount';
   if (!setIsLoggableFor(set, measure)) return 'load';
+  // A drop stage is exempt from the effort gate. A drop is taken to failure by
+  // definition -- that is what a drop set IS -- so the answer is known, and
+  // stopping a lifter mid-drop to tap an RPE chip would break the one thing a
+  // drop set depends on: no pause. The parent set's effort covers the whole
+  // chain. The chips are still there if you want them.
+  if (set.drop) return null;
   if (state.settings.requireEffort && !effortAnswered(set, state.settings.effortScale)) return 'effort';
   return null;
 }

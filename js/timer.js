@@ -4,9 +4,10 @@
 // tick, so locking the screen / backgrounding the app / reloading the page all
 // still show the true elapsed time.
 import {
-  state, stopRest, stopHold, setRestTarget, markBeeped, findEntry, setLabels,
-  setEffort, toggleSetDone,
+  state, findEntry, setLabels,
+  setEffort, toggleSetDone, deleteSet,
 } from './store.js';
+import { stopRest, stopHold, setRestTarget, markBeeped, startRestForSet } from './clockstore.js';
 import { loadLabel } from './format.js';
 import { toast, openModal, closeModal } from './ui.js';
 import { timeFieldHtml, readTimeValues, wireTimeFields } from './timefield.js';
@@ -84,6 +85,33 @@ export function renderRestBar() {
         </div>
         <button class="btn primary block" data-action="hold-stop" type="button">
           Stop &mdash; log the time</button>`;
+    }
+    paint();
+    startTicking();
+    return;
+  }
+
+  // A DROP has no rest, so a countdown would actively mislead. This bar says the
+  // one thing that matters -- strip it to this weight and go now -- and counts
+  // the seconds since the parent set so a 40-second "drop" is visibly not one.
+  if (t.kind === 'drop') {
+    const dkey = `drop|${t.startedAt}|${t.label}|${set ? set.weight : ''}`;
+    if (dkey !== lastKey) {
+      lastKey = dkey;
+      bar.hidden = false;
+      const to = set ? loadLabel(set) : null;
+      bar.innerHTML = `
+        <div class="restbar-top drop">
+          <div class="clock drop" id="restClock">0:00</div>
+          <div class="meta">
+            <div class="t1">Drop now &mdash; no rest</div>
+            <div id="restSub"></div>
+          </div>
+        </div>
+        <button class="btn primary block" data-action="drop-go" type="button">
+          ${to ? `Strip to ${esc(to)} &mdash; go` : 'Drop the weight &mdash; go'}</button>
+        <button class="btn block ghost sm" data-action="drop-skip" type="button">
+          Skip the drop</button>`;
     }
     paint();
     startTicking();
@@ -175,6 +203,17 @@ function paint() {
     if (clock) clock.classList.toggle('past', over);
     return;
   }
+  if (t.kind === 'drop') {
+    // No target, so nothing to be "over". The number is a nudge, not a verdict:
+    // a drop is supposed to start in the seconds it takes to move the pin.
+    if (sub) {
+      sub.textContent = el <= 15
+        ? `${el}s since your last rep — keep going`
+        : `${fmtClock(el)} since your last rep — a drop needs to be immediate`;
+    }
+    if (clock) clock.classList.toggle('late', el > 15);
+    return;
+  }
   if (sub) {
     sub.textContent = t.target > 0
       ? (over ? `${fmtClock(el - t.target)} over target ${fmtClock(t.target)}` : `target ${fmtClock(t.target)}`)
@@ -218,6 +257,32 @@ export const timerActions = {
       },
     });
     wireTimeFields(m);
+  },
+
+  /**
+   * The drop prompt is acknowledged: clear the bar and get out of the way.
+   *
+   * Nothing is recorded. The bar exists to say "no rest, go now", and the drop
+   * stage's own row is where the reps land once they happen.
+   */
+  'drop-go': async () => {
+    await stopRest();
+  },
+
+  /** Changed your mind: drop the stage rather than the weight, and rest normally. */
+  'drop-skip': async () => {
+    const t = state.timer;
+    const entryId = t?.entryId; const setId = t?.setId;
+    await stopRest();
+    if (!entryId || !setId) return;
+    const e = findEntry(entryId);
+    const sets = e?.sets || [];
+    const i = sets.findIndex((x) => x.id === setId);
+    const parent = i > 0 ? sets[i - 1] : null;
+    await deleteSet(entryId, setId);
+    toast('Drop removed — resting instead', 2600);
+    // the rest that was skipped for the drop is the rest now owed
+    if (parent) await startRestForSet(entryId, parent.id);
   },
 
   'hold-stop': async () => {

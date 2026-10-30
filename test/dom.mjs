@@ -56,6 +56,7 @@ async function type(sel, value) {
 }
 
 const store = await import(`${APP}/js/store.js`);
+const clock = await import(`${APP}/js/clockstore.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const cardio = await import(`${APP}/js/cardio.js`);
 const planLib = await import(`${APP}/js/plan.js`);
@@ -1848,6 +1849,115 @@ ok($('#modalRoot [data-action="entry-swap"]') === null,
   'and the menu does not offer a swap either');
 await click('#modalRoot [data-mclose]', 'Close');
 await sleep(50);
+
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
+section('drop sets: the hand-off from the parent set is the whole feature');
+await xi.importFromText(JSON.stringify({
+  name: 'Drop Day',
+  entries: [{ name: 'Lat Pulldown', sets: '60x10, 60x10 > 45x8', rest: '1:30' }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const drR = store.state.routines.find((r) => r.name === 'Drop Day');
+await click(`[data-action="routine-start"][data-id="${drR.id}"]`, 'Start');
+const drE = () => store.state.active.entries[0];
+ok($$('.set-row').length === 3, `three rows: two sets and a drop (${$$('.set-row').length})`);
+ok($$('.set-row')[2].classList.contains('drop'), 'the third row is marked as a drop');
+ok(!$$('.set-row')[1].classList.contains('drop'), 'and the second is not');
+ok($$('.set-row')[2].querySelector('.idx').textContent.trim() === '2\u2193',
+  `the drop row is labelled as a drop of set 2 (${$$('.set-row')[2].querySelector('.idx').textContent.trim()})`);
+
+section('set 1 behaves normally: it has a rest after it');
+ok(/logs it and starts rest/.test($('.confirm[data-action="set-confirm"]').textContent),
+  `set 1 promises a rest (${$('.confirm[data-action="set-confirm"] .sub').textContent.trim()})`);
+await click('.confirm[data-action="set-confirm"]', 'confirm set 1');
+await sleep(70);
+ok(store.state.timer && store.state.timer.kind === 'rest', 'and a rest clock starts');
+await click('#restBar [data-action="rest-stop"]', 'Stop');
+await sleep(60);
+
+section('the set BEFORE a drop says so before you tap it');
+const drSub = $('.confirm[data-action="set-confirm"] .sub').textContent;
+ok(/DROP/.test(drSub), `the button announces the drop (${drSub.trim()})`);
+ok(/no rest/.test(drSub), 'and that there is no rest');
+ok(/45/.test(drSub), 'naming the weight to strip to, so you know before you start');
+ok($('.confirm[data-action="set-confirm"]').classList.contains('todrop'),
+  'and it is styled differently from an ordinary confirm');
+
+section('confirming it raises the drop prompt instead of a rest countdown');
+await click('.confirm[data-action="set-confirm"]', 'confirm set 2');
+await sleep(80);
+ok(drE().sets[1].done === true, 'set 2 is logged');
+ok(store.state.timer && store.state.timer.kind === 'drop',
+  `the clock is a drop prompt, not a rest (${store.state.timer?.kind})`);
+ok(!$('#restBar').hidden, 'the bar is up — silence would look like a bug');
+ok(/Drop now/.test($('#restBar').textContent),
+  `saying the one thing that matters (${$('#restBar .t1').textContent.trim()})`);
+ok(/no rest/.test($('#restBar').textContent), 'and that there is no rest');
+ok(/Strip to/.test($('#restBar [data-action="drop-go"]').textContent),
+  `the action names the load to strip to (${$('#restBar [data-action="drop-go"]').textContent.trim()})`);
+ok($('#restBar [data-action="rest-nudge"]') === null,
+  'with nothing to nudge: there is no rest period to extend');
+ok($('#restBar .clock').classList.contains('drop'), 'the clock is styled as a drop');
+
+section('acknowledging the prompt records no rest and gets out of the way');
+store.state.timer.startedAt -= 7_000;
+await click('#restBar [data-action="drop-go"]', 'Strip to 45kg');
+await sleep(70);
+ok($('#restBar').hidden, 'the prompt is gone');
+ok(drE().sets[2].rest == null, 'and no rest was written against the drop row');
+ok(drE().sets[1].rest == null, 'nor against the set it dropped from');
+
+section('the drop row is the active set, and says it is a drop');
+const drActive = $('.confirm[data-action="set-confirm"] .sub').textContent;
+ok(/drop 2\u2193/.test(drActive), `the confirm names the drop stage (${drActive.trim()})`);
+ok(/logs it, then rest/.test(drActive),
+  'and that a rest follows the last stage, said once rather than twice');
+ok($('.confirm[data-action="set-confirm"]').classList.contains('isdrop'), 'styled as a drop');
+
+section('a drop logs without an RPE even with the effort gate on');
+await store.updateSettings({ requireEffort: true, effortScale: 'rpe' });
+await sleep(40);
+ok(/drop 2\u2193/.test($('.confirm[data-action="set-confirm"] .sub').textContent),
+  'the gate does not block the drop — mid-drop there is no time to tap a chip');
+await click('.confirm[data-action="set-confirm"]', 'confirm the drop');
+await sleep(80);
+ok(drE().sets[2].done === true, 'the drop is logged');
+ok(drE().sets[2].rpe === null, 'with no effort answer invented for it');
+await store.updateSettings({ requireEffort: false });
+await sleep(40);
+
+section('a drop can be added mid-workout, one tap');
+ok($('[data-action="set-add-drop"]') !== null, 'the button is on the card');
+const drBefore = drE().sets.length;
+await click('[data-action="set-add-drop"]', '+ Drop set');
+await sleep(70);
+ok(drE().sets.length === drBefore + 1, 'a row was added');
+const drNew = drE().sets[drE().sets.length - 1];
+ok(drNew.drop === true, 'as a drop');
+ok(drNew.weight === 35,
+  `at 20% off the 45 it drops from, rounded to the weight step (${drNew.weight})`);
+
+section('and the drop can be declined, which puts the rest back');
+await type('.set-row.drop:last-of-type input[data-f="reps"]', '5');
+await click('#tabBar .tab[data-tab="now"]');
+await sleep(40);
+await store.updateSet(drE().id, drE().sets[2].id, { done: false });
+await sleep(40);
+const drSkipTarget = drE().sets[3];
+await clock.startDropNow(drE().id, drSkipTarget.id);
+await sleep(50);
+ok($('#restBar [data-action="drop-skip"]') !== null, 'declining is offered on the bar');
+await click('#restBar [data-action="drop-skip"]', 'Skip the drop');
+await sleep(90);
+ok(!drE().sets.some((s) => s.id === drSkipTarget.id), 'the drop row is removed');
+ok(store.state.timer && store.state.timer.kind === 'rest',
+  `and the rest that was skipped for it starts instead (${store.state.timer?.kind})`);
+await click('#restBar [data-action="rest-stop"]', 'Stop');
 
 await click('#tabBar .tab[data-tab="session"]');
 await click('[data-action="sess-discard"]', 'Discard');

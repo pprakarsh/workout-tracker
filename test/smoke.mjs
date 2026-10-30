@@ -31,6 +31,7 @@ const ok = (cond, label) => {
 const section = (s) => console.log(`\n== ${s}`);
 
 const store = await import(`${APP}/js/store.js`);
+const clock = await import(`${APP}/js/clockstore.js`);
 const backupStore = await import(`${APP}/js/backupstore.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
@@ -158,9 +159,9 @@ ok(/Back Squat set 2/.test(state.timer.label), `label: ${state.timer.label}`);
 state.timer.startedAt -= 65_000;
 const timerMod = await import(`${APP}/js/timer.js`);
 ok(timerMod.restElapsed() === 65, `elapsed derived from timestamp (${timerMod.restElapsed()}s)`);
-await store.setRestTarget(120);
+await clock.setRestTarget(120);
 ok(state.timer.target === 120, 'target editable mid-rest');
-const stopped = await store.stopRest();
+const stopped = await clock.stopRest();
 ok(stopped.elapsed === 65, `stop returns elapsed (${stopped.elapsed}s)`);
 ok(stopped.pending === null, 'the set had numbers, so nothing is left pending');
 ok(state.timer === null, 'timer cleared');
@@ -253,7 +254,7 @@ ok(resR.expected && resR.actual && resR.expected.loggedSets === resR.actual.logg
 section('restore carries an in-progress workout and a running timer');
 const live = await store.startSession(r.id);
 await store.addSet(live.entries[0].id);
-await store.startRest({ target: 90, entryId: live.entries[0].id, setId: live.entries[0].sets[0].id, label: 'Rest' });
+await clock.startRest({ target: 90, entryId: live.entries[0].id, setId: live.entries[0].sets[0].id, label: 'Rest' });
 const backup2 = JSON.stringify(xi.backupObject());
 await backupStore.restoreAll({ routines: [], sessions: [], settings: null });
 ok(state.active === null && state.timer === null, 'wiped again');
@@ -1214,9 +1215,9 @@ const rgR = await store.createRoutine({
 });
 const rgS = await store.startSession(rgR.id);
 const rgE = rgS.entries[0];
-await store.startRestForSet(rgE.id, rgE.sets[0].id);
+await clock.startRestForSet(rgE.id, rgE.sets[0].id);
 state.timer.startedAt -= 60_000;
-const rgStop = await store.stopRest();
+const rgStop = await clock.stopRest();
 ok(rgStop.elapsed === 60, 'the rest is recorded');
 ok(rgE.sets[0].done === false, 'but the set is not ticked');
 ok(rgStop.pending && rgStop.pending.setId === rgE.sets[0].id,
@@ -1997,7 +1998,7 @@ const fe = fs.entries[0];
 ok(fe.sets.every((x) => x.weight === null), 'the plan sets no weight');
 ok(store.setIsLoggable(fe.sets[0]) === false, 'so the set is not loggable yet');
 
-const started = await store.startRestForSet(fe.id, fe.sets[0].id);
+const started = await clock.startRestForSet(fe.id, fe.sets[0].id);
 ok(started.started === true, 'the clock still starts — time is not recoverable, a number is');
 ok(state.timer.setId === fe.sets[0].id, 'and it is attached to that specific set');
 ok(state.timer.target === 90, 'using the exercise rest target');
@@ -2007,16 +2008,16 @@ section('the numbers can be entered during the rest, and the set then ticks on s
 await store.updateSet(fe.id, fe.sets[0].id, { weight: 40 });
 ok(store.setIsLoggable(fe.sets[0]) === true, 'typing the weight mid-rest makes it loggable');
 state.timer.startedAt -= 95_000;
-const stopA = await store.stopRest();
+const stopA = await clock.stopRest();
 ok(stopA.elapsed === 95, `rest recorded (${stopA.elapsed}s)`);
 ok(stopA.pending === null, 'nothing pending');
 ok(fe.sets[0].done === true, 'and stopping ticks the set now that it has numbers');
 ok(fe.sets[0].rest === 95, 'with the measured rest attached');
 
 section('stopping with still no numbers keeps the rest but says the set is unlogged');
-await store.startRestForSet(fe.id, fe.sets[1].id);
+await clock.startRestForSet(fe.id, fe.sets[1].id);
 state.timer.startedAt -= 60_000;
-const stopB = await store.stopRest();
+const stopB = await clock.stopRest();
 ok(stopB.elapsed === 60, 'rest measured');
 ok(stopB.pending && stopB.pending.setId === fe.sets[1].id,
   'the caller is told which set is still unlogged');
@@ -2026,15 +2027,15 @@ ok(fmt.restLine(fe).includes('2) 1:00'),
   `and it shows in the rest line despite being unticked (${fmt.restLine(fe)})`);
 
 section('starting rest for another set banks the running one first');
-await store.startRestForSet(fe.id, fe.sets[1].id);
+await clock.startRestForSet(fe.id, fe.sets[1].id);
 state.timer.startedAt -= 30_000;
-const sw = await store.startRestForSet(fe.id, fe.sets[2].id);
+const sw = await clock.startRestForSet(fe.id, fe.sets[2].id);
 ok(sw.started === true, 'the new rest started');
 ok(fe.sets[1].rest === 30, `the previous set kept what it measured (${fe.sets[1].rest}s), not discarded`);
 ok(state.timer.setId === fe.sets[2].id, 'and the clock moved to the new set');
-ok((await store.startRestForSet(fe.id, fe.sets[2].id)).already === true,
+ok((await clock.startRestForSet(fe.id, fe.sets[2].id)).already === true,
   'tapping the same set again is a no-op, not a restart');
-await store.stopRest();
+await clock.stopRest();
 await store.discardSession();
 await store.deleteRoutine(freeR.id);
 
@@ -2053,13 +2054,13 @@ const holdR = await store.createRoutine({
 });
 const hdS = await store.startSession(holdR.id);
 const [hdPlank, hdCurl] = hdS.entries;
-ok(await store.startHold(hdCurl.id, hdCurl.sets[0].id) === null,
+ok(await clock.startHold(hdCurl.id, hdCurl.sets[0].id) === null,
   'a reps exercise cannot start a hold — there would be nothing to write the seconds into');
 ok(state.timer === null, 'and no clock is left running after the refusal');
-ok(await store.startHold(hdPlank.id, 'no-such-set') === null, 'an unknown set is refused too');
+ok(await clock.startHold(hdPlank.id, 'no-such-set') === null, 'an unknown set is refused too');
 
 section('a hold uses the same clock as a rest, marked as a hold');
-const h1 = await store.startHold(hdPlank.id, hdPlank.sets[0].id);
+const h1 = await clock.startHold(hdPlank.id, hdPlank.sets[0].id);
 ok(h1 && h1.started === true, 'the hold started');
 ok(state.timer.kind === 'hold', `the clock knows it is a hold, not a rest (${state.timer.kind})`);
 ok(state.timer.entryId === hdPlank.id && state.timer.setId === hdPlank.sets[0].id,
@@ -2069,7 +2070,7 @@ ok(/Plank set 1/.test(state.timer.label), `label names the set (${state.timer.la
 
 section('stopping a hold writes the seconds it measured, not the seconds planned');
 state.timer.startedAt -= 52_000;
-const h1stop = await store.stopHold();
+const h1stop = await clock.stopHold();
 ok(h1stop.elapsed === 52, `the clock reports what it saw (${h1stop.elapsed}s)`);
 ok(hdPlank.sets[0].reps === 52,
   `and that is what lands in the set, overwriting the planned 45 (${hdPlank.sets[0].reps})`);
@@ -2083,42 +2084,42 @@ ok(h1stop.entryId === hdPlank.id && h1stop.setId === hdPlank.sets[0].id,
   'and which set it was, so the caller can ask for the effort');
 
 section('stopRest delegates to stopHold rather than treating a hold as rest');
-await store.startHold(hdPlank.id, hdPlank.sets[1].id);
+await clock.startHold(hdPlank.id, hdPlank.sets[1].id);
 state.timer.startedAt -= 38_000;
-const h2stop = await store.stopRest();
+const h2stop = await clock.stopRest();
 ok(h2stop.elapsed === 38, 'stopRest stopped the hold');
 ok(hdPlank.sets[1].reps === 38, `the time went into reps, not rest (${hdPlank.sets[1].reps})`);
 ok(hdPlank.sets[1].rest == null, 'nothing was recorded as rest');
-ok(await store.stopHold() === null, 'stopping with no clock running is a no-op');
+ok(await clock.stopHold() === null, 'stopping with no clock running is a no-op');
 
 section('starting a hold banks whatever was already running');
-await store.startRestForSet(hdCurl.id, hdCurl.sets[0].id);
+await clock.startRestForSet(hdCurl.id, hdCurl.sets[0].id);
 state.timer.startedAt -= 25_000;
-await store.startHold(hdPlank.id, hdPlank.sets[2].id);
+await clock.startHold(hdPlank.id, hdPlank.sets[2].id);
 ok(hdCurl.sets[0].rest === 25,
   `the rest that was running kept its measurement (${hdCurl.sets[0].rest}s)`);
 ok(state.timer.kind === 'hold' && state.timer.setId === hdPlank.sets[2].id,
   'and the clock moved to the hold');
 
 section('a second hold banks the first one as a measured hold');
-await store.startHold(hdPlank.id, hdPlank.sets[2].id);
+await clock.startHold(hdPlank.id, hdPlank.sets[2].id);
 state.timer.startedAt -= 11_000;
-await store.startHold(hdPlank.id, hdPlank.sets[0].id);
+await clock.startHold(hdPlank.id, hdPlank.sets[0].id);
 ok(hdPlank.sets[2].reps === 11, `the abandoned hold still wrote its time (${hdPlank.sets[2].reps}s)`);
 ok(state.timer.setId === hdPlank.sets[0].id, 'and the clock is on the new set');
-await store.stopHold();
+await clock.stopHold();
 
 section('a running hold survives a reload, because it stores a start, not a count');
-await store.startHold(hdPlank.id, hdPlank.sets[1].id);
+await clock.startHold(hdPlank.id, hdPlank.sets[1].id);
 state.timer.startedAt -= 9_000;
-await store.setRestTarget(state.timer.target);   // persists the clock with its shifted start
+await clock.setRestTarget(state.timer.target);   // persists the clock with its shifted start
 await store.init();                              // a cold start, as after a reload
 ok(state.timer !== null && state.timer.kind === 'hold', 'the hold came back after a reload');
 ok(state.timer.setId === hdPlank.sets[1].id, 'still on the same set');
 const hAfter = store.findEntry(hdPlank.id);
 ok(hAfter !== null, 'and the session it belongs to came back too');
 state.timer.startedAt -= 1_000;
-const h3stop = await store.stopHold();
+const h3stop = await clock.stopHold();
 ok(h3stop.elapsed === 10, `and it kept counting across the reload (${h3stop.elapsed}s)`);
 ok(hAfter.sets[1].reps === 10, 'writing to the reloaded session');
 await store.discardSession();
@@ -2238,6 +2239,129 @@ await store.discardSession();
 await store.deleteRoutine(eoMixR.id);
 await store.deleteRoutine(eoR.id);
 await store.deleteRoutine(eoHackR.id);
+
+/* ------------------------------------------------------------------ */
+/* drop sets: one set, several loads, no rest between                 */
+/* ------------------------------------------------------------------ */
+
+section('"100x8 > 80x6 > 60x5" is one set with two drops, not three sets');
+const drT = store.parseSetTargets('100x8 > 80x6 > 60x5');
+ok(drT.length === 3, `three stages parsed (${drT.length})`);
+ok(drT[0].drop === false, 'the first is the working set');
+ok(drT[1].drop === true && drT[2].drop === true, 'the ones after > are drops');
+ok(drT[1].weight === 80 && drT[2].weight === 60, 'each stage keeps its own load');
+const drMix = store.parseSetTargets('100x8, 100x8, 100x8 > 80x6');
+ok(drMix.length === 4, `commas and > compose (${drMix.length} rows)`);
+ok(drMix.map((t) => (t.drop ? 'd' : '-')).join('') === '---d',
+  'only the stage after the > is a drop');
+ok(store.parseSetTargets('100x8, 90x8').every((t) => t.drop === false),
+  'a plain comma list has no drops');
+ok(store.parseSetTargets([{ weight: 80, reps: 6, drop: true }])[0].drop === true,
+  'and the JSON object form carries the flag');
+
+section('a drop is labelled as its parent set, not as the next set');
+ok(store.setLabels([{}, {}, {}]).join(',') === '1,2,3', 'plain sets are unchanged');
+ok(store.setLabels([{}, {}, {}, { drop: true }, { drop: true }]).join(',') === '1,2,3,3\u2193,3\u2193\u2193',
+  `a drop takes its parent's number with an arrow (${store.setLabels([{}, {}, {}, { drop: true }, { drop: true }]).join(',')})`);
+ok(store.setLabels([{ warmup: true }, {}, { drop: true }, {}]).join(',') === 'W1,1,1\u2193,2',
+  'numbering resumes after the drop chain, and warmups still count separately');
+ok(store.setLabels([{ drop: true }, {}]).join(',') === '1,2',
+  'a drop with nothing above it falls back to a number rather than breaking');
+
+section('a planned drop opens as its own row, marked as a drop');
+await store.updateSettings({ requireEffort: false });
+const drR = await store.createRoutine({
+  name: 'Drop Day',
+  entries: [{ name: 'Lat Pulldown', sets: '60x10, 60x10 > 45x8 > 35x6', rest: '1:30' }],
+});
+ok(drR.entries[0].setTargets.length === 4, 'the routine holds four rows');
+ok(fmt.planLine(drR.entries[0]).includes('>'),
+  `and reads as a drop chain (${fmt.planLine(drR.entries[0])})`);
+ok(fmt.planLine(drR.entries[0]).startsWith('60×10 · 60×10 >'),
+  'with > only between the drop stages');
+const drJson = JSON.parse(JSON.stringify(xi.routineObject(drR)));
+ok(drJson.entries[0].sets.filter((r) => r.drop).length === 2, 'export marks both drop rows');
+ok(store.normalizeEntry(drJson.entries[0]).setTargets[2].drop === true, 'and a round trip keeps them');
+
+const drS = await store.startSession(drR.id);
+const drE = drS.entries[0];
+ok(drE.sets.length === 4, 'the session opens with all four rows');
+ok(drE.sets.map((s) => (s.drop ? 'd' : '-')).join('') === '--dd',
+  'the drop flags came through materialisation');
+ok(store.setLabels(drE.sets).join(',') === '1,2,2\u2193,2\u2193\u2193',
+  `and the rows are labelled as one set plus drops (${store.setLabels(drE.sets).join(',')})`);
+ok(drE.sets[2].weight === 45, 'each stage opens on its planned load');
+ok(store.workingSets(drE).length === 4,
+  'a drop is working volume, not a warmup — all four count');
+
+section('confirming the set before a drop must not start a rest');
+ok(store.nextDropAfter(drE.id, drE.sets[1].id).id === drE.sets[2].id,
+  'the app can see the drop waiting after set 2');
+ok(store.nextDropAfter(drE.id, drE.sets[0].id) === null, 'set 1 has no drop after it');
+ok(store.nextDropAfter(drE.id, drE.sets[3].id) === null, 'and the last drop has nothing after it');
+await store.updateSet(drE.id, drE.sets[1].id, { weight: 60, reps: 10 });
+const drStarted = await clock.startDropNow(drE.id, drE.sets[2].id);
+ok(drStarted.started === true, 'the drop prompt starts');
+ok(state.timer.kind === 'drop', `the clock knows this is a drop (${state.timer.kind})`);
+ok(state.timer.target === 0, 'with no target — there is nothing to count down to');
+ok(state.timer.setId === drE.sets[2].id, 'pointed at the stage you are about to do');
+ok(await clock.startDropNow(drE.id, drE.sets[1].id) === null,
+  'a set that is not a drop cannot raise the prompt');
+
+section('the drop clock measures nothing, because it is a prompt not a rest');
+state.timer.startedAt -= 9_000;
+const drStop = await clock.stopRest();
+ok(drStop.drop === true && drStop.elapsed === 9, `it reports what it saw (${drStop.elapsed}s)`);
+ok(drE.sets[2].rest == null,
+  'but writes no rest — `rest` means the rest AFTER a set, and this was before it');
+ok(drE.sets[1].rest == null, 'and nothing lands on the parent either');
+ok(state.timer === null, 'the prompt is gone');
+
+section('a drop stage is exempt from the effort gate');
+await store.updateSettings({ requireEffort: true, effortScale: 'rpe' });
+await store.updateSet(drE.id, drE.sets[2].id, { weight: 45, reps: 8 });
+ok(store.setBlocker(drE.sets[2], 'reps') === null,
+  'a filled-in drop stage is ready to log with no RPE — a drop IS failure, and stopping to tap mid-drop breaks it');
+ok(store.setIsLoggable(drE.sets[2], 'reps') === true, 'so it is loggable');
+ok(store.setBlocker(drE.sets[0], 'reps') === 'effort',
+  'while an ordinary set still owes an effort answer');
+await store.updateSettings({ requireEffort: false });
+
+section('a drop can be added at the moment the bar stops moving');
+await store.updateSet(drE.id, drE.sets[0].id, { weight: 100 });
+const drAdded = await store.addDropSet(drE.id, drE.sets[0].id);
+ok(!!drAdded && drAdded.drop === true, 'the new row is a drop');
+ok(drE.sets[1].id === drAdded.id, 'inserted directly after the set it drops from');
+ok(drAdded.weight === 80, `starting 20% lighter (${drAdded.weight} from 100)`);
+ok(drAdded.reps === null, 'with no rep target — a drop runs to failure, so a number would be a guess');
+ok(store.setLabels(drE.sets)[1] === '1\u2193',
+  `and it is labelled as a drop of set 1 (${store.setLabels(drE.sets)[1]})`);
+
+section('the suggested load is one you can actually load');
+await store.updateSettings({ weightStep: 2.5 });
+const drStepE = (await store.addSessionEntry({ name: 'Step Check', sets: 1, reps: 5, weight: 97.5 }));
+await store.updateSet(drStepE.id, drStepE.sets[0].id, { weight: 97.5 });
+const drStep = await store.addDropSet(drStepE.id, drStepE.sets[0].id);
+ok(drStep.weight === 77.5,
+  `97.5 drops to a multiple of the weight step (${drStep.weight}), not 78`);
+await store.updateSettings({ weightStep: 5 });
+await store.updateSet(drStepE.id, drStepE.sets[0].id, { weight: 100 });
+const drStep5 = await store.addDropSet(drStepE.id, drStepE.sets[0].id);
+ok(drStep5.weight === 80, `and it follows the setting (${drStep5.weight} at a 5 step)`);
+await store.updateSettings({ weightStep: 2.5 });
+
+section('a drop needs something to drop from');
+const drBwE = await store.addSessionEntry({ name: 'Pull-up', bodyweight: true, sets: 1, reps: 8 });
+const drBw = await store.addDropSet(drBwE.id, drBwE.sets[0].id);
+ok(drBw.bodyweight === true && drBw.weight === 0,
+  'a bodyweight set drops to plain bodyweight, not to 80% of your body');
+const drWarmE = await store.addSessionEntry({ name: 'Warmup Only', sets: 1, reps: 5 });
+await store.toggleWarmup(drWarmE.id, drWarmE.sets[0].id);
+ok(await store.addDropSet(drWarmE.id, drWarmE.sets[0].id) === null,
+  'a warmup has nothing to drop from');
+ok(await store.addDropSet(drE.id, 'no-such-set') === null, 'and an unknown set is a no-op');
+await store.discardSession();
+await store.deleteRoutine(drR.id);
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -26,6 +26,7 @@ js/plan.js          the 10-day plan: day keys, the window, and what a day means
 js/planstore.js     writes for the plan -- the mirror of queries.js
 js/cardiostore.js   writes for a cardio log: the run's numbers and a block's rounds
 js/backupstore.js   whole-database replace (restore, device copy) + the confirmation counts
+js/clockstore.js    the workout clock: rest, holds, the drop-set prompt (ticking is in timer.js)
 js/trends.js        progress analysis: e1RM, per-session series, PRs, weekly totals
 js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
 js/timefield.js     a duration as h/m/s boxes, so no colon is ever typed. Markup only
@@ -491,6 +492,56 @@ framework and each is an explicit object literal rather than a spread: `normaliz
 `definitionOf` (queries.js), `saveSessionBackToRoutine` (store.js) and `routineObject`
 (exportimport.js). The same audit found `measure` missing from two of them — saving a session back
 to its routine turned a 45-second plank into 45 reps.
+
+### Drop sets: one set, several loads, no rest between
+
+A drop set is one set taken to failure, then continued at a lighter load with **no rest**. That last
+part is the whole design problem: the app's default reaction to confirming a set is to start a
+two-minute countdown, which is the exact opposite of what a drop needs.
+
+**Shape.** A drop stage is a set with `drop: true` — the same shape as the existing `warmup` flag,
+in the same place, so `workingSets`, volume, prefill and the exports already handle it. It is not a
+separate entity.
+
+**Authoring.** Two ways in, both producing the same `setTargets`:
+
+- the compact string, where `>` chains a drop onto the set before it:
+  `"60x10, 60x10 > 45x8 > 35x6"` is **three** sets, the last of which has two drop stages
+- the per-set grid in the exercise form, where each row has a `↓` toggle
+
+`readExerciseForm` will not collapse a per-set plan into a uniform target when any row is a drop: a
+uniform target has nowhere to record which row is the drop, so collapsing would throw it away.
+
+**Labels.** A drop takes its parent's number with an arrow per stage — `1`, `2`, `2↓`, `2↓↓` —
+because it is not a third set, it is the second set at a lighter load. `setLabels` owns this, and the
+exercise form's grid calls the same function so the plan and the workout never disagree.
+
+**The hand-off, which is the actual feature.** Three things fire at the moment it matters:
+
+1. The confirm button for the set *before* a drop reads `set 2 — then DROP to 45 kg, no rest`
+   **before** it is tapped, and is styled differently. You learn what is coming while you can still
+   plan for it.
+2. Confirming it calls `startDropNow` instead of `startRestForSet`. Same clock, `kind: 'drop'`: no
+   target, no beep, counting **up**, with the bar saying `Drop now — no rest` and one action,
+   `Strip to 45 kg — go`. A bar appears rather than nothing, because silence after a tap looks like
+   a bug.
+3. The count-up is the nudge: past fifteen seconds it says *a drop needs to be immediate* and turns
+   red. A drop that starts forty seconds later is two sets.
+
+`stopRest` special-cases `kind: 'drop'` to record **nothing**. The clock is attached to the set you
+are about to do, and `set.rest` means the rest taken *after* a set, so writing those seconds
+anywhere would state something false.
+
+**The effort gate does not apply to a drop stage.** A drop is taken to failure by definition, so the
+answer is already known, and stopping a lifter mid-drop to tap an RPE chip breaks the one property
+the whole technique depends on. The parent set's effort covers the chain; the chips are still there
+if you want them.
+
+**Escape hatches.** `+ Drop set` adds a stage to the last working set in one tap, starting 20% below
+it and rounded to `settings.weightStep` so it is a load you can actually make with the plates you
+have — deciding to drop usually happens at the moment the bar stops moving, which is the worst time
+to go looking for the exercise editor. `Skip the drop` on the bar deletes the stage and starts the
+rest that was being skipped for it.
 
 ### Editing a finished session
 

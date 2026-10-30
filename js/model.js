@@ -14,7 +14,12 @@ import { parseMeasure, parseAmountRange } from './measure.js';
  * Per-set targets: a plan with a different load/reps for each set.
  * Accepts  [{weight:60,reps:10}, …]  |  ["60x10","70x8"]  |  "60x10, 70x8, 80x5"
  * Reps may be a range ("8-12"); the weight may be omitted ("x10") for bodyweight.
- * Returns [{weight, repsMin, repsMax}] or null.
+ *
+ * `>` chains a DROP onto the set before it: "100x8 > 80x6 > 60x5" is one working
+ * set with two drop stages, not three sets. It reads the way a lifter writes it
+ * and round-trips through JSON as `{weight, reps, drop:true}`.
+ *
+ * Returns [{weight, repsMin, repsMax, drop}] or null.
  */
 export function parseSetTargets(raw, measure = 'reps') {
   if (raw === null || raw === undefined || raw === '') return null;
@@ -25,24 +30,35 @@ export function parseSetTargets(raw, measure = 'reps') {
     const m = s.match(/^([\d.]*)\s*(?:x|@|\*)\s*(.+)$/);
     if (m) {
       const reps = parseAmountRange(m[2], measure);
-      return { weight: num(m[1]), repsMin: reps.min, repsMax: reps.max };
+      return { weight: num(m[1]), repsMin: reps.min, repsMax: reps.max, drop: false };
     }
     // a bare number is a weight with no rep target
     const w = num(s);
-    return w === null ? null : { weight: w, repsMin: null, repsMax: null };
+    return w === null ? null : { weight: w, repsMin: null, repsMax: null, drop: false };
   };
 
+  // one comma-separated chunk may itself be a drop chain: everything after the
+  // first `>` is a stage of the set that opened the chunk
+  const chunk = (str) => String(str).split('>').map((part, i) => {
+    const t = one(part);
+    if (t && i > 0) t.drop = true;
+    return t;
+  });
+
   const list = typeof raw === 'string'
-    ? raw.split(/[,;\n]/).map(one)
+    ? raw.split(/[,;\n]/).flatMap(chunk)
     : Array.isArray(raw)
-      ? raw.map((item) => {
-        if (item === null || item === undefined) return null;
-        if (typeof item === 'string' || typeof item === 'number') return one(item);
+      ? raw.flatMap((item) => {
+        if (item === null || item === undefined) return [null];
+        if (typeof item === 'number') return [one(item)];
+        if (typeof item === 'string') return chunk(item);
         const reps = parseAmountRange(
           item.reps !== undefined ? item.reps : { min: item.repsMin, max: item.repsMax },
           measure,
         );
-        return { weight: num(item.weight), repsMin: reps.min, repsMax: reps.max };
+        return [{
+          weight: num(item.weight), repsMin: reps.min, repsMax: reps.max, drop: !!item.drop,
+        }];
       })
       : null;
 
@@ -177,16 +193,28 @@ export const blankSet = (unit, warmup = false) => ({
   // bodyweight: the load is your own body. `weight` then means ADDED load
   // (a belt, a dumbbell between the feet) and may stay null for plain BW.
   bodyweight: false,
+  // a drop stage: strip the load and keep going, NO rest before it. Belongs to
+  // the working set above it -- see setLabels and nextIsDrop.
+  drop: false,
   warmup, note: '', done: false, completedAt: null, rest: null,
 });
 
 /**
  * Display labels for a set list: warmups are W1, W2... and working sets are
  * numbered 1, 2... independently, which is how lifters count them.
+ *
+ * A drop stage takes its parent's number with an arrow per stage -- 3, 3↓, 3↓↓
+ * -- because it is not a fourth set, it is the same set at a lighter load. A
+ * drop with no working set before it is nonsense, so it falls back to a number.
  */
 export function setLabels(sets = []) {
-  let w = 0; let n = 0;
-  return sets.map((s) => (s.warmup ? `W${++w}` : String(++n)));
+  let w = 0; let n = 0; let d = 0;
+  return sets.map((s) => {
+    if (s.warmup) { d = 0; return `W${++w}`; }
+    if (s.drop && n > 0) return `${n}${'\u2193'.repeat(++d)}`;
+    d = 0;
+    return String(++n);
+  });
 }
 
 /** Sets that count towards targets, volume and records. */
@@ -307,6 +335,10 @@ export function materializePlan(entry, prior = null) {
         ? { weight: entry.weight, repsMin: entry.repsMin, repsMax: entry.repsMax } : null);
     const set = blankSet(entry.unit);
     set.bodyweight = !!entry.bodyweight;
+    // a drop stage is part of the PLAN, not of last time's performance: it says
+    // how this set is to be done, so it comes from the target even when the
+    // numbers come from history
+    set.drop = !!(entry.setTargets?.[i]?.drop);
     // last time's matching set, else the one before it, so a longer plan still
     // fills to the end rather than trailing off into blanks
     const was = prior ? (prior[i] || prior[prior.length - 1]) : null;

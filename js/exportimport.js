@@ -62,6 +62,7 @@ export function routineObject(r) {
           if (t.weight !== null && t.weight !== undefined) row.weight = t.weight;
           const reps = fmtAmountRange(t.repsMin, t.repsMax, e.measure);
           if (reps) row.reps = reps;
+          if (t.drop) row.drop = true;
           return row;
         });
       } else {

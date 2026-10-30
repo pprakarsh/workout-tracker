@@ -26,6 +26,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Holds and carries — `measure: time` / `distance` | A plank is a lift measured in seconds, not a cardio entry |
 | Timing an isometric hold on the clock | Same timestamp clock as rest (`kind:'hold'`), counts up, writes the seconds it measured into the set |
 | Either / Or exercises per routine slot | "Leg Press OR Hack Squat" — one tap on the day; prefill then comes from that exercise's own history, and the routine keeps the original |
+| Drop sets | `100x8 > 80x6 > 60x5` in the plan, or one tap mid-set; the confirm says "then DROP, no rest" before you tap and the bar replaces the countdown |
 | Session progress bar | Entry completion, in the Now header |
 | Plan tab: 10 days ahead, 7 behind | Assign a routine per day, rest days, push/pull a day; done is derived from history, and the week behind shows adherence |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |

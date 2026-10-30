@@ -13,12 +13,23 @@ import { fmtNum, fmtClock, fmtDur } from './util.js';
 import { fmtAmount, fmtAmountRange, measureOf } from './measure.js';
 
 /** "60×10 · 70×8 · 80×5-6" for a per-set plan, or "×45s" for a timed one. */
+/**
+ * The per-set plan as one line: "100×8 · 100×8 · 100×8".
+ *
+ * A drop stage is joined with `>` rather than `·`, so a drop set reads as the
+ * one set it is -- "100×8 > 80×6 > 60×5" -- and matches the notation the
+ * exercise form accepts as input.
+ */
 export function planLine(e) {
   if (!e.setTargets) return '';
   const m = e.measure || 'reps';
   return e.setTargets
-    .map((t) => `${t.weight !== null ? fmtNum(t.weight) : ''}×${fmtAmountRange(t.repsMin, t.repsMax, m) || '?'}`)
-    .join(' · ');
+    .map((t, i) => {
+      const cell = `${t.weight !== null ? fmtNum(t.weight) : ''}×${fmtAmountRange(t.repsMin, t.repsMax, m) || '?'}`;
+      if (i === 0) return cell;
+      return `${t.drop ? ' > ' : ' · '}${cell}`;
+    })
+    .join('');
 }
 
 /** What the routine asks for: "3 × 8-12 · @ 70 kg · rest 2:30". */

@@ -5,7 +5,7 @@
 // its type, measure, targets, per-set plan and notes -- and is shared by the
 // routine editor and the mid-session "add exercise" flow. views/entry.js is
 // about one exercise being PERFORMED.
-import { state, parseSetTargets, getRoutine, saveRoutine, normalizeEntry, addSessionEntry, altNames } from '../store.js';
+import { state, parseSetTargets, getRoutine, saveRoutine, normalizeEntry, addSessionEntry, altNames, setLabels } from '../store.js';
 import { exerciseLibrary, findInLibrary } from '../queries.js';
 import { esc, fmtNum, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
@@ -27,13 +27,15 @@ const MEASURE_HINT = {
 const stRow = (t = {}, measure = 'reps') => {
   const m = MEASURES[measure] || MEASURES.reps;
   return `
-  <div class="strow" data-strow>
+  <div class="strow ${t.drop ? 'isdrop' : ''}" data-strow data-drop="${t.drop ? '1' : '0'}">
     <div class="idx"></div>
     <input data-stf="w" inputmode="decimal" placeholder="weight"
            value="${esc(fmtNum(t.weight))}" aria-label="Set weight">
     <input data-stf="r" inputmode="text" placeholder="${esc(m.placeholder)}"
            value="${esc(fmtAmountRange(t.repsMin ?? null, t.repsMax ?? null, m.key))}"
            aria-label="Set ${esc(m.label.toLowerCase())}">
+    <button type="button" class="chk drop ${t.drop ? 'on' : ''}" data-strow-drop
+            title="Make this a drop of the set above: strip the weight, no rest">&#8595;</button>
     <button type="button" class="chk" data-strow-del title="Remove this set">✕</button>
   </div>`;
 };
@@ -86,13 +88,15 @@ export function exerciseFormHtml(e = {}) {
         </select></label>
       <p class="hint" id="exMeasureHint" style="margin-top:-4px">${esc(MEASURE_HINT[measure])}</p>
       <div class="tiny" style="margin:2px 0 7px">Sets — weight and <span id="exAmountWord">${esc((MEASURES[measure] || MEASURES.reps).label.toLowerCase())}</span> for each set</div>
-      <div class="strow-hdr"><div>Set</div><div>Weight (${esc(state.settings.unit)})</div><div id="exAmountHdr">${esc((MEASURES[measure] || MEASURES.reps).header)}</div><div></div></div>
+      <div class="strow-hdr"><div>Set</div><div>Weight (${esc(state.settings.unit)})</div><div id="exAmountHdr">${esc((MEASURES[measure] || MEASURES.reps).header)}</div><div>Drop</div><div></div></div>
       <div id="exRows">${planRows(e)}</div>
       <div class="btn-row" style="margin:2px 0 8px">
         <button type="button" class="btn sm" id="exAddRow">+ Add set</button>
         <button type="button" class="btn sm ghost" id="exCopyDown" title="Copy set 1 into every set">Copy set 1 down</button>
       </div>
-      <p class="hint" style="margin-top:0">Leave the weight blank for an unloaded set.</p>
+      <p class="hint" style="margin-top:0">Leave the weight blank for an unloaded set.
+        Tap <b>&#8595;</b> to make a row a <b>drop</b> of the row above it &mdash; strip the weight
+        and keep going, and the app will not start a rest before it.</p>
     </div>
 
     <div id="exIntervals" ${kind === 'intervals' ? '' : 'hidden'}>
@@ -153,7 +157,10 @@ export function wireExerciseForm(modal) {
 
   const renumber = () => {
     const all = [...rows.querySelectorAll('[data-strow]')];
-    all.forEach((row, i) => { row.querySelector('.idx').textContent = String(i + 1); });
+    // same numbering the session card uses, so the plan and the workout agree:
+    // a drop takes its parent's number with an arrow, not the next number
+    const labels = setLabels(all.map((row) => ({ drop: row.dataset.drop === '1' })));
+    all.forEach((row, i) => { row.querySelector('.idx').textContent = labels[i]; });
     modal.querySelector('#exCopyDown').hidden = all.length < 2;
   };
 
@@ -222,6 +229,18 @@ export function wireExerciseForm(modal) {
   });
 
   rows.addEventListener('click', (ev) => {
+    const dropBtn = ev.target.closest('[data-strow-drop]');
+    if (dropBtn) {
+      const row = dropBtn.closest('[data-strow]');
+      const on = row.dataset.drop !== '1';
+      // row 1 has nothing above it to be a drop OF
+      if (on && !row.previousElementSibling) return;
+      row.dataset.drop = on ? '1' : '0';
+      row.classList.toggle('isdrop', on);
+      dropBtn.classList.toggle('on', on);
+      renumber();
+      return;
+    }
     const btn = ev.target.closest('[data-strow-del]');
     if (!btn) return;
     const all = rows.querySelectorAll('[data-strow]');
@@ -268,6 +287,7 @@ export function readExerciseForm(v, modal = null) {
   const raw = rowEls.map((row) => ({
     weight: num(row.querySelector('[data-stf="w"]').value),
     reps: row.querySelector('[data-stf="r"]').value,
+    drop: row.dataset.drop === '1',
   }));
   const parsed = parseSetTargets(
     raw.filter((t) => t.weight !== null || String(t.reps).trim() !== ''), base.measure,
@@ -283,8 +303,12 @@ export function readExerciseForm(v, modal = null) {
 
   // All sets identical? Store the simpler uniform target so the summary reads
   // "3 × 8 @ 15 kg" instead of repeating the same row three times.
+  //
+  // A drop anywhere blocks this: a uniform target has no room to say which row
+  // is a drop, so collapsing would silently throw the drop away. Two rows with
+  // the same numbers where one is a drop are not the same row.
   const first = parsed[0];
-  const allSame = parsed.every((t) => t.weight === first.weight
+  const allSame = !parsed.some((t) => t.drop) && parsed.every((t) => t.weight === first.weight
     && t.repsMin === first.repsMin && t.repsMax === first.repsMax);
   if (allSame) {
     return {

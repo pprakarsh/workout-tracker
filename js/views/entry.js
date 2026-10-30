@@ -2,11 +2,14 @@
 // the read-only History view) plus the actions that belong to it.
 import {
   state, findEntry, addSet, deleteSet, updateSet, toggleSetDone, toggleSkip,
-  removeSessionEntry, moveEntryNext, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
+  removeSessionEntry, moveEntryNext, moveSessionEntry, updateSessionEntry, entryStatus,
   addSessionEntry, working, editingPast, plannedSet, fillPlannedSets,
   setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
-  setIsLoggable, setBlocker, setEffort, startRestForSet, stopRest, startHold, swapEntryExercise,
+  setIsLoggable, setBlocker, setEffort, swapEntryExercise, addDropSet, nextDropAfter,
 } from '../store.js';
+import {
+  startRest, startRestForSet, stopRest, startHold, startDropNow,
+} from '../clockstore.js';
 import { findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { readTimeDom } from '../timefield.js';
@@ -46,6 +49,18 @@ function altRow(e) {
           title="Do ${esc(n)} instead, and fill in from its own last session">${esc(n)}</button>`).join('')}
       <span class="tiny dim">machine taken? swap it</span>
     </div>`;
+}
+
+/**
+ * Can a drop be added right now? Only onto a working set that is not already
+ * followed by one -- a drop of a drop is a third stage, which the plan form can
+ * express but is not what this one-tap button is for.
+ */
+function dropAddable(e) {
+  if (e.type !== 'lift') return false;
+  const sets = e.sets || [];
+  const last = [...sets].reverse().find((s) => !s.warmup);
+  return !!last;
 }
 
 function lastRefHtml(e) {
@@ -132,7 +147,7 @@ function setRow(e, s, label, workingIdx, allowRest) {
   const planned = plan ? fmtAmountRange(plan.repsMin, plan.repsMax, m.key) : '';
   const rPh = planned || m.placeholder;
   return `
-    <div class="set-row ${rowClass()} ${s.done ? 'done' : ''} ${s.warmup ? 'warm' : ''}"
+    <div class="set-row ${rowClass()} ${s.done ? 'done' : ''} ${s.warmup ? 'warm' : ''} ${s.drop ? 'drop' : ''}"
          data-entry="${e.id}" data-set="${s.id}">
       <button type="button" class="idx" data-action="set-warmup" data-entry="${e.id}" data-set="${s.id}"
               title="${s.warmup ? 'Make this a working set' : 'Mark as a warmup set'}"
@@ -177,6 +192,11 @@ function confirmBar(e, allowRest) {
   const label = labels[(e.sets || []).indexOf(s)];
   const m = measureOf(e);
   const blocker = setBlocker(s, m.key);
+  // Is a drop stage waiting after this set? If so this tap must NOT start a
+  // rest, and the button has to say so BEFORE it is tapped -- that is the whole
+  // difference between a drop set that works and one that becomes two sets.
+  const drop = allowRest ? nextDropAfter(e.id, s.id) : null;
+  const dropSub = drop ? ` &mdash; then DROP to ${esc(loadLabel(drop))}, no rest` : '';
   if (blocker === 'effort') {
     return `
       <button type="button" class="confirm needs" data-action="set-effort-then"
@@ -196,9 +216,12 @@ function confirmBar(e, allowRest) {
       </button>`;
   }
   return `
-    <button type="button" class="confirm" data-action="set-confirm" data-entry="${e.id}" data-set="${s.id}">
-      <span class="big">&#10003;&nbsp; ${loadLabel(s) === '—' && m.key !== 'reps' ? '' : `${esc(loadLabel(s))} &times; `}${esc(fmtAmount(s.reps, m.key))}</span>
-      <span class="sub">set ${esc(label)}${allowRest ? ' &mdash; logs it and starts rest' : ' &mdash; log it'}</span>
+    <button type="button" class="confirm ${drop ? 'todrop' : ''} ${s.drop ? 'isdrop' : ''}"
+            data-action="set-confirm" data-entry="${e.id}" data-set="${s.id}">
+      <span class="big">&#10003;&nbsp; ${loadLabel(s) === '—' && m.key !== 'reps' ? `${esc(fmtAmount(s.reps, m.key))}` : `${esc(loadLabel(s))} &times; ${esc(fmtAmount(s.reps, m.key))}`}</span>
+      <span class="sub">${s.drop ? `drop ${esc(label)}` : `set ${esc(label)}`}${drop ? dropSub
+    : allowRest ? (s.drop ? ' &mdash; logs it, then rest' : ' &mdash; logs it and starts rest')
+      : ' &mdash; log it'}</span>
     </button>`;
 }
 
@@ -369,6 +392,9 @@ function liftBody(e, allowRest) {
     <div class="set-foot">
       <button type="button" class="btn sm ghost" data-action="set-add" data-entry="${e.id}">+ Extra set</button>
       <button type="button" class="btn sm ghost" data-action="set-add-warmup" data-entry="${e.id}">+ Warmup</button>
+      ${dropAddable(e) ? `<button type="button" class="btn sm ghost" data-action="set-add-drop"
+              data-entry="${e.id}" title="Strip the weight and keep going, with no rest"
+              >&#8595; Drop set</button>` : ''}
       ${missing > 0 ? `<button type="button" class="btn sm" data-action="set-fill" data-entry="${e.id}">+ ${missing} planned</button>` : ''}
       ${sets.length ? `<button type="button" class="btn sm ghost" data-action="set-del-last" data-entry="${e.id}">− Remove last</button>` : ''}
     </div>
@@ -449,6 +475,25 @@ export const entryActions = {
 
   'set-add-warmup': async ({ entry }) => { await addSet(entry, { warmup: true }); },
 
+  /**
+   * Add a drop stage, one tap, onto the last working set.
+   *
+   * Deciding to drop usually happens at the moment the bar stops moving, which
+   * is the worst possible time to go looking for the exercise editor.
+   */
+  'set-add-drop': async ({ entry }) => {
+    const e = findEntry(entry);
+    const sets = e?.sets || [];
+    const onto = [...sets].reverse().find((s) => !s.warmup);
+    if (!onto) { toast('Add a working set first'); return; }
+    const made = await addDropSet(entry, onto.id);
+    if (made) {
+      toast(made.weight !== null
+        ? `Drop added at ${loadLabel(made)} — edit it if that is not the plate change`
+        : 'Drop added — no rest before it', 4200);
+    }
+  },
+
   'set-warmup': async ({ entry, set }) => { await toggleWarmup(entry, set); },
 
   'set-bw': async ({ entry, set }) => {
@@ -482,6 +527,11 @@ export const entryActions = {
     if (!target) return;
     if (!target.done) await toggleSetDone(entry, target.id);
     if (editingPast()) return;            // no clock on a workout already done
+    // A drop stage waiting after this set means NO rest. Starting a two-minute
+    // countdown here would be the app telling you to do the opposite of the
+    // thing you planned, so the drop prompt takes the bar instead.
+    const drop = nextDropAfter(entry, target.id);
+    if (drop) { await startDropNow(entry, drop.id); return; }
     await startRestForSet(entry, target.id);
   },
 
