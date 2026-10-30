@@ -202,6 +202,22 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 }
 .hdr-btn:active{background:var(--bg3)}
 
+/* effort chips on the card, and the unticked-set hint ------------------- */
+.effbar{
+  border:1px solid var(--line);border-radius:11px;padding:7px 9px;margin:8px 0 0;
+  background:var(--bg2);
+}
+.effbar.need{border-color:var(--warn)}
+.effrow{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.effrow+.effrow{margin-top:5px}
+.effrow .tiny{min-width:30px}
+.unticked{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;
+  border:1px dashed var(--warn);border-radius:10px;padding:7px 9px;
+}
+.unticked .tiny{color:var(--warn);flex:1;min-width:0}
+.chip.warn{border-color:var(--warn);color:var(--warn)}
+
 /* split time fields: h / m / s, no colon to type ------------------------ */
 .tf-field{display:block}
 .tf-row{display:flex;align-items:center;gap:6px}

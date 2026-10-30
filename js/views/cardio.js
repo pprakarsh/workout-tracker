@@ -7,10 +7,10 @@
 // Design rule for this screen: never make the user visit six cards to record
 // one treadmill block. The pattern is the unit of logging; individual rounds
 // are there for the exceptions.
+import { state, findEntry } from '../store.js';
 import {
-  state, findEntry, updateLog, updateLeg, logAllRounds, toggleLeg, resetLeg,
-  setIntervalPlan, toggleRounds,
-} from '../store.js';
+  updateLog, updateLeg, logAllRounds, toggleLeg, resetLeg, setIntervalPlan, toggleRounds,
+} from '../cardiostore.js';
 import {
   isIntervals, patternText, totalsText, byRound, parseIntervals,
   parsePace, fmtPace, intervalSummary, roundLines,

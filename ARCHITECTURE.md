@@ -24,6 +24,7 @@ js/cardio.js        run maths: pace arithmetic, the interval pattern, round expa
 js/measure.js       what a set is measured in: reps, time (holds) or distance (carries)
 js/plan.js          the 10-day plan: day keys, the window, and what a day means
 js/planstore.js     writes for the plan -- the mirror of queries.js
+js/cardiostore.js   writes for a cardio log: the run's numbers and a block's rounds
 js/trends.js        progress analysis: e1RM, per-session series, PRs, weekly totals
 js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
 js/timefield.js     a duration as h/m/s boxes, so no colon is ever typed. Markup only
@@ -309,6 +310,18 @@ Invariants worth knowing:
   because on a treadmill pace is the dial you hold while the time changes.
 - A leg marked `edited` was changed by hand, which exempts it from a later edit of the pattern.
   "Round 4 was slower" has to survive "the plan was actually 1:15 throughout" (`reconcileLegs`).
+- **A set will not log until effort is ANSWERED, and "don't know" is an answer.** `requireEffort`
+  (default on) adds `effort` to the reasons `setBlocker` can give. `effortUnknown` exists because a
+  null RPE is ambiguous — three months later it cannot tell you whether the set was easy or you
+  forgot to fill it in — and an explicit unknown preserves that difference. The gate follows
+  `settings.effortScale`, so someone logging RIR only is never asked for an RPE they do not use.
+  The chips live on the card as well as in the rest panel: the rest panel only helps if you are
+  resting, and a set logged without starting the clock had nothing but a 48px numeric column.
+- **A bodyweight set's added load defaults to 0, not blank.** An empty box reads as "no
+  information" when the answer is almost always zero, and showing 0 is what makes it obvious the
+  field is there and editable. `toggleBodyweight` translates rather than carries: going to
+  bodyweight the weight becomes 0 (keeping the 60 kg you were pressing would claim a 60 kg weighted
+  pull-up), and coming back a 0 reverts to null, since 0 is not an external weight anyone lifts.
 - **Pre-filling makes a filled row and a recorded row look identical, so finishing warns about the
   difference.** Every row opens pre-filled, which is what makes logging a confirmation rather than
   typing — but an unconfirmed row contributes to nothing: not History, not the exports, not Trends,

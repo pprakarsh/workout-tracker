@@ -144,6 +144,8 @@ export function normalizeRoutine(raw = {}) {
 
 export const blankSet = (unit, warmup = false) => ({
   id: uid('s'), weight: null, unit, reps: null, rpe: null, rir: null,
+  // answered "I do not know" rather than left blank -- see effortAnswered
+  effortUnknown: false,
   // bodyweight: the load is your own body. `weight` then means ADDED load
   // (a belt, a dumbbell between the feet) and may stay null for plain BW.
   bodyweight: false,
@@ -263,6 +265,12 @@ export function materializePlan(entry, prior = null) {
       set.weight = plan ? (plan.weight ?? null) : null;
       set.reps = plan ? (plan.repsMin ?? plan.repsMax ?? null) : null;
     }
+    // A bodyweight set's `weight` is ADDED load, so an empty box reads as "no
+    // information" when the answer is almost always zero. Defaulting it to 0
+    // makes the field obviously present and obviously editable -- which is how
+    // you discover you can log a weighted pull-up at all. loadLabel still shows
+    // plain "BW", because 0 added is no load added.
+    if (set.bodyweight && set.weight === null) set.weight = 0;
     entry.sets.push(set);
   }
   return entry;

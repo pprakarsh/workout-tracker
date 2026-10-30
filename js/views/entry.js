@@ -3,16 +3,17 @@
 import {
   state, findEntry, addSet, deleteSet, updateSet, toggleSetDone, toggleSkip,
   removeSessionEntry, moveEntryNext, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
-  addSessionEntry, updateLog, working, editingPast, plannedSet, fillPlannedSets,
+  addSessionEntry, working, editingPast, plannedSet, fillPlannedSets,
   parseSetTargets, getRoutine, saveRoutine, normalizeEntry,
   setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
-  setIsLoggable, startRestForSet, stopRest,
+  setIsLoggable, setBlocker, setEffort, startRestForSet, stopRest,
 } from '../store.js';
 import { exerciseLibrary, findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
 import { builderHtml, wireBuilder, DEFAULT_LEGS } from './cardio.js';
 import { readTimeDom } from '../timefield.js';
+import { updateLog } from '../cardiostore.js';
 import {
   MEASURES, measureOf, fmtAmount, fmtAmountRange, parseAmount, amountFieldValue, parseMeasure,
 } from '../measure.js';
@@ -146,6 +147,14 @@ function confirmBar(e, allowRest) {
   const labels = setLabels(e.sets || []);
   const label = labels[(e.sets || []).indexOf(s)];
   const m = measureOf(e);
+  const blocker = setBlocker(s, m.key);
+  if (blocker === 'effort') {
+    return `
+      <div class="confirm needs" data-noaction>
+        <span class="big">&#9888;&nbsp; Effort needed for set ${esc(label)}</span>
+        <span class="sub">tap a number above, or <b>don't know</b></span>
+      </div>`;
+  }
   if (!setIsLoggable(s, m.key)) {
     // No numbers yet. Start the clock anyway: the rest is time-critical and the
     // weight is not -- it can be typed during the rest.
@@ -214,6 +223,68 @@ function setHeader(e) {
       </div>`;
 }
 
+/**
+ * Effort as fat chips for the ACTIVE set, on the card itself.
+ *
+ * The rest panel has had these for a while, but that only helps if you are
+ * resting. A set logged without starting the clock, or corrected afterwards,
+ * had only the 48px numeric column -- so effort went unlogged. These are the
+ * same chips, available whenever the card is.
+ *
+ * "?" is not a skip. It writes `effortUnknown`, which is an ANSWER: it keeps
+ * "I did not judge this one" distinguishable from "I forgot", which a blank
+ * cannot do.
+ */
+function effortBar(e) {
+  const s = activeSet(e);
+  if (!s) return '';
+  const scale = state.settings.effortScale;
+  const need = state.settings.requireEffort && setBlocker(s, measureOf(e).key) === 'effort';
+  const row = (field, label, values) => `
+    <div class="effrow">
+      <span class="tiny">${label}</span>
+      ${values.map((n) => `<button type="button" class="chip ${s[field] === n ? 'on' : ''}"
+        data-action="set-effort" data-entry="${e.id}" data-set="${s.id}"
+        data-field="${field}" data-value="${n}">${n}</button>`).join('')}
+    </div>`;
+  return `
+    <div class="effbar${need ? ' need' : ''}" data-effbar="${e.id}">
+      ${scale !== 'rir' ? row('rpe', 'RPE', [6, 7, 8, 9, 10]) : ''}
+      ${scale === 'rir' || scale === 'both' ? row('rir', 'RIR', [0, 1, 2, 3, 4]) : ''}
+      <div class="effrow">
+        <button type="button" class="chip ${s.effortUnknown ? 'on' : ''}"
+                data-action="set-effort" data-entry="${e.id}" data-set="${s.id}"
+                data-field="unknown" data-value="1"
+                title="Record that you did not judge this set">don't know</button>
+        ${need ? '<span class="tiny warnmsg">needed before this set can be logged</span>' : ''}
+      </div>
+    </div>`;
+}
+
+/**
+ * Sets that have numbers in them but were never ticked, named on the card.
+ *
+ * The finish prompt already catches these, but by then the workout is over and
+ * you are guessing. Saying it on the card, while the exercise is in front of
+ * you, is the difference between remembering and reconstructing.
+ */
+function untickedHint(e) {
+  const labels = setLabels(e.sets || []);
+  const loose = (e.sets || [])
+    .map((x, i) => ({ x, label: labels[i] }))
+    .filter(({ x }) => !x.done && !x.warmup && (x.reps !== null || x.weight !== null));
+  if (!loose.length) return '';
+  const ready = loose.filter(({ x }) => setIsLoggable(x, measureOf(e).key));
+  return `
+    <div class="unticked">
+      <span class="tiny">Set${loose.length === 1 ? '' : 's'} ${loose.map((l) => l.label).join(', ')}
+        filled in but not logged</span>
+      ${ready.length ? `<button type="button" class="chip warn" data-action="set-tick-loose"
+        data-entry="${e.id}">Log ${ready.length === loose.length ? 'them' : `${ready.length}`}</button>`
+    : '<span class="tiny dim">finish the row first</span>'}
+    </div>`;
+}
+
 function liftBody(e, allowRest) {
   const sets = e.sets || [];
   const labels = setLabels(sets);
@@ -231,7 +302,9 @@ function liftBody(e, allowRest) {
       ${rows || '<p class="hint" style="margin:2px 0 8px">No sets planned. Add one below.</p>'}
     </div>
     ${stepBar(e)}
+    ${effortBar(e)}
     ${confirmBar(e, allowRest)}
+    ${untickedHint(e)}
     <div class="set-foot">
       <button type="button" class="btn sm ghost" data-action="set-add" data-entry="${e.id}">+ Extra set</button>
       <button type="button" class="btn sm ghost" data-action="set-add-warmup" data-entry="${e.id}">+ Warmup</button>
@@ -724,13 +797,22 @@ export const entryActions = {
     });
   },
 
+  // Shared by the rest panel's chips and the card's. `field` is 'rpe', 'rir',
+  // or 'unknown' -- the last writes an explicit "I did not judge this set",
+  // which is an ANSWER and keeps that case distinguishable from a blank.
   'set-effort': async ({ entry, set, field, value }) => {
     const e = findEntry(entry);
     const target = e?.sets?.find((x) => x.id === set);
     if (!target) return;
+    if (field === 'unknown') {
+      // tapping it again takes the answer back, rather than being one-way
+      await setEffort(entry, set, target.effortUnknown
+        ? { rpe: null, rir: null } : { unknown: true });
+      return;
+    }
     const n = Number(value);
     // tapping the same chip clears it, so a mis-tap is one tap to fix
-    await updateSet(entry, set, { [field]: target[field] === n ? null : n });
+    await setEffort(entry, set, { [field]: target[field] === n ? null : n });
   },
 
   'set-rest-clear': async ({ entry, set }) => {
@@ -750,6 +832,20 @@ export const entryActions = {
   },
 
   'set-done': async ({ entry, set }) => { await toggleSetDone(entry, set); },
+
+  /** Tick every set on this card that is filled in and ready. */
+  'set-tick-loose': async ({ entry }) => {
+    const e = findEntry(entry);
+    if (!e) return;
+    let n = 0;
+    for (const x of (e.sets || [])) {
+      if (!x.done && !x.warmup && setIsLoggable(x, measureOf(e).key)) {
+        await toggleSetDone(e.id, x.id);
+        n++;
+      }
+    }
+    toast(n ? `Logged ${n} set${n === 1 ? '' : 's'}` : 'Nothing ready to log');
+  },
 
   // You press this when the set ends; it marks the set done and starts the clock.
   'rest-start': async ({ entry, set }) => {

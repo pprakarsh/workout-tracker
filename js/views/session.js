@@ -3,8 +3,9 @@
 import {
   state, entryStatus, sessionProgress, sessionVolume, setCurrent, finishSession,
   discardSession, saveSessionBackToRoutine, updateSessionMeta, blockAt, working,
-  findEntry, updateLog, logAllRounds, toggleSetDone,
+  findEntry, toggleSetDone,
 } from '../store.js';
+import { updateLog, logAllRounds } from '../cardiostore.js';
 import { unconfirmedWork } from '../queries.js';
 import { esc, fmtDur, fmtNum, num } from '../util.js';
 import { targetLine, logSummary } from '../format.js';

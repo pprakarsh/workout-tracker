@@ -56,6 +56,7 @@ async function type(sel, value) {
 }
 
 const store = await import(`${APP}/js/store.js`);
+const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const cardio = await import(`${APP}/js/cardio.js`);
 const planLib = await import(`${APP}/js/plan.js`);
 const planStore = await import(`${APP}/js/planstore.js`);
@@ -63,6 +64,10 @@ const xi = await import(`${APP}/js/exportimport.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
 await import(`${APP}/js/app.js`);   // boots itself
 await sleep(150);
+// The sections below predate the require-an-effort-answer rule and assert the
+// load/amount rules on their own, so the gate is off by default here. It has
+// its own section further down that switches it on.
+await store.updateSettings({ requireEffort: false });
 
 section('boot');
 ok(store.state.ready, 'store initialised');
@@ -707,7 +712,7 @@ ok(ivE.legs.length === 2 && ivE.rounds === 8,
   `the Tabata block was saved (${ivE.legs.length} legs x ${ivE.rounds})`);
 ok(ivE.log.legs.length === 16, `and expanded to 16 rows (${ivE.log.legs.length})`);
 // put the original pattern back for the tests that follow
-await store.setIntervalPlan(ivE.id, cardio.parseIntervals('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6'));
+await cardioStore.setIntervalPlan(ivE.id, cardio.parseIntervals('1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6'));
 await sleep(40);
 
 section('one tap logs every round');
@@ -1133,6 +1138,71 @@ await click('[data-action="trend-back"]');
 ok(store.state.nav.trendName === null, 'back returns to the overview');
 ok(view().includes('Sets per week'), 'which is the overview again');
 
+section('effort chips are on the card, not only in the rest panel');
+await store.updateSettings({ requireEffort: true, effortScale: 'rpe' });
+await xi.importFromText(JSON.stringify({
+  name: 'Effort UI Check',
+  entries: [{ name: 'EU Press', sets: 2, reps: 5, weight: 60 }],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const euR = store.state.routines.find((r) => r.name === 'Effort UI Check');
+await click(`[data-action="routine-start"][data-id="${euR.id}"]`, 'Start');
+const euE = store.state.active.entries[0];
+ok($('.effbar') !== null, 'the chips are on the card itself');
+ok($('.effbar').classList.contains('need'), 'flagged because the set still owes an answer');
+ok($$('.effbar [data-action="set-effort"][data-field="rpe"]').length === 5,
+  'five RPE chips, no typing into a 48px box');
+ok($('.effbar [data-field="unknown"]') !== null, "and a don't-know chip");
+ok($$('.effbar [data-field="rir"]').length === 0, 'no RIR chips, since RPE is the scale in use');
+
+section('a set cannot be confirmed until effort is answered');
+ok($('[data-action="set-confirm"]') === null, 'no confirm button yet');
+ok(/Effort needed/i.test(view()), 'the bar says what is missing');
+ok(/don.t know/i.test(view()), 'and points at the escape hatch');
+
+section('tapping a chip unblocks it, and tapping again clears it');
+await click('.effbar [data-field="rpe"][data-value="8"]');
+ok(euE.sets[0].rpe === 8, 'the RPE is recorded');
+ok($('[data-action="set-confirm"]') !== null, 'and the set can now be confirmed');
+ok(!$('.effbar').classList.contains('need'), 'the bar stops warning');
+await click('.effbar [data-field="rpe"][data-value="8"]');
+ok(euE.sets[0].rpe === null, 'tapping the same chip clears it, so a mis-tap is one tap to fix');
+ok($('[data-action="set-confirm"]') === null, 'and it is blocked again');
+
+section("don't know is an answer, not a skip");
+await click('.effbar [data-field="unknown"]');
+ok(euE.sets[0].effortUnknown === true, 'it is recorded as an explicit unknown');
+ok(euE.sets[0].rpe === null, 'without inventing a number');
+ok($('[data-action="set-confirm"]') !== null, 'the set is loggable');
+await click('[data-action="set-confirm"]');
+await sleep(50);
+ok(euE.sets[0].done === true, 'and it logs');
+
+section('sets filled in but not ticked are called out on the card');
+await click('[data-action="rest-stop"]');
+await sleep(50);
+ok(euE.sets[1].weight === 60 && euE.sets[1].reps === 5, 'set 2 is pre-filled');
+ok(euE.sets[1].done === false, 'and unticked');
+ok($('.unticked') !== null, 'so the card says so');
+ok(/filled in but not logged/i.test($('.unticked').textContent), 'in plain words');
+ok(/finish the row first/i.test($('.unticked').textContent),
+  'and says what is missing while it still owes an effort answer');
+await click('.effbar [data-field="rpe"][data-value="9"]');
+await sleep(40);
+ok($('.unticked [data-action="set-tick-loose"]') !== null,
+  'once it is ready, the hint offers to log it');
+await click('[data-action="set-tick-loose"]');
+await sleep(60);
+ok(euE.sets[1].done === true, 'one tap logs it');
+ok($('.unticked') === null, 'and the hint goes away');
+
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+await store.updateSettings({ requireEffort: false });
+
 section('a run is confirmed with the same big bar a lift uses');
 await xi.importFromText(JSON.stringify({
   name: 'Confirm Run Check',
@@ -1517,8 +1587,10 @@ ok(/BW . 8/.test($('.confirm .big').textContent.replace(/\s+/g, ' ')),
   `reading as BW x 8 (${$('.confirm .big').textContent.trim()})`);
 await click('[data-action="set-confirm"]', 'confirm the BW set');
 const bwSet = store.state.active.entries[1].sets[0];
-ok(bwSet.done === true && bwSet.bodyweight === true && bwSet.weight === null,
-  'logged as bodyweight with no load');
+ok(bwSet.done === true && bwSet.bodyweight === true && bwSet.weight === 0,
+  `logged as bodyweight with zero added load (${bwSet.weight})`);
+ok($('.set-row input[data-f="weight"]').value === '0',
+  'and the added-load box shows 0, so it is obvious you can put a number in it');
 await click('#restBar [data-action="rest-stop"]', 'Stop');
 
 // row 2 is now the active set; adding load to it must read as BW + added

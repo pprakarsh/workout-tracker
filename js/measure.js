@@ -152,5 +152,27 @@ export function setIsLoggableFor(set, measure = 'reps') {
   return set.bodyweight || set.weight !== null;
 }
 
+/**
+ * Has effort been answered for this set? Either a number, or an explicit "I do
+ * not know".
+ *
+ * `effortUnknown` exists so the question can be ANSWERED rather than skipped.
+ * A null RPE is ambiguous -- it could mean "easy set, did not bother" or "forgot
+ * to fill it in" -- and three months later you cannot tell which. An explicit
+ * unknown is a real answer and preserves the difference.
+ *
+ * Which scale counts follows settings.effortScale, so someone logging RIR only
+ * is never asked for an RPE they do not use.
+ */
+export function effortAnswered(set, scale = 'rpe') {
+  if (!set) return false;
+  if (set.effortUnknown) return true;
+  const hasRpe = set.rpe !== null && set.rpe !== undefined;
+  const hasRir = set.rir !== null && set.rir !== undefined;
+  if (scale === 'rir') return hasRir;
+  if (scale === 'both') return hasRpe || hasRir;
+  return hasRpe;
+}
+
 /** Does this measure contribute to tonnage? weight x seconds is not volume. */
 export const countsTowardsVolume = (measure = 'reps') => measure === 'reps' || !measure;

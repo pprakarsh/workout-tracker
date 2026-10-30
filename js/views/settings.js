@@ -54,6 +54,13 @@ export function render() {
       <b>targets</b> starts you at what the routine asks for.
       <br><span class="dim">Either way the NUMBER of sets always comes from the routine, so cutting
       a session short never shrinks the plan. Your routine is never edited by logging.</span>`)}
+      ${sel('requireEffort', s.requireEffort === false ? '0' : '1', [
+    ['1', 'Yes — ask before a set can be ticked'],
+    ['0', 'No — effort is optional'],
+  ], 'Require an effort answer', `With this on, a set will not log until you answer how hard it was.
+      <b>Don't know</b> counts as an answer &mdash; the point is that the question was answered
+      rather than skipped, because three months later a blank cannot tell you whether the set was
+      easy or you simply forgot.`)}
       ${sel('effortScale', s.effortScale, [
     ['rpe', 'RPE only'], ['rir', 'RIR only'], ['both', 'Both'],
   ], 'Effort logged per set', `RPE is how hard a set felt (1-10). RIR is how many reps you had
@@ -121,7 +128,7 @@ export async function handleSettingsField(target) {
   if (!field) return;
   const v = target.value;
   const patch = {};
-  if (field === 'beep' || field === 'keepAwake') patch[field] = v === '1';
+  if (field === 'beep' || field === 'keepAwake' || field === 'requireEffort') patch[field] = v === '1';
   else if (field === 'defaultRest') patch[field] = parseDur(v) ?? 120;
   else if (field === 'weightStep') patch[field] = Math.abs(Number(v)) || 2.5;
   else patch[field] = v;

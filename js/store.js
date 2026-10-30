@@ -2,7 +2,7 @@
 import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
 import { uid, num, parseReps, parseDur } from './util.js';
 import { resolveRun, isIntervals, plannedLegs, reconcileLegs, cardioLogged } from './cardio.js';
-import { setIsLoggableFor, countsTowardsVolume } from './measure.js';
+import { setIsLoggableFor, countsTowardsVolume, effortAnswered } from './measure.js';
 import { normalizePlan, prunePlan } from './plan.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
@@ -24,6 +24,9 @@ export const DEFAULT_SETTINGS = {
   keepAwake: true,       // hold a screen wake lock while a workout is running
   weightStep: 2.5,       // the +/- stepper increment for weight
   effortScale: 'rpe',    // 'rpe' | 'rir' | 'both' -- which effort column(s) to log
+  // require an effort answer before a set can be ticked. An explicit "don't
+  // know" counts -- the point is that the question was answered, not skipped.
+  requireEffort: true,
   // 'plan' fills new sets from the routine's targets; 'last' fills them from
   // what you actually did last time. The SET COUNT always comes from the plan.
   prefillFrom: 'last',
@@ -176,7 +179,7 @@ export async function persistSession(session) {
 }
 
 /** Persist whatever session is being edited, optionally without re-rendering. */
-async function touch({ silent = false } = {}) {
+export async function touch({ silent = false } = {}) {
   const s = working();
   if (!s) return;
   await persistSession(s);
@@ -578,11 +581,22 @@ export async function undoSet(entryId, setId) {
   return set;
 }
 
+/**
+ * Flip a set between external load and bodyweight.
+ *
+ * `weight` means a different thing on each side, so it is translated rather
+ * than carried across. Going TO bodyweight it becomes added load, which is 0
+ * until you add something -- keeping the 60 kg you were pressing would claim a
+ * 60 kg weighted pull-up. Coming BACK it becomes external load, where 0 is not
+ * a weight anyone lifts, so it reverts to "nothing entered".
+ */
 export async function toggleBodyweight(entryId, setId) {
   const e = findEntry(entryId);
   const set = e?.sets?.find((x) => x.id === setId);
   if (!set) return;
   set.bodyweight = !set.bodyweight;
+  if (set.bodyweight) set.weight = 0;
+  else if (set.weight === 0) set.weight = null;
   await touch();
 }
 
@@ -671,96 +685,6 @@ export async function markSessionFinished(id) {
   return s;
 }
 
-/** Show or hide the per-round detail of one interval block. */
-export async function toggleRounds(entryId) {
-  if (state.openRounds.has(entryId)) state.openRounds.delete(entryId);
-  else state.openRounds.add(entryId);
-  emit();
-}
-
-/**
- * Edit a run's numbers. When one of {distance, duration, pace} changes the
- * others are brought back into line by resolveRun, so the three can never
- * disagree -- enter a time and a pace and the distance follows.
- */
-export async function updateLog(entryId, patch, opts) {
-  const e = findEntry(entryId);
-  if (!e || e.type !== 'cardio') return;
-  const anchor = ['pace', 'distance', 'duration'].find((k) => k in patch) || null;
-  const next = { ...e.log, ...patch };
-  e.log = anchor ? resolveRun(next, anchor) : next;
-  await touch(opts);
-}
-
-/**
- * Log the whole interval block in one tap: every round takes its planned
- * numbers. This is the point of the pattern -- a treadmill block is one thing
- * you did, not six things to visit. Tapping again clears the block.
- */
-export async function logAllRounds(entryId) {
-  const e = findEntry(entryId);
-  const legs = e?.log?.legs;
-  if (!legs || !legs.length) return 0;
-  const all = legs.every((x) => x.done);
-  legs.forEach((x) => { x.done = !all; });
-  e.log.done = !all;
-  e.log.completedAt = all ? null : Date.now();
-  await touch();
-  return all ? 0 : legs.length;
-}
-
-/** Tick or un-tick one leg of one round. */
-export async function toggleLeg(entryId, legId) {
-  const e = findEntry(entryId);
-  const leg = e?.log?.legs?.find((x) => x.id === legId);
-  if (!leg) return;
-  leg.done = !leg.done;
-  e.log.done = e.log.legs.some((x) => x.done);
-  e.log.completedAt = e.log.done ? (e.log.completedAt || Date.now()) : null;
-  await touch();
-}
-
-/**
- * Change one round's numbers. The leg is flagged `edited`, which exempts it
- * from a later edit of the pattern: "round 4 was slower" must survive "the plan
- * was actually 1:15 throughout".
- */
-export async function updateLeg(entryId, legId, patch, opts) {
-  const e = findEntry(entryId);
-  const leg = e?.log?.legs?.find((x) => x.id === legId);
-  if (!leg) return;
-  Object.assign(leg, patch, { edited: true });
-  await touch(opts);
-}
-
-/** Drop the hand-edit on one leg and take the planned numbers back. */
-export async function resetLeg(entryId, legId) {
-  const e = findEntry(entryId);
-  const leg = e?.log?.legs?.find((x) => x.id === legId);
-  if (!leg || !isIntervals(e)) return;
-  const plan = e.legs[leg.leg];
-  if (!plan) return;
-  Object.assign(leg, {
-    label: plan.label || '', duration: plan.duration ?? null, pace: plan.pace ?? null, edited: false,
-  });
-  await touch();
-}
-
-/**
- * Replace the interval pattern on a live entry, re-expanding the rounds. Ticks
- * are kept and hand-edited legs keep their own numbers; see reconcileLegs.
- * Pass legs: null to turn the block back into one plain run.
- */
-export async function setIntervalPlan(entryId, { legs, rounds }) {
-  const e = findEntry(entryId);
-  if (!e || e.type !== 'cardio') return;
-  e.legs = legs && legs.length ? legs : null;
-  e.rounds = e.legs ? Math.max(1, Math.round(rounds || 1)) : null;
-  e.log = { ...e.log, legs: e.legs ? reconcileLegs(e, e.log?.legs || []) : null };
-  const s = working();
-  if (s) s.modified = true;   // the session now diverges from its routine
-  await touch();
-}
 
 export async function updateSessionMeta(patch, opts) {
   const s = working();
@@ -963,5 +887,33 @@ export function sessionVolume(s) {
  * would make them impossible to tick -- see js/measure.js.
  */
 export function setIsLoggable(set, measure = 'reps') {
-  return setIsLoggableFor(set, measure);
+  if (!setIsLoggableFor(set, measure)) return false;
+  if (state.settings.requireEffort && !effortAnswered(set, state.settings.effortScale)) return false;
+  return true;
+}
+
+/** Why a set cannot be ticked yet: 'amount' | 'load' | 'effort' | null. */
+export function setBlocker(set, measure = 'reps') {
+  if (!set) return 'amount';
+  if (set.reps === null || set.reps === undefined) return 'amount';
+  if (!setIsLoggableFor(set, measure)) return 'load';
+  if (state.settings.requireEffort && !effortAnswered(set, state.settings.effortScale)) return 'effort';
+  return null;
+}
+
+/** Record an effort answer, including the explicit "don't know". */
+export async function setEffort(entryId, setId, { rpe, rir, unknown } = {}) {
+  const e = findEntry(entryId);
+  const set = e?.sets?.find((x) => x.id === setId);
+  if (!set) return;
+  if (unknown) {
+    set.effortUnknown = true;
+    set.rpe = null;
+    set.rir = null;
+  } else {
+    set.effortUnknown = false;
+    if (rpe !== undefined) set.rpe = rpe;
+    if (rir !== undefined) set.rir = rir;
+  }
+  await touch();
 }

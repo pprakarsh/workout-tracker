@@ -31,6 +31,7 @@ const ok = (cond, label) => {
 const section = (s) => console.log(`\n== ${s}`);
 
 const store = await import(`${APP}/js/store.js`);
+const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const nowView = await import(`${APP}/js/views/now.js`);
 const sessionView = await import(`${APP}/js/views/session.js`);
@@ -58,6 +59,10 @@ const renderAll = (label) => {
 
 section('init on an empty database');
 await store.init();
+// Most sections below predate the require-an-effort-answer rule and assert the
+// load/amount rules on their own, so the gate is off by default here and has
+// its own section that switches it on.
+await store.updateSettings({ requireEffort: false });
 ok(state.ready, 'store ready');
 ok(state.routines.length === 0 && state.sessions.length === 0, 'starts empty');
 renderAll('empty');
@@ -183,7 +188,7 @@ ok(state.active.modified === false, 'modified flag cleared after save-back');
 
 section('cardio logging');
 const cardio = s.entries.find((x) => x.type === 'cardio');
-await store.updateLog(cardio.id, { distance: 3.2, duration: 1020, avgHr: 152, maxHr: 171, elevation: 24, rpe: 7, note: 'easy', done: true });
+await cardioStore.updateLog(cardio.id, { distance: 3.2, duration: 1020, avgHr: 152, maxHr: 171, elevation: 24, rpe: 7, note: 'easy', done: true });
 ok(store.entryStatus(cardio) === 'done', 'cardio marked done');
 ok(fmt.pace(3.2, 1020, 'km') === '5:19/km', `pace computed: ${fmt.pace(3.2, 1020, 'km')}`);
 renderAll('with-data');
@@ -629,51 +634,51 @@ ok(store.blockAt(ivs.entries, ivs.entries.indexOf(iv)).length === 1,
 ok(fmt.logSummary(iv) === '', 'a pre-filled but unconfirmed block reports nothing');
 
 section('the whole block logs in one tap');
-const nLegs = await store.logAllRounds(iv.id);
+const nLegs = await cardioStore.logAllRounds(iv.id);
 ok(nLegs === 12, `one action logged all 12 legs (${nLegs})`);
 ok(iv.log.legs.every((lg) => lg.done), 'every leg ticked');
 ok(store.entryStatus(iv) === 'done', 'and the entry counts as done');
 ok(fmt.logSummary(iv) === '6 rounds \u00b7 18:30 \u00b7 3.375 km',
   `summarised as rounds, time and distance (${fmt.logSummary(iv)})`);
-ok(await store.logAllRounds(iv.id) === 0 && iv.log.legs.every((lg) => !lg.done),
+ok(await cardioStore.logAllRounds(iv.id) === 0 && iv.log.legs.every((lg) => !lg.done),
   'tapping again clears the block');
 
 section('one round can be corrected without touching the other five');
-await store.logAllRounds(iv.id);
+await cardioStore.logAllRounds(iv.id);
 const slow = iv.log.legs.find((lg) => lg.round === 4 && lg.leg === 0);
-await store.updateLeg(iv.id, slow.id, { duration: 108 });
+await cardioStore.updateLeg(iv.id, slow.id, { duration: 108 });
 ok(slow.duration === 108 && slow.edited === true, 'round 4 holds its own slower time');
 ok(iv.log.legs.filter((lg) => lg.leg === 0 && lg.duration === 95).length === 5,
   'the other five working legs are untouched');
 ok(fmt.logSummary(iv).includes('1 leg adjusted'), 'the summary says one leg was adjusted');
 
 section('fixing the pattern leaves a hand-edited round alone');
-await store.setIntervalPlan(iv.id, cardioLib.parseIntervals('1:40 @ 4:00/km + 1:30 walk @ 9:00/km x 6'));
+await cardioStore.setIntervalPlan(iv.id, cardioLib.parseIntervals('1:40 @ 4:00/km + 1:30 walk @ 9:00/km x 6'));
 ok(iv.log.legs.filter((lg) => lg.leg === 0 && lg.duration === 100).length === 5,
   'five working legs follow the new plan');
 const stillSlow = iv.log.legs.find((lg) => lg.round === 4 && lg.leg === 0);
 ok(stillSlow.duration === 108, `the edited round kept 1:48 (${stillSlow.duration}s)`);
 ok(iv.log.legs.every((lg) => lg.done), 'and nothing was un-ticked by the change');
-await store.resetLeg(iv.id, stillSlow.id);
+await cardioStore.resetLeg(iv.id, stillSlow.id);
 ok(stillSlow.duration === 100 && stillSlow.edited === false, 'it can be put back on plan');
 
 section('growing the round count keeps what is already logged');
-await store.setIntervalPlan(iv.id, cardioLib.parseIntervals('1:40 @ 4:00/km + 1:30 walk @ 9:00/km x 8'));
+await cardioStore.setIntervalPlan(iv.id, cardioLib.parseIntervals('1:40 @ 4:00/km + 1:30 walk @ 9:00/km x 8'));
 ok(iv.log.legs.length === 16, `8 rounds now (${iv.log.legs.length} legs)`);
 ok(iv.log.legs.filter((lg) => lg.done).length === 12, '12 legs stay logged, the new 4 do not');
 
 section('a straight run derives the third number from the other two');
 const jog = ivs.entries.find((e) => e.name === 'Warmup Jog');
-await store.updateLog(jog.id, { duration: 1800 });
-await store.updateLog(jog.id, { pace: 360 });
+await cardioStore.updateLog(jog.id, { duration: 1800 });
+await cardioStore.updateLog(jog.id, { pace: 360 });
 ok(jog.log.distance === 5, `30:00 at 6:00/km is 5 km (${jog.log.distance})`);
-await store.updateLog(jog.id, { distance: 4 });
+await cardioStore.updateLog(jog.id, { distance: 4 });
 ok(jog.log.pace === 450, `shortening it to 4 km repaces to 7:30/km (${jog.log.pace})`);
-await store.updateLog(jog.id, { duration: 2400 });
+await cardioStore.updateLog(jog.id, { duration: 2400 });
 ok(jog.log.pace === 450 && jog.log.distance === 5.333,
   `editing the time holds the pace and moves the distance (${jog.log.distance})`);
 ok(fmt.logSummary(jog) === '', 'still nothing logged until it is confirmed');
-await store.updateLog(jog.id, { done: true, completedAt: Date.now() });
+await cardioStore.updateLog(jog.id, { done: true, completedAt: Date.now() });
 ok(fmt.logSummary(jog) === '5.333 km \u00b7 40:00 \u00b7 7:30/km', `then it reads ${fmt.logSummary(jog)}`);
 
 section('an interval block saves back to its routine as one entry');
@@ -733,7 +738,7 @@ ok(fmt.logSummary(freshJog) === '', 'and it reports nothing');
 ok(xi.csvRows([freshS]).split('\n').length === 1, 'it produces no CSV row');
 ok(q.lastLogFor('Warmup Jog') === null, 'and does not become a "last time" reference');
 const fpBefore = store.dataFingerprint().loggedSets;
-await store.updateLog(freshJog.id, { done: true, completedAt: Date.now() });
+await cardioStore.updateLog(freshJog.id, { done: true, completedAt: Date.now() });
 ok(store.dataFingerprint().loggedSets === fpBefore + 1,
   'only confirming it counts towards the sync fingerprint');
 await store.discardSession();
@@ -1132,6 +1137,74 @@ const mixWk = tr.weeklyTotals([{
 ok(mixWk[0].sets === 2 && mixWk[0].volume === 500,
   `both sets counted, only the squat in volume (${mixWk[0].sets} sets, ${mixWk[0].volume} volume)`);
 
+section('a set cannot be ticked without an effort answer');
+await store.updateSettings({ requireEffort: true, effortScale: 'rpe' });
+const efR = await store.createRoutine({
+  name: 'Effort Gate', entries: [{ name: 'EG Press', sets: 3, reps: 5, weight: 60 }],
+});
+const efS = await store.startSession(efR.id);
+const efE = efS.entries[0];
+ok(efE.sets[0].weight === 60 && efE.sets[0].reps === 5, 'the numbers are there');
+ok(store.setIsLoggable(efE.sets[0], 'reps') === false, 'but it is not loggable yet');
+ok(store.setBlocker(efE.sets[0], 'reps') === 'effort', 'and the blocker says why');
+await store.setEffort(efE.id, efE.sets[0].id, { rpe: 8 });
+ok(store.setIsLoggable(efE.sets[0], 'reps') === true, 'an RPE unblocks it');
+ok(store.setBlocker(efE.sets[0], 'reps') === null, 'with nothing left blocking');
+
+section('"do not know" is a real answer, not a skipped one');
+await store.setEffort(efE.id, efE.sets[1].id, { unknown: true });
+ok(efE.sets[1].effortUnknown === true, 'the flag is set');
+ok(efE.sets[1].rpe === null, 'and no number is invented');
+ok(store.setIsLoggable(efE.sets[1], 'reps') === true, 'it unblocks the set');
+// this is the whole point: a blank RPE is ambiguous three months later, an
+// explicit unknown is not
+ok(store.setBlocker(efE.sets[2], 'reps') === 'effort',
+  'while a set left blank is still blocked, so the two cannot be confused');
+await store.setEffort(efE.id, efE.sets[1].id, { rpe: 9 });
+ok(efE.sets[1].effortUnknown === false && efE.sets[1].rpe === 9,
+  'answering properly later clears the unknown');
+
+section('the gate follows the effort scale in use');
+await store.updateSettings({ effortScale: 'rir' });
+ok(store.setBlocker(efE.sets[2], 'reps') === 'effort', 'RIR is required when RIR is the scale');
+await store.setEffort(efE.id, efE.sets[2].id, { rir: 2 });
+ok(store.setIsLoggable(efE.sets[2], 'reps') === true, 'and RIR satisfies it');
+await store.updateSettings({ effortScale: 'rpe' });
+ok(store.setIsLoggable(efE.sets[2], 'reps') === false,
+  'the same set is blocked again under RPE, since it has no RPE');
+await store.updateSettings({ effortScale: 'both' });
+ok(store.setIsLoggable(efE.sets[2], 'reps') === true, 'and "both" accepts either');
+
+section('the gate can be switched off entirely');
+await store.updateSettings({ requireEffort: false, effortScale: 'rpe' });
+const efS2 = await (async () => { await store.discardSession(); return store.startSession(efR.id); })();
+ok(store.setIsLoggable(efS2.entries[0].sets[0], 'reps') === true,
+  'with it off, numbers alone are enough again');
+ok(store.setBlocker(efS2.entries[0].sets[0], 'reps') === null, 'and nothing blocks');
+await store.discardSession();
+await store.deleteRoutine(efR.id);
+await store.updateSettings({ requireEffort: false });
+
+section('stopping rest does not tick a set that still owes an effort answer');
+await store.updateSettings({ requireEffort: true });
+const rgR = await store.createRoutine({
+  name: 'Rest Gate', entries: [{ name: 'RG Press', sets: 1, reps: 5, weight: 60 }],
+});
+const rgS = await store.startSession(rgR.id);
+const rgE = rgS.entries[0];
+await store.startRestForSet(rgE.id, rgE.sets[0].id);
+state.timer.startedAt -= 60_000;
+const rgStop = await store.stopRest();
+ok(rgStop.elapsed === 60, 'the rest is recorded');
+ok(rgE.sets[0].done === false, 'but the set is not ticked');
+ok(rgStop.pending && rgStop.pending.setId === rgE.sets[0].id,
+  'and the caller is told it is still unlogged');
+await store.setEffort(rgE.id, rgE.sets[0].id, { unknown: true });
+ok(store.setIsLoggable(rgE.sets[0], 'reps') === true, 'answering effort frees it');
+await store.discardSession();
+await store.deleteRoutine(rgR.id);
+await store.updateSettings({ requireEffort: false });
+
 section('a duration is entered as separate h/m/s boxes');
 const tf = await import(`${APP}/js/timefield.js`);
 ok(tf.fromParts({ h: '', m: '28', s: '30' }) === 1710, '28 and 30 is 28:30');
@@ -1189,14 +1262,14 @@ ok(loose.find((x) => x.name === 'UC Run').what === 'the run', 'the run names its
 ok(loose.find((x) => x.name === 'UC Press').what === '2 sets', 'the lift counts its rows');
 
 section('confirming removes it from the warning');
-await store.updateLog(ucRun.id, { done: true, completedAt: Date.now() });
+await cardioStore.updateLog(ucRun.id, { done: true, completedAt: Date.now() });
 ok(q.unconfirmedWork(ucS).length === 1, 'the run drops off once logged');
 for (const st of ucLift.sets) await store.toggleSetDone(ucLift.id, st.id);
 ok(q.unconfirmedWork(ucS).length === 0, 'and so does the lift');
 
 section('an empty row is not a warning, and a skipped entry is not either');
 const ucS2 = await (async () => { await store.discardSession(); return store.startSession(ucR.id); })();
-await store.updateLog(ucS2.entries[1].id, { duration: null, pace: null, distance: null });
+await cardioStore.updateLog(ucS2.entries[1].id, { duration: null, pace: null, distance: null });
 ok(!q.unconfirmedWork(ucS2).some((x) => x.name === 'UC Run'),
   'a run with no numbers at all has nothing to lose');
 await store.toggleSkip(ucS2.entries[0].id);
@@ -1213,7 +1286,7 @@ await store.discardSession();
 const ivS = await store.startSession(ucIv.id);
 ok(q.unconfirmedWork(ivS).length === 1, 'a wholly unlogged block warns');
 ok(q.unconfirmedWork(ivS)[0].what === '3 rounds', 'naming the rounds at stake');
-await store.toggleLeg(ivS.entries[0].id, ivS.entries[0].log.legs[0].id);
+await cardioStore.toggleLeg(ivS.entries[0].id, ivS.entries[0].log.legs[0].id);
 ok(q.unconfirmedWork(ivS).length === 0,
   'but a partly logged block does not -- something was recorded, so nothing is silently lost');
 await store.discardSession();
