@@ -51,6 +51,30 @@ export function parseSetTargets(raw, measure = 'reps') {
   return clean.length ? clean : null;
 }
 
+/**
+ * The alternatives list for an Either/Or slot: "Leg Press OR Hack Squat".
+ *
+ * Accepts an array or a comma/slash-separated string, because hand-written JSON
+ * and a single text field should both work. The exercise's own name is dropped
+ * from its own list -- offering the exercise you are already doing as a swap is
+ * noise -- and duplicates collapse on normName so "hack squat" and "Hack Squat"
+ * are one option, not two.
+ */
+export function altNames(raw, selfName = '') {
+  const list = Array.isArray(raw) ? raw
+    : raw === null || raw === undefined || raw === '' ? []
+      : String(raw).split(/[,;/\n]|\bor\b/i);
+  const self = normName(selfName);
+  const out = new Map();
+  for (const item of list) {
+    const name = String(item ?? '').trim();
+    const key = normName(name);
+    if (!key || key === self || out.has(key)) continue;
+    out.set(key, name);
+  }
+  return [...out.values()];
+}
+
 /** Coerce any loosely-shaped entry (hand-written JSON included) into our shape. */
 export function normalizeEntry(raw = {}) {
   const type = String(raw.type || '').toLowerCase() === 'cardio' ? 'cardio' : 'lift';
@@ -84,6 +108,10 @@ export function normalizeEntry(raw = {}) {
     id: raw.id || uid('e'),
     type,
     name: String(raw.name || raw.exercise || 'Exercise').trim(),
+    // Either/Or: other exercises that can fill this slot, chosen at workout
+    // time because a machine is taken. Always an array, never null, so every
+    // read site can iterate without a guard.
+    alternatives: altNames(raw.alternatives ?? raw.alts ?? raw.either ?? raw.or, raw.name),
     group: group === null || group === undefined || group === '' ? null : String(group).trim(),
     // lift targets — either one target for every set, or setTargets per set
     targetSets: setTargets ? setTargets.length : (declaredSets ?? (type === 'lift' ? 3 : null)),
@@ -183,6 +211,31 @@ const blankLog = (distanceUnit, e = null) => ({
   legs: isIntervals(e) ? plannedLegs(e) : null,
 });
 
+/**
+ * What the app already knows about an exercise by name: how it is measured and
+ * whether it is a bodyweight movement.
+ *
+ * Pure, so the store can use it without importing the query layer (which reads
+ * state and would close a dependency cycle). Routine definitions beat session
+ * snapshots because a routine is a deliberate statement about the exercise;
+ * a session is just the last time it happened.
+ */
+export function knownDefinition(routines = [], sessions = [], name = '') {
+  const key = normName(name);
+  if (!key) return null;
+  const match = (e) => normName(e.name) === key;
+  for (const r of routines) {
+    const hit = (r.entries || []).find(match);
+    if (hit) return { measure: hit.measure || 'reps', bodyweight: !!hit.bodyweight };
+  }
+  const recent = [...sessions].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  for (const s of recent) {
+    const hit = (s.entries || []).find(match);
+    if (hit) return { measure: hit.measure || 'reps', bodyweight: !!hit.bodyweight };
+  }
+  return null;
+}
+
 /** Routine entry -> session entry (a snapshot; editing it never touches the routine). */
 export function toSessionEntry(entry, settings) {
   const e = normalizeEntry(entry);
@@ -190,6 +243,7 @@ export function toSessionEntry(entry, settings) {
     ...e,
     id: uid('e'),          // fresh id: the session copy is its own thing
     sourceId: e.id,        // remembers which routine entry it came from
+    swappedFrom: null,     // set when an Either/Or slot is swapped mid-workout
     unit: e.unit || settings.unit,
     distanceUnit: e.distanceUnit || settings.distanceUnit,
     sets: e.type === 'lift' ? [] : null,

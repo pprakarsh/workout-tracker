@@ -1,19 +1,19 @@
 // Application state + persistence. Everything lives on this device: IndexedDB only.
-import { dbGetAll, dbPut, dbDel, dbClear, metaGet, metaSet } from './db.js';
-import { uid, num, parseReps, parseDur } from './util.js';
-import { resolveRun, isIntervals, plannedLegs, reconcileLegs, cardioLogged } from './cardio.js';
+import { dbGetAll, dbPut, dbDel, metaGet, metaSet } from './db.js';
+import { uid, num, parseReps, parseDur, normName } from './util.js';
+import { resolveRun, isIntervals, plannedLegs, reconcileLegs } from './cardio.js';
 import { setIsLoggableFor, countsTowardsVolume, effortAnswered } from './measure.js';
-import { normalizePlan, prunePlan } from './plan.js';
+import { normalizePlan } from './plan.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
-  parseSetTargets, setLabels, workingSets, lastWorkingSets,
+  parseSetTargets, setLabels, workingSets, lastWorkingSets, altNames, knownDefinition,
 } from './model.js';
 
 // Re-exported so the store stays the single front door for callers: views ask
 // the store for everything about a session, shape helpers included.
 export {
   normalizeEntry, normalizeRoutine, parseSetTargets, setLabels, workingSets, materializePlan,
-  lastWorkingSets,
+  lastWorkingSets, altNames, knownDefinition,
 };
 
 export const DEFAULT_SETTINGS = {
@@ -312,8 +312,16 @@ export async function saveSessionBackToRoutine() {
       return normalizeEntry({
         id: e.sourceId || uid('e'),
         type: e.type,
-        name: e.name,
+        name: e.swappedFrom || e.name,
         group: e.group,
+        measure: e.measure,
+        // An Either/Or slot swapped mid-workout must not rewrite the routine:
+        // the leg press being busy today is not a decision about next week. The
+        // original name goes back in the slot and the one actually used goes
+        // back in the options.
+        alternatives: e.swappedFrom
+          ? altNames([...(e.alternatives || []), e.name], e.swappedFrom)
+          : e.alternatives,
         targetSets: e.targetSets,
         setTargets: e.setTargets,
         repsMin: e.repsMin,
@@ -400,6 +408,55 @@ export async function updateSessionEntry(entryId, patch, opts) {
   const s = working();
   if (s) s.modified = true;
   await touch(opts);
+}
+
+/**
+ * Swap an Either/Or slot to one of its alternatives, mid-workout.
+ *
+ * The leg press is taken, so do the hack squat instead. Identity in this app is
+ * the exercise NAME (every history lookup goes through normName), so changing
+ * the name is most of the job -- the last-time line and the PR lookups
+ * re-point at the new exercise on the next render, for free.
+ *
+ * Three things do not fix themselves, and this is why a bare rename is not enough:
+ *
+ * 1. `measure`. A swap between a hold and a reps exercise changes what the
+ *    numbers mean, and `lastWorkingSets` only matches on name AND measure, so a
+ *    stale measure silently returns no history at all. It comes from the
+ *    alternative's own definition when the library knows one.
+ * 2. The prefilled numbers. Those were materialised at session start from the
+ *    ORIGINAL exercise's history and are sitting in the rows. 60kg of leg press
+ *    is not 60kg of hack squat, so untouched rows are rebuilt from the new
+ *    exercise's own last session.
+ * 3. Sets already logged. Those are facts about work that happened, so they are
+ *    kept exactly as they are, under the name they were done as -- see below.
+ *
+ * A swap is only offered before any set is logged for that reason. `swappedFrom`
+ * remembers the slot's original name so saving the session back to the routine
+ * does not rewrite next week's plan.
+ */
+export async function swapEntryExercise(entryId, name) {
+  const e = findEntry(entryId);
+  const to = String(name || '').trim();
+  if (!e || !to || e.type !== 'lift' || normName(to) === normName(e.name)) return null;
+  if ((e.sets || []).some((x) => x.done)) return { blocked: 'logged' };
+
+  const def = knownDefinition(state.routines, state.sessions, to);
+  const from = e.name;
+  const measure = def?.measure || e.measure || 'reps';
+  e.alternatives = altNames([...(e.alternatives || []), from], to);
+  e.swappedFrom = e.swappedFrom || from;
+  e.name = to;
+  e.measure = measure;
+  e.bodyweight = def ? !!def.bodyweight : !!e.bodyweight;
+  // rebuild the rows from the exercise now in the slot, not the one that was
+  e.sets = [];
+  materializePlan(e, state.settings.prefillFrom === 'last'
+    ? lastWorkingSets(state.sessions, to, measure, null) : null);
+  const s = working();
+  if (s) s.modified = true;
+  await touch();
+  return { from, to, measure };
 }
 
 export async function removeSessionEntry(entryId) {
@@ -815,75 +872,6 @@ export async function markBeeped() {
   if (!state.timer) return;
   state.timer.beeped = true;
   await metaSet('timer', state.timer);
-}
-
-/* ------------------------------------------------------------------ */
-/* whole-database replace (device-to-device restore)                  */
-/* ------------------------------------------------------------------ */
-
-/**
- * Wipe this device's data and write the backup verbatim — same ids, same
- * in-progress session, same running rest timer — so the app is byte-for-byte
- * the state the backup was taken from.
- */
-export async function restoreAll({
-  routines = [], sessions = [], settings = null, activeSessionId = null, timer = null, plan = null,
-}) {
-  await Promise.all([dbClear('routines'), dbClear('sessions')]);
-
-  state.routines = routines.map(normalizeRoutine);
-  sortRoutines();
-  state.sessions = sessions
-    .filter((s) => s && s.id && s.startedAt)
-    .sort((a, b) => b.startedAt - a.startedAt);
-
-  await Promise.all([
-    ...state.routines.map((r) => dbPut('routines', r)),
-    ...state.sessions.map((s) => dbPut('sessions', s)),
-  ]);
-
-  if (settings) state.settings = { ...DEFAULT_SETTINGS, ...settings };
-  await metaSet('settings', state.settings);
-
-  // a backup without a plan predates the Plan tab; leave what is here alone
-  if (plan) {
-    state.plan = prunePlan(normalizePlan(plan));
-    await metaSet('plan', state.plan);
-  }
-
-  state.active = activeSessionId
-    ? state.sessions.find((s) => s.id === activeSessionId && !s.finishedAt) || null
-    : null;
-  await metaSet('activeSessionId', state.active ? state.active.id : null);
-
-  state.timer = timer && timer.startedAt && (!timer.sessionId || state.active) ? timer : null;
-  await metaSet('timer', state.timer);
-
-  state.nav = {};
-  state.editSessionId = null;
-  emit();
-  return { routines: state.routines.length, sessions: state.sessions.length };
-}
-
-/** Counts you can eyeball on both devices to confirm a restore matched. */
-export function dataFingerprint() {
-  let sets = 0;
-  state.sessions.forEach((s) => s.entries.forEach((e) => {
-    // ticked sets only: pre-materialised rows are plan, and counting them would
-    // inflate the number both devices compare after a restore
-    sets += e.type === 'cardio'
-      ? (cardioLogged(e.log) ? 1 : 0)
-      : (e.sets || []).filter((x) => x.done).length;
-  }));
-  const oldest = state.sessions.length ? Math.min(...state.sessions.map((s) => s.startedAt)) : null;
-  const newest = state.sessions.length ? Math.max(...state.sessions.map((s) => s.startedAt)) : null;
-  return {
-    routines: state.routines.length,
-    sessions: state.sessions.length,
-    loggedSets: sets,
-    oldest,
-    newest,
-  };
 }
 
 /* ------------------------------------------------------------------ */

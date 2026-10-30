@@ -5,7 +5,8 @@
 // gear is one tap from anywhere, which is strictly better reach than a tab you
 // have to hunt for among seven. `state.tab` still drives it, so it is a real
 // screen with its own title, not a modal you lose by tapping outside.
-import { state, updateSettings, dataFingerprint } from '../store.js';
+import { state, updateSettings } from '../store.js';
+import { dataFingerprint } from '../backupstore.js';
 import { syncState } from '../sync.js';
 import { esc, fmtNum, fmtClock, parseDur, relDay, APP_VERSION } from '../util.js';
 import { toast } from '../ui.js';

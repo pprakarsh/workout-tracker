@@ -1,8 +1,8 @@
 // Export / import. Nothing leaves the device unless you tap one of these.
 import {
-  state, normalizeRoutine, saveRoutine, persistSession, sessionVolume, emit, restoreAll,
-  dataFingerprint, setLabels,
+  state, normalizeRoutine, saveRoutine, persistSession, sessionVolume, emit, setLabels,
 } from './store.js';
+import { restoreAll, dataFingerprint } from './backupstore.js';
 import {
   download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, uid,
 } from './util.js';
@@ -53,6 +53,8 @@ export function routineObject(r) {
     entries: r.entries.map((e) => {
       const o = { type: e.type, name: e.name };
       if (e.group) o.group = e.group;
+      if (e.alternatives && e.alternatives.length) o.alternatives = e.alternatives;
+      if (e.bodyweight) o.bodyweight = true;
       if (e.setTargets) {
         // per-set plan: `sets` as a list, one object per set
         o.sets = e.setTargets.map((t) => {

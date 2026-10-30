@@ -5,7 +5,7 @@
 // its type, measure, targets, per-set plan and notes -- and is shared by the
 // routine editor and the mid-session "add exercise" flow. views/entry.js is
 // about one exercise being PERFORMED.
-import { state, parseSetTargets, getRoutine, saveRoutine, normalizeEntry, addSessionEntry } from '../store.js';
+import { state, parseSetTargets, getRoutine, saveRoutine, normalizeEntry, addSessionEntry, altNames } from '../store.js';
 import { exerciseLibrary, findInLibrary } from '../queries.js';
 import { esc, fmtNum, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
@@ -64,6 +64,13 @@ export function exerciseFormHtml(e = {}) {
     <label class="field"><span>Exercise name</span>
       <input name="name" list="exerciseNames" autocapitalize="words" placeholder="e.g. Back Squat"
              value="${esc(e.name || '')}" required></label>
+    <label class="field"><span>Or any of these instead (optional)</span>
+      <input name="alternatives" list="exerciseNames" autocapitalize="words"
+             placeholder="e.g. Hack Squat, Leg Press"
+             value="${esc((e.alternatives || []).join(', '))}"></label>
+    <p class="hint" style="margin-top:-4px">Separate with commas. On the day, the card offers these
+      as one-tap swaps &mdash; for when the machine is taken. Your numbers are then filled in from
+      <em>that</em> exercise's own last session, and your routine keeps the original.</p>
     <label class="field"><span>Type</span>
       <select name="type" id="exType">
         <option value="lift" ${kind === 'lift' ? 'selected' : ''}>Lifting / bodyweight (sets &amp; reps)</option>
@@ -232,6 +239,9 @@ export function readExerciseForm(v, modal = null) {
     // 'run' and 'intervals' are both cardio underneath -- see exerciseFormHtml
     type: (v.type === 'cardio' || v.type === 'run' || v.type === 'intervals') ? 'cardio' : 'lift',
     name: (v.name || '').trim(),
+    // one comma-separated field, parsed by the model so hand-written JSON and
+    // this input agree on what a list of alternatives is
+    alternatives: altNames(v.alternatives, v.name),
     targetDistance: num(v.targetDistance),
     targetDuration: parseDur(v.targetDuration, { bare: 'minutes' }),
     targetPace: parsePace(v.targetPace),

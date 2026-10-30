@@ -31,6 +31,7 @@ const ok = (cond, label) => {
 const section = (s) => console.log(`\n== ${s}`);
 
 const store = await import(`${APP}/js/store.js`);
+const backupStore = await import(`${APP}/js/backupstore.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const nowView = await import(`${APP}/js/views/now.js`);
@@ -232,14 +233,14 @@ ok(downloads.length === 3, `three files downloaded: ${downloads.map((d) => d.nam
 
 section('device-to-device: export, wipe, restore exactly');
 const backup = JSON.stringify(xi.backupObject());
-const before = store.dataFingerprint();
+const before = backupStore.dataFingerprint();
 ok(before.routines === 1 && before.sessions === 1 && before.loggedSets === 3,
   `fingerprint before: ${JSON.stringify(before)}`);
 // simulate a second device: wipe everything
-await store.restoreAll({ routines: [], sessions: [], settings: null });
-ok(store.dataFingerprint().sessions === 0, 'device wiped');
+await backupStore.restoreAll({ routines: [], sessions: [], settings: null });
+ok(backupStore.dataFingerprint().sessions === 0, 'device wiped');
 const resR = await xi.importFromText(backup, { mode: 'replace' });
-const after = store.dataFingerprint();
+const after = backupStore.dataFingerprint();
 ok(after.routines === before.routines, 'routine count matches after restore');
 ok(after.sessions === before.sessions, 'session count matches after restore');
 ok(after.loggedSets === before.loggedSets, 'logged set count matches after restore');
@@ -254,7 +255,7 @@ const live = await store.startSession(r.id);
 await store.addSet(live.entries[0].id);
 await store.startRest({ target: 90, entryId: live.entries[0].id, setId: live.entries[0].sets[0].id, label: 'Rest' });
 const backup2 = JSON.stringify(xi.backupObject());
-await store.restoreAll({ routines: [], sessions: [], settings: null });
+await backupStore.restoreAll({ routines: [], sessions: [], settings: null });
 ok(state.active === null && state.timer === null, 'wiped again');
 await xi.importFromText(backup2, { mode: 'replace' });
 ok(state.active !== null, 'in-progress workout restored');
@@ -266,7 +267,7 @@ section('merge mode does not duplicate');
 const mergeRes = await xi.importFromText(backup, { mode: 'merge' });
 ok(mergeRes.routines === 0 && mergeRes.sessions === 0, 'nothing re-added');
 ok(mergeRes.skipped >= 2, `${mergeRes.skipped} items recognised as already present`);
-ok(store.dataFingerprint().sessions === before.sessions, 'session count unchanged by a merge of the same backup');
+ok(backupStore.dataFingerprint().sessions === before.sessions, 'session count unchanged by a merge of the same backup');
 
 section('bad input is rejected with a readable message');
 for (const [bad, label] of [['not json', 'non-JSON'], ['{"foo":1}', 'unrecognised shape'], ['{"name":"x","entries":[]}', 'empty routine']]) {
@@ -737,9 +738,9 @@ ok(store.entryStatus(freshJog) === 'pending', 'but the entry is still pending');
 ok(fmt.logSummary(freshJog) === '', 'and it reports nothing');
 ok(xi.csvRows([freshS]).split('\n').length === 1, 'it produces no CSV row');
 ok(q.lastLogFor('Warmup Jog') === null, 'and does not become a "last time" reference');
-const fpBefore = store.dataFingerprint().loggedSets;
+const fpBefore = backupStore.dataFingerprint().loggedSets;
 await cardioStore.updateLog(freshJog.id, { done: true, completedAt: Date.now() });
-ok(store.dataFingerprint().loggedSets === fpBefore + 1,
+ok(backupStore.dataFingerprint().loggedSets === fpBefore + 1,
   'only confirming it counts towards the sync fingerprint');
 await store.discardSession();
 
@@ -1799,9 +1800,9 @@ const planBackup = xi.backupObject();
 ok(typeof planBackup.plan === 'object' && planBackup.plan[k(0)].routineId === planRoutine.id,
   'the plan is in the backup');
 const planned0 = JSON.stringify(state.plan);
-await store.restoreAll({ routines: state.routines, sessions: state.sessions, plan: planBackup.plan });
+await backupStore.restoreAll({ routines: state.routines, sessions: state.sessions, plan: planBackup.plan });
 ok(JSON.stringify(state.plan) === planned0, 'and comes back verbatim from a restore');
-await store.restoreAll({ routines: state.routines, sessions: state.sessions });
+await backupStore.restoreAll({ routines: state.routines, sessions: state.sessions });
 ok(JSON.stringify(state.plan) === planned0,
   'an older backup with no plan leaves the current one alone');
 ok(JSON.stringify(planLib.normalizePlan({ nonsense: 1, '2026-13-99': {}, [k(0)]: { routineId: 'x' } }))
@@ -2122,6 +2123,121 @@ ok(h3stop.elapsed === 10, `and it kept counting across the reload (${h3stop.elap
 ok(hAfter.sets[1].reps === 10, 'writing to the reloaded session');
 await store.discardSession();
 await store.deleteRoutine(holdR.id);
+
+/* ------------------------------------------------------------------ */
+/* Either / Or: one slot, several exercises                           */
+/* ------------------------------------------------------------------ */
+
+section('an alternatives list is parsed from whatever shape it arrives in');
+ok(store.altNames(['Hack Squat', 'Leg Press']).join('|') === 'Hack Squat|Leg Press',
+  'an array passes through');
+ok(store.altNames('Hack Squat, Leg Press').join('|') === 'Hack Squat|Leg Press',
+  'commas separate');
+ok(store.altNames('Hack Squat or Leg Press').join('|') === 'Hack Squat|Leg Press',
+  'and so does a written-out "or", because that is how people type it');
+ok(store.altNames('Hack Squat / Leg Press').join('|') === 'Hack Squat|Leg Press', 'and a slash');
+ok(store.altNames('Hack Squat, hack squat').length === 1, 'duplicates collapse ignoring case');
+ok(store.altNames('Hack Squat, Back Squat', 'Back Squat').join('|') === 'Hack Squat',
+  'the exercise never offers itself as its own alternative');
+ok(store.altNames('').length === 0 && store.altNames(null).length === 0
+  && store.altNames(undefined).length === 0, 'absent means an empty list, never null');
+ok(store.altNames('Bent Over Row, Good Morning').length === 2,
+  '"Over" is not the word "or" — names containing it survive intact');
+
+section('a routine entry carries its alternatives through normalisation and export');
+const eoR = await store.createRoutine({
+  name: 'Either Or Day',
+  entries: [
+    { name: 'Leg Press', alternatives: 'Hack Squat, Back Squat', sets: 3, reps: 10, weight: 100 },
+    { name: 'Plank', measure: 'time', alternatives: ['Dead Hang'], sets: 2, reps: '45' },
+  ],
+});
+ok(eoR.entries[0].alternatives.join('|') === 'Hack Squat|Back Squat',
+  'the string became a list on the way in');
+ok(Array.isArray(eoR.entries[1].alternatives), 'and an array stayed a list');
+const eoJson = JSON.parse(JSON.stringify(xi.routineObject(eoR)));
+ok(eoJson.entries[0].alternatives.length === 2, 'export writes the options out');
+const eoBack = store.normalizeEntry(eoJson.entries[0]);
+ok(eoBack.alternatives.join('|') === 'Hack Squat|Back Squat', 'and a round trip returns them');
+ok(store.normalizeEntry({ name: 'Bare' }).alternatives.length === 0,
+  'an entry that never heard of alternatives still normalises');
+
+section('history exists for the alternative, under its own name and numbers');
+const eoHackR = await store.createRoutine({
+  name: 'Hack Only', entries: [{ name: 'Hack Squat', sets: 2, reps: 8, weight: 60 }],
+});
+const eoHackS = await store.startSession(eoHackR.id);
+await store.updateSet(eoHackS.entries[0].id, eoHackS.entries[0].sets[0].id, { weight: 62.5, reps: 9, done: true });
+await store.updateSet(eoHackS.entries[0].id, eoHackS.entries[0].sets[1].id, { weight: 62.5, reps: 8, done: true });
+await store.finishSession();
+ok(store.lastWorkingSets(state.sessions, 'Hack Squat', 'reps')[0].weight === 62.5,
+  'the hack squat has its own last-session numbers');
+
+section('swapping a slot takes the new exercise and ITS numbers, not the old ones');
+const eoS = await store.startSession(eoR.id);
+const eoLeg = eoS.entries[0];
+ok(eoLeg.sets[0].weight === 100, 'the leg press opens on its planned 100');
+ok(eoLeg.swappedFrom === null, 'nothing has been swapped yet');
+const eoSwap = await store.swapEntryExercise(eoLeg.id, 'Hack Squat');
+ok(eoSwap && eoSwap.to === 'Hack Squat', 'the swap happened');
+ok(eoLeg.name === 'Hack Squat', 'the slot is now the hack squat');
+ok(eoLeg.sets.length === 3, 'the set COUNT still comes from the routine, not from last time');
+ok(eoLeg.sets[0].weight === 62.5,
+  `and the numbers come from the hack squat's own last session (${eoLeg.sets[0].weight}), not the leg press plan`);
+ok(eoLeg.sets[0].reps === 9, 'reps too');
+ok(eoLeg.alternatives.includes('Leg Press'),
+  'the exercise swapped away from becomes an option, so changing your mind is one tap');
+ok(!eoLeg.alternatives.includes('Hack Squat'), 'and the one in the slot is not offered again');
+ok(eoLeg.swappedFrom === 'Leg Press', 'the slot remembers what it originally was');
+
+section('swapping is refused once a set is logged, rather than orphaning the work');
+await store.updateSet(eoLeg.id, eoLeg.sets[0].id, { weight: 65, reps: 8, done: true });
+const eoBlocked = await store.swapEntryExercise(eoLeg.id, 'Back Squat');
+ok(eoBlocked && eoBlocked.blocked === 'logged', 'the swap is refused and says why');
+ok(eoLeg.name === 'Hack Squat', 'the logged set keeps the name it was done under');
+ok(await store.swapEntryExercise(eoLeg.id, 'Hack Squat') === null,
+  'swapping to the exercise already in the slot is a no-op');
+ok(await store.swapEntryExercise('nope', 'Back Squat') === null, 'an unknown entry is a no-op');
+
+section('a swap must not rewrite next week: the routine keeps its original slot');
+await store.saveSessionBackToRoutine();
+const eoR2 = store.getRoutine(eoR.id);
+ok(eoR2.entries[0].name === 'Leg Press',
+  `the routine still asks for the leg press (${eoR2.entries[0].name}) — a busy machine today is not a plan change`);
+ok(eoR2.entries[0].alternatives.includes('Hack Squat'),
+  'and the hack squat is still one of its options');
+ok(!eoR2.entries[0].alternatives.includes('Leg Press'), 'with no self-reference');
+ok(eoR2.entries[0].alternatives.length === 2,
+  `the option list is the same size it started (${eoR2.entries[0].alternatives.join('|')})`);
+
+section('saving back keeps what an exercise is measured in');
+ok(eoR2.entries[1].measure === 'time',
+  `the plank is still measured in seconds (${eoR2.entries[1].measure}) — it used to come back as reps`);
+ok(eoR2.entries[1].alternatives.join('') === 'Dead Hang', 'and keeps its own alternative');
+
+section('swapping to a differently-measured exercise brings its measure with it');
+const eoPlank = store.findEntry(eoS.entries[1].id);
+const eoSwap2 = await store.swapEntryExercise(eoPlank.id, 'Dead Hang');
+ok(eoSwap2.measure === 'time', 'a hold swapped for a hold stays a hold');
+await store.discardSession();
+const eoMixR = await store.createRoutine({
+  name: 'Mixed Measures',
+  entries: [{ name: 'Wall Sit', measure: 'time', alternatives: ['Hack Squat'], sets: 2, reps: '60' }],
+});
+const eoMixS = await store.startSession(eoMixR.id);
+const eoWall = eoMixS.entries[0];
+const eoSwap3 = await store.swapEntryExercise(eoWall.id, 'Hack Squat');
+ok(eoSwap3.measure === 'reps',
+  `swapping a hold for a reps exercise takes the reps measure (${eoSwap3.measure}) — a stale measure finds no history at all`);
+ok(eoWall.sets[0].weight === 62.5,
+  `and so the hack squat's own history is found (${eoWall.sets[0].weight})`);
+ok(store.knownDefinition(state.routines, state.sessions, 'Wall Sit').measure === 'time',
+  'knownDefinition reads what the app already knows about a name');
+ok(store.knownDefinition([], [], 'Never Heard Of It') === null, 'and admits when it knows nothing');
+await store.discardSession();
+await store.deleteRoutine(eoMixR.id);
+await store.deleteRoutine(eoR.id);
+await store.deleteRoutine(eoHackR.id);
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

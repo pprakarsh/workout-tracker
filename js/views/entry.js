@@ -5,7 +5,7 @@ import {
   removeSessionEntry, moveEntryNext, moveSessionEntry, updateSessionEntry, startRest, entryStatus,
   addSessionEntry, working, editingPast, plannedSet, fillPlannedSets,
   setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
-  setIsLoggable, setBlocker, setEffort, startRestForSet, stopRest, startHold,
+  setIsLoggable, setBlocker, setEffort, startRestForSet, stopRest, startHold, swapEntryExercise,
 } from '../store.js';
 import { findInLibrary, lastLogFor, recentWeights } from '../queries.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
@@ -25,6 +25,28 @@ import { unlockAudio } from '../timer.js';
 /* ------------------------------------------------------------------ */
 /* summaries                                                          */
 /* ------------------------------------------------------------------ */
+
+/**
+ * The Either/Or row: one-tap swaps for the slot, on the card where the decision
+ * is made.
+ *
+ * It disappears once a set is logged, because by then the question is settled
+ * and swapping would orphan work already done. The exercise you swapped away
+ * from stays in the row, so changing your mind is the same one tap back.
+ */
+function altRow(e) {
+  const alts = e.alternatives || [];
+  if (!alts.length || e.type !== 'lift') return '';
+  if ((e.sets || []).some((s) => s.done)) return '';
+  return `
+    <div class="altrow">
+      <span class="tiny">or</span>
+      ${alts.map((n) => `<button type="button" class="chip alt" data-action="entry-swap"
+          data-entry="${e.id}" data-name="${esc(n)}"
+          title="Do ${esc(n)} instead, and fill in from its own last session">${esc(n)}</button>`).join('')}
+      <span class="tiny dim">machine taken? swap it</span>
+    </div>`;
+}
 
 function lastRefHtml(e) {
   const hit = lastLogFor(e.name, working()?.id);
@@ -79,6 +101,7 @@ export function renderEntry(e, { showLast = true, allowRest = true } = {}) {
       <button type="button" class="btn icon ghost" title="Exercise options"
               data-action="entry-menu" data-entry="${e.id}">⋯</button>
     </div>
+    ${allowRest ? altRow(e) : ''}
     ${showLast ? lastRefHtml(e) : ''}
     ${e.type === 'lift' ? liftBody(e, allowRest) : cardioBody(e, allowRest)}
   </div>`;
@@ -617,6 +640,10 @@ export const entryActions = {
       title: e.name,
       bodyHtml: `
         <div class="btn-row" style="flex-direction:column;gap:8px">
+          ${(e.alternatives || []).length && !(e.sets || []).some((s) => s.done)
+    ? `<div class="tiny" style="margin-bottom:-2px">Swap this slot for</div>
+             ${e.alternatives.map((n) => `<button type="button" class="btn block"
+               data-action="entry-swap" data-entry="${e.id}" data-name="${esc(n)}">&#8644; ${esc(n)}</button>`).join('')}` : ''}
           <button type="button" class="btn block" data-action="entry-edit" data-entry="${e.id}">Edit exercise & targets</button>
           <button type="button" class="btn block primary" data-action="entry-next-up" data-entry="${e.id}">Do this next &#10514;</button>
           <button type="button" class="btn block" data-action="entry-up" data-entry="${e.id}">Move earlier ↑</button>
@@ -626,6 +653,17 @@ export const entryActions = {
         </div>`,
       cancelText: 'Close',
     });
+  },
+
+  'entry-swap': async ({ entry, name }) => {
+    const res = await swapEntryExercise(entry, name);
+    if (!res) return;
+    if (res.blocked === 'logged') {
+      toast('A set is already logged here. Add the other exercise instead.', 4200);
+      return;
+    }
+    closeModal();
+    toast(`${res.to} instead of ${res.from} — numbers filled in from its own last session`, 4200);
   },
 
   'entry-edit': async ({ entry }) => {

@@ -223,6 +223,11 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 #restBar .clock.hold{color:var(--warn)}
 #restBar .clock.hold.past{color:var(--ok)}
 .rest-btn.hold{color:var(--warn)}
+/* Either/Or: the swap options for a slot, on the card where the choice is made */
+.altrow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:7px}
+.altrow .tiny{color:var(--fg3)}
+.altrow .tiny.dim{flex:1;min-width:0;text-align:right}
+.chip.alt{border-style:dashed;min-height:30px}
 
 /* split time fields: h / m / s, no colon to type ------------------------ */
 .tf-field{display:block}

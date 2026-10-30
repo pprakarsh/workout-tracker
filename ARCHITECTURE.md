@@ -25,6 +25,7 @@ js/measure.js       what a set is measured in: reps, time (holds) or distance (c
 js/plan.js          the 10-day plan: day keys, the window, and what a day means
 js/planstore.js     writes for the plan -- the mirror of queries.js
 js/cardiostore.js   writes for a cardio log: the run's numbers and a block's rounds
+js/backupstore.js   whole-database replace (restore, device copy) + the confirmation counts
 js/trends.js        progress analysis: e1RM, per-session series, PRs, weekly totals
 js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
 js/timefield.js     a duration as h/m/s boxes, so no colon is ever typed. Markup only
@@ -458,6 +459,38 @@ What `kind` changes:
 Manual entry is untouched: the seconds box is still on the row, and the clock is an offer that fills
 it in for you. The card shows a full-width **⧗ Start set N** button, and every timed row keeps its own
 `⧗` so a set you forgot to time can still be timed.
+
+### Either / Or: one slot, several exercises
+
+A routine entry can carry `alternatives: [name, …]` — "Leg Press OR Hack Squat OR Back Squat" — for
+the ordinary case where the machine you planned on is taken.
+
+This works because **identity in this app is the exercise name**, normalised through `normName`.
+There is no exercise id: `lastWorkingSets`, `lastLogFor`, `recentWeights` and the PR queries all key
+on the name, so changing `entry.name` re-points every history lookup at the new exercise for free.
+
+`swapEntryExercise(entryId, name)` does the three things a bare rename would get wrong:
+
+1. **`measure`.** `lastWorkingSets` matches on name **and** measure, so a stale measure silently
+   finds no history at all. It comes from `knownDefinition()` — a pure lookup over routines then
+   sessions, in model.js so the store can use it without importing the query layer.
+2. **The prefilled numbers.** Those were materialised at session start from the *original*
+   exercise's history. 60 kg of leg press is not 60 kg of hack squat, so the rows are rebuilt with
+   `materializePlan` against the new exercise's own last session. The set **count** still comes from
+   the routine — the plan decides how many, last time decides what goes in them.
+3. **Work already logged.** A swap is refused (`{ blocked: 'logged' }`) once any set is ticked, and
+   the swap row disappears from the card at the same moment. A logged set is a fact about work that
+   happened under that name; silently relabelling it would be a lie.
+
+`swappedFrom` records the slot's original name, and `saveSessionBackToRoutine` writes that name back
+rather than the substitute, moving the one you actually used into the options. A busy machine today
+is not a decision about next week.
+
+Four allowlists have to name the field or it silently vanishes, because there is no migration
+framework and each is an explicit object literal rather than a spread: `normalizeEntry` (model.js),
+`definitionOf` (queries.js), `saveSessionBackToRoutine` (store.js) and `routineObject`
+(exportimport.js). The same audit found `measure` missing from two of them — saving a session back
+to its routine turned a 45-second plank into 45 reps.
 
 ### Editing a finished session
 

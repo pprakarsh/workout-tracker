@@ -1807,5 +1807,52 @@ await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
+section('Either / Or: swapping a slot from the card');
+await xi.importFromText(JSON.stringify({
+  name: 'Machine Roulette',
+  entries: [
+    { name: 'Leg Press', alternatives: 'Hack Squat, Back Squat', sets: 3, reps: 10, weight: 100 },
+  ],
+}));
+await sleep(60);
+await click('#tabBar .tab[data-tab="now"]');
+const eoR = store.state.routines.find((r) => r.name === 'Machine Roulette');
+await click(`[data-action="routine-start"][data-id="${eoR.id}"]`, 'Start');
+const eoE = () => store.state.active.entries[0];
+ok(/Leg Press/.test(view()), 'the slot opens as the leg press');
+ok($$('.altrow [data-action="entry-swap"]').length === 2,
+  `both alternatives are offered on the card (${$$('.altrow [data-action="entry-swap"]').length})`);
+ok(/machine taken/.test($('.altrow').textContent),
+  `with the reason it exists said in place (${$('.altrow .dim').textContent.trim()})`);
+const eoHack = $$('.altrow [data-action="entry-swap"]').find((b) => b.textContent.trim() === 'Hack Squat');
+ok(!!eoHack, 'the hack squat is one tap away');
+
+eoHack.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(80);
+ok(eoE().name === 'Hack Squat', 'tapping it swaps the slot');
+ok(/Hack Squat/.test($('.ex-name').textContent), 'and the card says so');
+ok($$('.set-row').length === 3, 'the routine still asks for 3 sets');
+const eoBack = $$('.altrow [data-action="entry-swap"]').map((b) => b.textContent.trim());
+ok(eoBack.includes('Leg Press'), `the leg press is now the swap back (${eoBack.join(', ')})`);
+ok(!eoBack.includes('Hack Squat'), 'and the exercise in the slot is not offered to itself');
+
+section('the swap row goes away once the question is settled');
+await type('.set-row input[data-f="weight"]', '70');
+await type('.set-row input[data-f="reps"]', '9');
+await click('.set-row [data-action="set-done"]', 'tick set 1');
+await sleep(80);
+ok(eoE().sets[0].done === true, 'set 1 is logged');
+ok($('.altrow') === null, 'the swap options are gone — there is work logged under this name now');
+await click('[data-action="entry-menu"]', 'exercise options');
+ok($('#modalRoot [data-action="entry-swap"]') === null,
+  'and the menu does not offer a swap either');
+await click('#modalRoot [data-mclose]', 'Close');
+await sleep(50);
+
+await click('#tabBar .tab[data-tab="session"]');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

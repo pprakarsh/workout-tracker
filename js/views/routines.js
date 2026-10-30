@@ -1,9 +1,11 @@
 // "Routines" — your library of routines, the routine editor, and data/settings.
 import {
   state, getRoutine, saveRoutine, createRoutine, deleteRoutine, duplicateRoutine,
-  normalizeEntry, updateSettings, dataFingerprint,
+  normalizeEntry, updateSettings,
 } from '../store.js';
-import { lastSessionForRoutine } from '../queries.js';import { dbPut } from '../db.js';
+import { dataFingerprint } from '../backupstore.js';
+import { lastSessionForRoutine } from '../queries.js';
+import { dbPut } from '../db.js';
 import {
   esc, fmtDate, fmtClock, fmtTimeOfDay, fmtNum, relDay, parseDur, APP_VERSION,
 } from '../util.js';
@@ -30,6 +32,8 @@ function editor(r) {
         <div class="nm">${esc(e.name)} ${e.group ? `<span class="pill grp">${esc(e.group)}</span>` : ''}
           ${e.type === 'cardio' ? '<span class="pill">cardio</span>' : ''}</div>
         ${targetLine(e) ? `<div class="sub">${esc(targetLine(e))}</div>` : ''}
+        ${(e.alternatives || []).length
+    ? `<div class="sub" style="color:var(--accent)">or ${esc(e.alternatives.join(' / '))}</div>` : ''}
         ${e.notes ? `<div class="sub" style="color:var(--warn);white-space:pre-wrap">${esc(e.notes)}</div>` : ''}
       </div>
       <div class="acts">

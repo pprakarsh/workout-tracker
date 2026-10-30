@@ -7,7 +7,8 @@
 //
 // The token is kept in IndexedDB under its own meta key, NOT in settings, so it
 // never ends up inside an exported backup.
-import { state, emit, subscribe, dataFingerprint } from './store.js';
+import { state, emit, subscribe } from './store.js';
+import { dataFingerprint } from './backupstore.js';
 import { metaGet, metaSet } from './db.js';
 import { backupObject, importFromText } from './exportimport.js';
 import { uid, APP_VERSION } from './util.js';

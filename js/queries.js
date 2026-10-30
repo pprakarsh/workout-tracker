@@ -33,6 +33,11 @@ function definitionOf(e) {
     // The superset letter describes one routine's arrangement, so it is
     // deliberately not carried into another routine.
     group: null,
+    // What the exercise is measured in travels with it: a plank reused from the
+    // library must still be seconds, not 45 reps.
+    measure: e.measure ?? null,
+    bodyweight: !!e.bodyweight,
+    alternatives: e.alternatives ?? [],
     targetSets: e.targetSets ?? null,
     setTargets: e.setTargets ?? null,
     repsMin: e.repsMin ?? null,

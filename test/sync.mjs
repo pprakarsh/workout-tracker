@@ -101,6 +101,7 @@ global.fetch = async (url, opts = {}) => {
 /* ------------------------------------------------------------------ */
 
 const store = await import(`${APP}/js/store.js`);
+const backupStore = await import(`${APP}/js/backupstore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const sy = await import(`${APP}/js/sync.js`);
 const { state } = store;
@@ -124,7 +125,7 @@ await sy.initSync();
 ok(sy.syncConfigured() === false, 'sync starts unconfigured');
 ok(sy.sync.deviceId && sy.sync.deviceId.startsWith('dev'), 'a device id was generated');
 await seed('Push Day', 2);
-const local = store.dataFingerprint();
+const local = backupStore.dataFingerprint();
 ok(local.sessions === 2, `seeded ${local.sessions} sessions, ${local.loggedSets} sets`);
 
 section('a bad token fails loudly instead of silently');
@@ -154,8 +155,8 @@ ok(pushed.routines.length === 1 && pushed.sessions.length === 2, 'payload carrie
 
 section('pull restores the gist verbatim');
 const beforeMd = xi.sessionMarkdown(state.sessions[0]);
-await store.restoreAll({ routines: [], sessions: [], settings: null });   // simulate a fresh device
-ok(store.dataFingerprint().sessions === 0, 'device wiped');
+await backupStore.restoreAll({ routines: [], sessions: [], settings: null });   // simulate a fresh device
+ok(backupStore.dataFingerprint().sessions === 0, 'device wiped');
 const pl = await sy.pullNow();
 ok(pl.ok === true, 'pull succeeded');
 ok(pl.actual.sessions === local.sessions && pl.actual.loggedSets === local.loggedSets,
@@ -165,14 +166,14 @@ ok(sy.sync.lastPulledAt > 0, 'lastPulledAt recorded');
 
 section('pull refuses to discard newer local work');
 await seed('Leg Day', 1);
-const unpushed = store.dataFingerprint().sessions;
+const unpushed = backupStore.dataFingerprint().sessions;
 const blocked = await sy.pullNow();
 ok(blocked.conflict === true, 'pull reported a conflict instead of overwriting');
 ok(blocked.localNewer.length >= 2, `${blocked.localNewer.length} local records flagged as newer`);
-ok(store.dataFingerprint().sessions === unpushed, 'nothing was overwritten');
+ok(backupStore.dataFingerprint().sessions === unpushed, 'nothing was overwritten');
 const forcedPull = await sy.pullNow({ force: true });
 ok(forcedPull.ok === true, 'forcing the pull works');
-ok(store.dataFingerprint().sessions === local.sessions, 'local is back to the gist copy');
+ok(backupStore.dataFingerprint().sessions === local.sessions, 'local is back to the gist copy');
 
 section('a fresh device: pairing code + automatic first pull');
 const code = sy.pairingCode();
@@ -184,9 +185,9 @@ ok(sy.parsePairing('github_pat_something') === null, 'a raw token is not mistake
 ok(sy.parsePairing('garbage!!') === null, 'garbage is rejected');
 
 // simulate a brand-new phone: empty database, no sync config
-await store.restoreAll({ routines: [], sessions: [], settings: null });
+await backupStore.restoreAll({ routines: [], sessions: [], settings: null });
 await sy.disconnectSync();
-ok(store.dataFingerprint().sessions === 0 && sy.syncConfigured() === false, 'fresh device');
+ok(backupStore.dataFingerprint().sessions === 0 && sy.syncConfigured() === false, 'fresh device');
 const paired = sy.parsePairing(code);
 await sy.configureSync({ token: paired.token, gistId: paired.gistId, autoPull: true });
 const first = await sy.autoPullOnLaunch();
@@ -208,13 +209,13 @@ bumped.counts = { routines: 1, sessions: 1, loggedSets: 1 };
 g2.files[FILE].content = JSON.stringify(bumped);
 const third = await sy.autoPullOnLaunch();
 ok(third.ok === true, 'a newer remote copy is pulled on launch');
-ok(store.dataFingerprint().sessions === 1, 'local now matches the remote copy');
+ok(backupStore.dataFingerprint().sessions === 1, 'local now matches the remote copy');
 
 section('auto-pull never silently discards local work');
 await seed('Local Only', 1);
 const guarded = await sy.autoPullOnLaunch();
 ok(guarded.conflict === true, 'declines to pull when local has newer records');
-ok(store.dataFingerprint().sessions === 2, 'the local session survived');
+ok(backupStore.dataFingerprint().sessions === 2, 'the local session survived');
 await sy.configureSync({ autoPull: false });
 ok(await sy.autoPullOnLaunch() === null, 'respects the off switch');
 await sy.configureSync({ autoPull: true });
@@ -233,10 +234,10 @@ const skewed = JSON.parse(gSkew.files[FILE].content);
 skewed.sync = { device: 'dev_fast_clock', pushedAt: new Date().toISOString(), pushedAtMs: Date.now() + 600_000 };
 gSkew.files[FILE].content = JSON.stringify(skewed);
 await seed('Logged During Skew', 1);
-const sessionsNow = store.dataFingerprint().sessions;
+const sessionsNow = backupStore.dataFingerprint().sessions;
 const skewPull = await sy.pullNow();
 ok(skewPull.conflict === true, 'a future remote timestamp does not make local work look stale');
-ok(store.dataFingerprint().sessions === sessionsNow, 'the session logged locally survived');
+ok(backupStore.dataFingerprint().sessions === sessionsNow, 'the session logged locally survived');
 const skewAuto = await sy.autoPullOnLaunch();
 ok(skewAuto.conflict === true, 'auto-pull declines for the same reason');
 await sy.pushNow({ force: true });
@@ -244,7 +245,7 @@ await sy.pushNow({ force: true });
 section('a device with data that has never synced is not wiped silently');
 await sy.disconnectSync();
 await sy.configureSync({ token: hub.validToken, gistId: gSkew.id });
-ok(store.dataFingerprint().sessions > 0, 'device has local data and no sync history');
+ok(backupStore.dataFingerprint().sessions > 0, 'device has local data and no sync history');
 const virgin = await sy.pullNow();
 ok(virgin.conflict === true, 'pull asks first');
 ok(virgin.localNewer.length > 0, `${virgin.localNewer.length} records flagged`);
@@ -314,7 +315,7 @@ section('disconnect forgets the credentials');
 await sy.disconnectSync();
 ok(sy.sync.token === null && sy.sync.gistId === null, 'token and gist id cleared');
 ok(sy.syncConfigured() === false, 'reported as unconfigured');
-ok(store.dataFingerprint().sessions > 0, 'local data untouched by disconnecting');
+ok(backupStore.dataFingerprint().sessions > 0, 'local data untouched by disconnecting');
 
 section('automatic push when the routine library changes');
 await sy.configureSync({ token: hub.validToken, gistId: gSkew.id, autoPushRoutines: true });
