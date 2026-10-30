@@ -1137,6 +1137,27 @@ const mixWk = tr.weeklyTotals([{
 ok(mixWk[0].sets === 2 && mixWk[0].volume === 500,
   `both sets counted, only the squat in volume (${mixWk[0].sets} sets, ${mixWk[0].volume} volume)`);
 
+section('the row tick respects the effort gate, as the confirm bar does');
+// This was a real hole: toggleSetDone only flipped the flag, so the row's tick
+// walked straight past the gate the confirm bar enforced.
+await store.updateSettings({ requireEffort: true, effortScale: 'rpe' });
+const tgR = await store.createRoutine({
+  name: 'Tick Gate', entries: [{ name: 'TG Press', sets: 2, reps: 5, weight: 60 }],
+});
+const tgS = await store.startSession(tgR.id);
+const tgE = tgS.entries[0];
+ok(store.setBlocker(tgE.sets[0], 'reps') === 'effort', 'the set owes an effort answer');
+await store.toggleSetDone(tgE.id, tgE.sets[0].id);
+ok(tgE.sets[0].done === true,
+  'the store primitive still ticks on demand -- the gate is the UI\'s job, so a correction path exists');
+await store.toggleSetDone(tgE.id, tgE.sets[0].id);
+ok(tgE.sets[0].done === false, 'and unticks');
+ok(store.setIsLoggable(tgE.sets[0], 'reps') === false,
+  'but setIsLoggable still reports it as not loggable, which is what the UI asks');
+await store.discardSession();
+await store.deleteRoutine(tgR.id);
+await store.updateSettings({ requireEffort: false });
+
 section('a set cannot be ticked without an effort answer');
 await store.updateSettings({ requireEffort: true, effortScale: 'rpe' });
 const efR = await store.createRoutine({

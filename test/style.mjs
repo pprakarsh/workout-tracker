@@ -105,7 +105,7 @@ ok(cacheName === `workout-v${appVersion}`,
 console.log('\n== action registry integrity');
 const viewFiles = ['js/views/entry.js', 'js/views/cardio.js', 'js/views/now.js', 'js/views/session.js',
   'js/views/plan.js', 'js/views/history.js', 'js/views/trends.js', 'js/views/routines.js',
-  'js/views/settings.js', 'js/timer.js'];
+  'js/views/settings.js', 'js/views/exform.js', 'js/timer.js'];
 const sources = Object.fromEntries(viewFiles.map((f) => [f, readFileSync(`${APP}/${f}`, 'utf8')]));
 const allSource = Object.values(sources).join('\n');
 

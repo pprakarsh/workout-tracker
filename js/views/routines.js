@@ -9,7 +9,7 @@ import {
 } from '../util.js';
 import {
   exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker,
-} from './entry.js';
+} from './exform.js';
 import { targetLine } from '../format.js';
 import { openModal, confirmDialog, toast, copyText } from '../ui.js';
 import { exportBackup, exportCsv, exportRoutine, importFromText } from '../exportimport.js';

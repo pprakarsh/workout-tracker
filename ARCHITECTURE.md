@@ -35,7 +35,8 @@ js/ui.js            modal / toast / confirm / clipboard primitives
 js/util.js          formatting + parsing helpers, APP_VERSION
 js/format.js        entry -> summary strings (targetLine, logSummary, restLine, pace)
 js/exportimport.js  JSON backup, CSV, Markdown, import/normalisation entry point
-js/views/entry.js   the exercise card and set rows, the exercise form, the library picker
+js/views/entry.js   one exercise being PERFORMED: the card, set rows, confirm and effort
+js/views/exform.js  one exercise being DEFINED: the form, its per-set grid, the picker
 js/views/cardio.js  the cardio card: a straight run, or an interval block and its rounds
 js/views/plan.js    "Plan" tab: ten day rows, assign a routine, mark done
 js/views/trends.js  "Trends" tab: weekly totals, and progress for one exercise

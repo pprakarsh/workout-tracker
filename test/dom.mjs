@@ -1156,38 +1156,64 @@ ok($$('.effbar [data-action="set-effort"][data-field="rpe"]').length === 5,
 ok($('.effbar [data-field="unknown"]') !== null, "and a don't-know chip");
 ok($$('.effbar [data-field="rir"]').length === 0, 'no RIR chips, since RPE is the scale in use');
 
-section('a set cannot be confirmed until effort is answered');
-ok($('[data-action="set-confirm"]') === null, 'no confirm button yet');
-ok(/Effort needed/i.test(view()), 'the bar says what is missing');
-ok(/don.t know/i.test(view()), 'and points at the escape hatch');
+section('the confirm bar asks for effort rather than refusing');
+ok($('[data-action="set-confirm"]') === null, 'it is not a plain confirm yet');
+ok($('[data-action="set-effort-then"]') !== null, 'but it is still a button, not a dead end');
+ok(/ask how hard/i.test(view()), 'and says what tapping it will do');
 
-section('tapping a chip unblocks it, and tapping again clears it');
-await click('.effbar [data-field="rpe"][data-value="8"]');
-ok(euE.sets[0].rpe === 8, 'the RPE is recorded');
-ok($('[data-action="set-confirm"]') !== null, 'and the set can now be confirmed');
-ok(!$('.effbar').classList.contains('need'), 'the bar stops warning');
-await click('.effbar [data-field="rpe"][data-value="8"]');
-ok(euE.sets[0].rpe === null, 'tapping the same chip clears it, so a mis-tap is one tap to fix');
-ok($('[data-action="set-confirm"]') === null, 'and it is blocked again');
+section('tapping the row tick asks for effort too -- it used to walk past the gate');
+const euTick = $(`.set-row [data-action="set-done"][data-set="${euE.sets[0].id}"]`);
+ok(euTick !== null, 'the row has its own tick');
+await click(`.set-row [data-action="set-done"][data-set="${euE.sets[0].id}"]`);
+ok(euE.sets[0].done === false, 'it does not log the set on its own');
+ok($('#modalRoot').hidden === false, 'it opens the effort prompt instead');
+ok(/How hard was set/i.test($('#modalRoot').textContent), 'asking the question directly');
+ok($$('#modalRoot [data-eff-field="rpe"]').length === 5, 'with five RPE chips');
+ok($('#modalRoot [data-eff-field="unknown"]') !== null, "and I don't know");
+await click('#modalRoot [data-eff-field="rpe"][data-eff-value="7"]');
+await sleep(60);
+ok(euE.sets[0].rpe === 7, 'choosing records the effort');
+ok(euE.sets[0].done === true, 'AND completes the tick that was blocked -- one gesture, not two');
+ok($('#modalRoot').hidden === true, 'the prompt closes itself');
+await store.updateSet(euE.id, euE.sets[0].id, { rpe: null, done: false });
+await sleep(40);
 
-section("don't know is an answer, not a skip");
-await click('.effbar [data-field="unknown"]');
-ok(euE.sets[0].effortUnknown === true, 'it is recorded as an explicit unknown');
-ok(euE.sets[0].rpe === null, 'without inventing a number');
-ok($('[data-action="set-confirm"]') !== null, 'the set is loggable');
-await click('[data-action="set-confirm"]');
-await sleep(50);
-ok(euE.sets[0].done === true, 'and it logs');
+section('unticking is never gated');
+await store.updateSet(euE.id, euE.sets[0].id, { rpe: 8 });
+await click(`.set-row [data-action="set-done"][data-set="${euE.sets[0].id}"]`);
+await sleep(40);
+ok(euE.sets[0].done === true, 'ticked with an effort present, no prompt');
+await click(`.set-row [data-action="set-done"][data-set="${euE.sets[0].id}"]`);
+await sleep(40);
+ok(euE.sets[0].done === false, 'and untickable without being asked anything');
+
+section('the big confirm bar routes through the same prompt');
+await store.updateSet(euE.id, euE.sets[0].id, { rpe: null });
+await sleep(40);
+await click('[data-action="set-effort-then"]');
+ok(/How hard was set/i.test($('#modalRoot').textContent), 'the prompt opens');
+await click("#modalRoot [data-eff-field='unknown']");
+await sleep(80);
+ok(euE.sets[0].effortUnknown === true, "don't know is recorded");
+ok(euE.sets[0].done === true, 'and the set logs');
+ok(/don.t know/i.test(view()) || $('.effbar [data-field="unknown"]').classList.contains('on'),
+  'the card reflects it');
+
+section('the card chips answer it ahead of time, and toggle off');
+const euS2 = euE.sets[1];
+await click(`.effbar [data-field="rpe"][data-value="8"]`);
+ok(euS2.rpe === 8 || euE.sets[0].rpe === 8, 'a chip records the effort for the active set');
 
 section('sets filled in but not ticked are called out on the card');
-await click('[data-action="rest-stop"]');
+// set 2 is pre-filled from the plan but has no effort answer yet
+await store.updateSet(euE.id, euE.sets[1].id, { rpe: null, rir: null, effortUnknown: false });
 await sleep(50);
 ok(euE.sets[1].weight === 60 && euE.sets[1].reps === 5, 'set 2 is pre-filled');
 ok(euE.sets[1].done === false, 'and unticked');
 ok($('.unticked') !== null, 'so the card says so');
 ok(/filled in but not logged/i.test($('.unticked').textContent), 'in plain words');
 ok(/finish the row first/i.test($('.unticked').textContent),
-  'and says what is missing while it still owes an effort answer');
+  `and says what is missing while it still owes an effort answer (${$('.unticked').textContent.replace(/\s+/g, ' ').trim()})`);
 await click('.effbar [data-field="rpe"][data-value="9"]');
 await sleep(40);
 ok($('.unticked [data-action="set-tick-loose"]') !== null,
