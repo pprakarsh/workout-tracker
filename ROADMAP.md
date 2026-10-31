@@ -37,6 +37,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Catalogue in the routine picker | Adding an exercise to a routine searches your own AND the catalogue, under separate headings |
 | One exercise, several target muscles | `primary` is a list: a bench press is Chest + Triceps + Shoulders. A set counts once per group, which is how per-muscle volume works |
 | Bulk-fill missing tags from the catalogue | A "Fix N" queue: exact-after-shorthand matches apply in one tap ("RDL", "Pull Ups", "DB Row"), ambiguous names offer a pick-one, unknown ones are listed for you. Your names are never changed |
+| Muscle groups picked from a dropdown | A native `select` grouped Push / Pull / Core / Legs / Other that *adds* to a chip list, so several targets are expressible and nothing has to be typed |
 | Session progress bar | Entry completion, in the Now header |
 | Plan tab: 10 days ahead, 7 behind | Assign a routine per day, rest days, push/pull a day; done is derived from history, and the week behind shows adherence |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |

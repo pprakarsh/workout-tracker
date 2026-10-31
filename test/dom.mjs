@@ -2255,5 +2255,101 @@ const btRow = $$('.exrow').find((r) => /Prakarsh Contraption Pull/.test(r.textCo
 ok(!!btRow && /Lats, Biceps, Rear Delts/.test(btRow.textContent),
   'and the row lists them all rather than just the first');
 
+section('target muscles are chosen from a dropdown, not typed');
+await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await sleep(60);
+await click('[data-action="lib-mode"][data-mode="mine"]', 'Mine');
+await sleep(60);
+await click('[data-action="lib-new"]', '+ New exercise');
+await sleep(70);
+const gpPri = $('#modalRoot [data-gpick="primary"]');
+ok(!!gpPri, 'the target-muscle field is a picker, not a text box');
+ok(gpPri.querySelector('input[type="hidden"][name="primary"]') !== null,
+  'with a hidden field carrying the value, so the form reader needs to know nothing about it');
+const gpSel = gpPri.querySelector('[data-gadd]');
+ok(!!gpSel && gpSel.tagName === 'SELECT',
+  'a native select, so iOS gives its wheel picker rather than a cramped list');
+ok(gpSel.querySelectorAll('optgroup').length >= 5,
+  `grouped so twenty muscles are navigable (${gpSel.querySelectorAll('optgroup').length} sections)`);
+ok([...gpSel.querySelectorAll('optgroup')].map((g) => g.label).join(',') === 'Push,Pull,Core,Legs,Other',
+  'in the order someone deciding what a movement trains already thinks in');
+ok([...gpSel.options].some((o) => o.value === 'Chest')
+  && [...gpSel.options].some((o) => o.value === 'Hamstrings'), 'the vocabulary is all there');
+ok([...gpSel.options].some((o) => o.value === '__other'),
+  'plus an escape hatch, because the vocabulary is a convenience not a whitelist');
+ok($('#modalRoot [data-gpick="secondary"]') !== null, 'and the same picker for other muscles');
+ok(gpPri.querySelectorAll('[data-gremove]').length === 0, 'nothing chosen yet');
+
+section('choosing from the dropdown adds a chip, and several can be chosen');
+const pick = (which, value) => {
+  const sel = $(`#modalRoot [data-gpick="${which}"] [data-gadd]`);
+  sel.value = value;
+  sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+};
+pick('primary', 'Chest');
+await sleep(40);
+ok(gpPri.querySelectorAll('[data-gremove]').length === 1, 'one chip appeared');
+ok(gpPri.querySelector('input[name="primary"]').value === 'Chest', 'and the hidden value tracks it');
+ok(gpSel.value === '', 'the dropdown resets, so the next pick adds rather than replaces');
+pick('primary', 'Triceps');
+await sleep(40);
+ok(gpPri.querySelector('input[name="primary"]').value === 'Chest, Triceps',
+  `a second muscle is added, not substituted (${gpPri.querySelector('input[name="primary"]').value})`);
+pick('primary', 'Chest');
+await sleep(40);
+ok(gpPri.querySelector('input[name="primary"]').value === 'Chest, Triceps',
+  'choosing one already chosen is a no-op rather than a duplicate');
+pick('secondary', 'Shoulders');
+await sleep(40);
+ok($('#modalRoot input[name="secondary"]').value === 'Shoulders', 'the second picker is independent');
+
+section('a chip removes itself when tapped');
+const gpChip = [...gpPri.querySelectorAll('[data-gremove]')].find((b) => b.dataset.gremove === 'Triceps');
+ok(!!gpChip, 'each chosen muscle is a chip');
+gpChip.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(40);
+ok(gpPri.querySelector('input[name="primary"]').value === 'Chest', 'tapping it removes just that one');
+ok(!$('#modalRoot').hidden, 'and the modal survives — the picker is wired by hand, not via an action');
+pick('primary', 'Triceps');
+await sleep(40);
+
+section('what the picker chose is what gets saved');
+await type('#modalRoot input[name="name"]', 'Dropdown Test Press');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(130);
+const gpSaved = store.state.exercises.find((x) => x.key === 'dropdown test press');
+ok(!!gpSaved, 'the exercise saved');
+ok(gpSaved.primary.join('|') === 'Chest|Triceps',
+  `both targets came through the hidden field (${gpSaved.primary.join('|')})`);
+ok(gpSaved.secondary.join() === 'Shoulders', 'and the other muscle too');
+
+section('reopening it shows what was chosen, ready to change');
+await click('[data-action="lib-edit"][data-key="dropdown test press"]', 'open it again');
+await sleep(80);
+const gpBack = $('#modalRoot [data-gpick="primary"]');
+ok(gpBack.querySelectorAll('[data-gremove]').length === 2,
+  'both chips are pre-filled rather than needing to be re-chosen');
+ok(gpBack.querySelector('input[name="primary"]').value === 'Chest, Triceps', 'and the value matches');
+ok(/Add another muscle/.test(gpBack.querySelector('[data-gadd]').textContent),
+  'the dropdown says it adds to the list rather than replacing it');
+await click('#modalRoot [data-mclose]', 'Cancel');
+await sleep(50);
+
+section('the same picker is on the routine exercise form');
+await click('#tabBar .tab[data-tab="routines"]');
+await sleep(60);
+await click(`[data-action="routine-open"][data-id="${store.state.routines[0].id}"]`, 'open a routine');
+await sleep(60);
+await click('[data-action="rentry-add"]', '+ Add exercise');
+await sleep(70);
+if ($('[data-action="ex-new"]')) await click('[data-action="ex-new"]', 'Create new');
+await sleep(70);
+ok($('#modalRoot [data-gpick="primary"]') !== null,
+  'adding an exercise to a routine gets the dropdown too');
+ok($('#modalRoot [data-gpick="primary"] [data-gadd] optgroup') !== null, 'grouped the same way');
+await click('#modalRoot [data-mclose]', 'Cancel');
+await sleep(50);
+store.state.nav = {};
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

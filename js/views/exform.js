@@ -16,6 +16,7 @@ import { esc, fmtNum, fmtClock, num, parseDur, relDay, normName } from '../util.
 import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
 import { builderHtml, wireBuilder, DEFAULT_LEGS } from './cardio.js';
 import { MEASURES, fmtAmountRange, parseMeasure } from '../measure.js';
+import { MUSCLE_GROUPS } from '../exercise.js';
 import { targetLine } from '../format.js';
 import { openModal, toast } from '../ui.js';
 
@@ -100,17 +101,10 @@ export function exerciseFormHtml(e = {}) {
       <p class="hint" style="margin-top:-4px">A unilateral exercise logs each planned set
         <b>twice</b>, once per side, so "3 sets" means three per side and six rows. Which side comes
         first is in Settings.</p>
-      <label class="field"><span>Target muscle groups (for Trends)</span>
-        <input name="primary" list="muscleGroups" autocapitalize="words"
-               placeholder="e.g. Chest, Triceps"
-               value="${esc((e.primary || []).join(', '))}"></label>
-      <label class="field"><span>Other muscles worked</span>
-        <input name="secondary" list="muscleGroups" autocapitalize="words"
-               placeholder="e.g. Forearms, Core"
-               value="${esc((e.secondary || []).join(', '))}"></label>
-      <p class="hint" style="margin-top:-4px">Trends counts the volume group as <b>direct</b> sets and
-        the others as <b>indirect</b>, reported side by side rather than blended into one number.
-        Separate several with commas.</p>
+      ${groupPickerHtml('primary', 'Target muscle groups', e.primary || [],
+    'Counted as <b>direct</b> sets in Trends. Add as many as the movement really trains.')}
+      ${groupPickerHtml('secondary', 'Other muscles worked', e.secondary || [],
+    'Counted as <b>indirect</b> sets, reported beside the direct ones and never blended into them.')}
       <div class="tiny" style="margin:2px 0 7px">Sets — weight and <span id="exAmountWord">${esc((MEASURES[measure] || MEASURES.reps).label.toLowerCase())}</span> for each set</div>
       <div class="strow-hdr"><div>Set</div><div>Weight (${esc(state.settings.unit)})</div><div id="exAmountHdr">${esc((MEASURES[measure] || MEASURES.reps).header)}</div><div>Drop</div><div></div></div>
       <div id="exRows">${planRows(e)}</div>
@@ -175,6 +169,9 @@ export function exerciseFormHtml(e = {}) {
  * switch. Call once after opening the form.
  */
 export function wireExerciseForm(modal) {
+  // before the early return below: the group pickers are on every exercise
+  // form, including a cardio one that has no set grid to wire
+  wireGroupPicker(modal);
   const rows = modal.querySelector('#exRows');
   const type = modal.querySelector('#exType');
   if (!rows || !type) return;
@@ -352,6 +349,114 @@ export function readExerciseForm(v, modal = null) {
     ...base, setTargets: parsed, targetSets: parsed.length,
     repsMin: null, repsMax: null, weight: null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* muscle-group picker                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The vocabulary arranged for a dropdown.
+ *
+ * Twenty options on an iOS wheel picker is a long scroll, and the groups are
+ * not in any order a reader would predict. Optgroups turn it into "the push
+ * muscles, the pull muscles, arms, core, legs" -- which is how anyone deciding
+ * what a movement trains is already thinking about it.
+ */
+const GROUP_SECTIONS = [
+  ['Push', ['Chest', 'Shoulders', 'Triceps']],
+  ['Pull', ['Back', 'Lats', 'Traps', 'Rear Delts', 'Biceps', 'Forearms']],
+  ['Core', ['Core', 'Obliques', 'Lower Back']],
+  ['Legs', ['Quads', 'Hamstrings', 'Glutes', 'Calves', 'Adductors', 'Abductors']],
+  ['Other', ['Neck', 'Full Body']],
+];
+
+/**
+ * A dropdown that ADDS to a list, with the chosen groups shown as chips.
+ *
+ * An exercise targets several muscles, so a plain <select> cannot express the
+ * answer and <select multiple> is close to unusable on a phone. This is a
+ * native <select> -- so iOS gives its wheel picker and Android its sheet --
+ * that appends whatever you choose, plus a chip per chosen group that removes
+ * itself when tapped.
+ *
+ * The real value lives in a HIDDEN input carrying the comma-joined list, the
+ * same trick the interval builder uses for its pattern: readExerciseForm stays
+ * a pure read of named fields and needs to know nothing about this widget.
+ *
+ * Custom groups are still reachable -- the vocabulary is a convenience, not a
+ * whitelist, and parseGroup keeps anything it does not recognise.
+ */
+export function groupPickerHtml(name, label, chosen = [], hint = '') {
+  const have = chosen.filter(Boolean);
+  // any group already in use anywhere, so one you invented is offered again
+  const custom = [...new Set(state.exercises
+    .flatMap((x) => [...x.primary, ...x.secondary])
+    .filter((g) => !MUSCLE_GROUPS.includes(g)))].sort();
+  return `
+    <div class="field gpick" data-gpick="${name}">
+      <span>${label}</span>
+      <input type="hidden" name="${name}" value="${esc(have.join(', '))}">
+      <div class="gchips" data-gchips>${have.map((g) => chipHtml(g)).join('')}</div>
+      <select data-gadd aria-label="Add a muscle group to ${label}">
+        <option value="">${have.length ? '+ Add another muscle…' : '+ Choose a muscle…'}</option>
+        ${GROUP_SECTIONS.map(([section, groups]) => `<optgroup label="${section}">
+          ${groups.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}
+        </optgroup>`).join('')}
+        ${custom.length ? `<optgroup label="Yours">
+          ${custom.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}
+        </optgroup>` : ''}
+        <option value="__other">Something else…</option>
+      </select>
+      ${hint ? `<p class="hint" style="margin:4px 0 0">${hint}</p>` : ''}
+    </div>`;
+}
+
+const chipHtml = (g) => `<button type="button" class="chip on gchip" data-gremove="${esc(g)}"
+  title="Remove ${esc(g)}">${esc(g)} <span aria-hidden="true">&times;</span></button>`;
+
+/**
+ * Wire every group picker in a modal.
+ *
+ * Imperative, and deliberately NOT routed through data-action: an action
+ * re-renders the whole view, which would destroy the modal mid-edit. Same
+ * reason the set grid and the interval builder are wired by hand.
+ */
+export function wireGroupPicker(modal) {
+  modal.querySelectorAll('[data-gpick]').forEach((box) => {
+    const hidden = box.querySelector('input[type="hidden"]');
+    const chips = box.querySelector('[data-gchips]');
+    const add = box.querySelector('[data-gadd]');
+
+    const read = () => hidden.value.split(',').map((s) => s.trim()).filter(Boolean);
+    const write = (list) => {
+      const seen = [];
+      list.forEach((g) => { if (g && !seen.includes(g)) seen.push(g); });
+      hidden.value = seen.join(', ');
+      chips.innerHTML = seen.map(chipHtml).join('');
+      add.querySelector('option[value=""]').textContent = seen.length
+        ? '+ Add another muscle…' : '+ Choose a muscle…';
+    };
+
+    add.addEventListener('change', () => {
+      const v = add.value;
+      add.value = '';
+      if (!v) return;
+      if (v === '__other') {
+        // eslint-disable-next-line no-alert
+        const typed = window.prompt('Muscle group');
+        if (typed && typed.trim()) write([...read(), typed.trim()]);
+        return;
+      }
+      write([...read(), v]);
+    });
+
+    chips.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-gremove]');
+      if (!btn) return;
+      write(read().filter((g) => g !== btn.dataset.gremove));
+    });
+  });
 }
 
 /* ------------------------------------------------------------------ */

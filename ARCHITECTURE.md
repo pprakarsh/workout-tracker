@@ -753,6 +753,32 @@ those specific wrong answers as wrong.
 record and your name stays. You keep calling it "DB Row"; it now knows it trains your back, and
 every set ever logged under that name still belongs to it.
 
+### Picking muscle groups
+
+The target-muscle fields are a **native `<select>` that appends to a chip list**, not a text box and
+not `<select multiple>`.
+
+The constraint is that `primary` is a list, so one `<select>` cannot hold the answer — and
+`<select multiple>` on a phone is a cramped scrolling box with no visible affordance for
+multi-select. A free-text field with a `<datalist>` was what shipped first, and `datalist` support on
+iOS Safari is a thin suggestion strip, which is barely a picker at all.
+
+So: the dropdown **adds** whatever you choose, each chosen group becomes a chip that removes itself
+when tapped, and the dropdown resets after each pick so the next one adds rather than replaces.
+Twenty groups are arranged into `<optgroup>`s — Push, Pull, Core, Legs, Other — because that is the
+order someone deciding what a movement trains is already thinking in, and because twenty flat
+options on an iOS wheel is a long scroll. A `Something else…` option keeps custom groups reachable:
+the vocabulary is a convenience, not a whitelist.
+
+The real value lives in a **hidden input** carrying the comma-joined list, the same trick the
+interval builder uses for its pattern. `readExerciseForm` stays a pure read of named fields and
+knows nothing about the widget, and `openModal` picks it up because it reads every `[name]`.
+
+Wiring is **imperative**, via `wireGroupPicker(modal)`, not `data-action`. An action dispatch
+re-renders the whole view, which would destroy the modal mid-edit — the same reason the set grid and
+the interval builder are wired by hand. It lives in `views/exform.js` (an exercise being *defined*)
+and `views/library.js` imports it, keeping the existing one-way seam.
+
 ### Editing a finished session
 
 ```

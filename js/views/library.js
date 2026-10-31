@@ -15,12 +15,13 @@ import {
   importLibrary, libraryObject,
 } from '../exercisestore.js';
 import { exerciseLibrary } from '../queries.js';
-import { MUSCLE_GROUPS, kindPills, kindLabel } from '../exercise.js';
+import { kindPills, kindLabel } from '../exercise.js';
 import {
   CATALOG, CATEGORIES, catalogFor, catalogCounts, searchCatalog, categoryLabel,
   loadKind, asLibraryRecord, certainMatch, suggestFor,
 } from '../catalog.js';
 import { MEASURES } from '../measure.js';
+import { groupPickerHtml, wireGroupPicker } from './exform.js';
 import { esc, normName, relDay, download } from '../util.js';
 import { openModal, closeModal, confirmDialog, toast } from '../ui.js';
 
@@ -364,11 +365,6 @@ export const SAMPLE_LIBRARY = `{
 /* the one-exercise form                                              */
 /* ------------------------------------------------------------------ */
 
-const groupField = (name, label, value, hint) => `
-  <label class="field"><span>${label}</span>
-    <input name="${name}" list="muscleGroups" autocapitalize="words" placeholder="${esc(hint)}"
-           value="${esc(value)}"></label>`;
-
 function exerciseForm(ex) {
   const e = ex || {};
   return `
@@ -395,12 +391,12 @@ function exerciseForm(ex) {
     <p class="hint" style="margin-top:-4px">A unilateral exercise logs every planned set
       <b>twice</b>, once per side, so a routine asking for 3 sets opens 6 rows &mdash; left and right
       kept apart, which is the point of training one side at a time.</p>
-    ${groupField('primary', 'Target muscle groups', (e.primary || []).join(', '), 'e.g. Chest, Triceps')}
-    ${groupField('secondary', 'Other muscles worked', (e.secondary || []).join(', '), 'e.g. Biceps, Forearms')}
-    <p class="hint" style="margin-top:-4px">Trends counts the volume group as <b>direct</b> sets and
-      the others as <b>indirect</b>, side by side and never blended &mdash; any single number would
-      need a made-up weighting. Commas separate several.
-      ${MUSCLE_GROUPS.slice(0, 6).join(', ')}… or your own.</p>
+    ${groupPickerHtml('primary', 'Target muscle groups', e.primary || [],
+    'Counted as <b>direct</b> sets in Trends. One exercise can target several &mdash; a bench '
+    + 'press really is chest <em>and</em> triceps.')}
+    ${groupPickerHtml('secondary', 'Other muscles worked', e.secondary || [],
+    'Counted as <b>indirect</b> sets, side by side with the direct ones and never blended '
+    + '&mdash; any single number would need a made-up weighting.')}
     <label class="field"><span>Notes (optional)</span>
       <textarea name="notes" rows="2" placeholder="Setup, cues, pin position…">${esc(e.notes || '')}</textarea></label>`;
 }
@@ -470,7 +466,7 @@ export const libraryActions = {
   },
 
   'lib-new': ({ name }) => {
-    openModal({
+    const modal = openModal({
       title: name ? `Describe ${name}` : 'New exercise',
       bodyHtml: exerciseForm(name ? { name } : null),
       okText: 'Save',
@@ -486,12 +482,13 @@ export const libraryActions = {
         return true;
       },
     });
+    wireGroupPicker(modal);
   },
 
   'lib-edit': ({ key }) => {
     const ex = exerciseFor(key);
     if (!ex) return;
-    openModal({
+    const modal = openModal({
       title: ex.name,
       bodyHtml: `
         ${exerciseForm(ex)}
@@ -516,6 +513,7 @@ export const libraryActions = {
         return true;
       },
     });
+    wireGroupPicker(modal);
   },
 
   'lib-del': async ({ key }) => {

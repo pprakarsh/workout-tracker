@@ -1,7 +1,6 @@
 // Bootstrap: load state, render the active tab, route delegated events.
 import { state, init, subscribe } from './store.js';
 import { exerciseNames } from './queries.js';
-import { MUSCLE_GROUPS } from './exercise.js';
 import { renderRestBar, timerActions, unlockAudio } from './timer.js';
 import {
   initSync, autoPullOnLaunch, autoPullOnForeground, watchRoutines, setSyncNotifier,
@@ -93,18 +92,6 @@ export function render() {
     if (dl.dataset.count !== String(names.length)) {
       dl.innerHTML = names.map((n) => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
       dl.dataset.count = String(names.length);
-    }
-
-    // The muscle-group vocabulary plus any custom group already in use, so a
-    // group you invented once is offered the next time rather than retyped.
-    const gdl = document.getElementById('muscleGroups');
-    const groups = [...new Set([
-      ...MUSCLE_GROUPS,
-      ...state.exercises.flatMap((x) => [...x.primary, ...x.secondary]),
-    ])].sort();
-    if (gdl.dataset.count !== String(groups.length)) {
-      gdl.innerHTML = groups.map((n) => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
-      gdl.dataset.count = String(groups.length);
     }
 
     renderRestBar();
