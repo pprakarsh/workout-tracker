@@ -1,9 +1,12 @@
-// Minimal promise wrapper around IndexedDB. Three stores:
-//   routines : { id, ... }
-//   sessions : { id, startedAt, ... }
-//   meta     : { key, value }   -- settings, activeSessionId, rest timer
+// Minimal promise wrapper around IndexedDB. Four stores:
+//   routines  : { id, ... }
+//   sessions  : { id, startedAt, ... }
+//   exercises : { key, name, ... }   -- the exercise library, keyed on normName
+//   meta      : { key, value }       -- settings, activeSessionId, rest timer
 const DB_NAME = 'workout-tracker';
-const DB_VERSION = 1;
+// v2 added `exercises`. Every store is created behind a contains() guard, so an
+// upgrade on an existing device adds only what is missing and touches no data.
+const DB_VERSION = 2;
 
 let _dbp = null;
 
@@ -19,6 +22,9 @@ export function openDb() {
       if (!db.objectStoreNames.contains('sessions')) {
         const s = db.createObjectStore('sessions', { keyPath: 'id' });
         s.createIndex('startedAt', 'startedAt');
+      }
+      if (!db.objectStoreNames.contains('exercises')) {
+        db.createObjectStore('exercises', { keyPath: 'key' });
       }
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' });

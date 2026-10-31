@@ -3,6 +3,7 @@ import {
   state, normalizeRoutine, saveRoutine, persistSession, sessionVolume, emit, setLabels,
 } from './store.js';
 import { restoreAll, dataFingerprint } from './backupstore.js';
+import { importLibrary, LIBRARY_SCHEMA } from './exercisestore.js';
 import {
   download, csvCell, isoDate, fmtTimeOfDay, fmtDate, fmtClock, fmtDur, fmtNum, uid,
 } from './util.js';
@@ -31,6 +32,9 @@ export function backupObject() {
     timer: state.timer,
     routines: state.routines,
     sessions: state.sessions,
+    // the exercise library travels too: the attributes are knowledge about your
+    // training, not a derivative of it, and nothing could rebuild them
+    exercises: state.exercises,
     // the 10-day plan travels too: a restore on a new phone should know what
     // you intended this week, not just what you have already done
     plan: state.plan,
@@ -104,8 +108,19 @@ export async function importFromText(text, { mode = 'merge' } = {}) {
     throw new Error(`That is not valid JSON: ${err.message}`);
   }
 
-  const out = { mode, routines: 0, sessions: 0, skipped: 0, settings: false };
+  const out = { mode, routines: 0, sessions: 0, exercises: 0, skipped: 0, settings: false };
   const isRoutineish = (o) => o && typeof o === 'object' && (Array.isArray(o.entries) || Array.isArray(o.exercises));
+
+  /* ---- an exercise library ---- */
+  // Routed on the SCHEMA line, not on the shape. `exercises` is also the legacy
+  // key for a routine's entries (see normalizeRoutine), so a bare
+  // `{ exercises: [...] }` is genuinely ambiguous and keeps its old meaning --
+  // breaking an import that used to work would be worse than asking a library
+  // file to carry one line saying what it is.
+  if (data && data.schema === LIBRARY_SCHEMA) {
+    const lib = await importLibrary(data, { mode: mode === 'replace' ? 'replace' : 'update' });
+    return { ...out, library: lib, exercises: lib.added + lib.updated };
+  }
 
   /* ---- a full backup ---- */
   if (isBackup(data)) {
@@ -113,9 +128,14 @@ export async function importFromText(text, { mode = 'merge' } = {}) {
       const res = await restoreAll({
         routines: data.routines || [],
         sessions: data.sessions || [],
+        exercises: data.exercises || [],
         settings: data.settings || null,
         activeSessionId: data.activeSessionId || null,
         timer: data.timer || null,
+        // `plan` was in the backup and accepted by restoreAll, but was never
+        // passed through here, so a replace-restore silently dropped the week
+        // you had planned.
+        plan: data.plan || null,
       });
       return { ...out, ...res, settings: !!data.settings, expected: data.counts || null, actual: dataFingerprint() };
     }
@@ -128,6 +148,12 @@ export async function importFromText(text, { mode = 'merge' } = {}) {
       if (clash) { out.skipped++; continue; }
       await saveRoutine(incoming);
       out.routines++;
+    }
+    // The library merges by name in "add" mode: a merge must not overwrite
+    // attributes this device has that the backup does not.
+    if (Array.isArray(data.exercises) && data.exercises.length) {
+      const lib = await importLibrary({ exercises: data.exercises }, { mode: 'add' });
+      out.exercises = lib.added;
     }
     for (const s of (data.sessions || [])) {
       if (!s || !s.id || !s.startedAt) continue;

@@ -11,7 +11,7 @@
 // accessible version of the chart.
 import { state } from '../store.js';
 import {
-  exerciseTrend, weeklyVolume, trainedExercises, historyWindow, sessionsIn,
+  exerciseTrend, weeklyVolume, trainedExercises,
 } from '../queries.js';
 import {
   metricFor, personalBests, trendDelta, setLoad, isWeakEstimate, MIN_TREND_SESSIONS,
@@ -20,6 +20,8 @@ import { linePlot, barPlot } from '../chart.js';
 import { fmtPace } from '../cardio.js';
 import { measureOf, MEASURES } from '../measure.js';
 import { esc, fmtNum, fmtDate, fmtClock, fmtDur, relDay } from '../util.js';
+import { groupTotals } from '../exercise.js';
+import { exerciseFor } from '../store.js';
 import { openModal, toast } from '../ui.js';
 
 const RANGES = [
@@ -107,6 +109,8 @@ function overview() {
           ${esc(fmtDur(weeks.reduce((n, w) => n + w.cardioSeconds, 0)))} of running logged in total</div>
       </div>` : ''}
 
+    ${groupSection()}
+
     <h2>What you train</h2>
     ${trained.map((x) => `
       <div class="sess-item" data-action="trend-open" data-name="${esc(x.name)}" role="button" tabindex="0">
@@ -124,6 +128,83 @@ function overview() {
         </div>
         <div class="dim">›</div>
       </div>`).join('')}`;
+}
+
+/**
+ * Per-muscle volume: direct sets, indirect sets, and what is being neglected.
+ *
+ * Two columns rather than one score. The tempting move is to count a secondary
+ * muscle as half a set and report a single number per group, but that fraction
+ * is invented and once blended the real counts cannot be recovered. Direct and
+ * indirect answer different questions -- "am I training chest" and "is my chest
+ * getting worked anyway" -- so they stay apart.
+ */
+function groupSection() {
+  const tagged = state.exercises.filter((x) => x.primary || x.secondary.length);
+  // same cutoff convention as inRange, so the range chips mean one thing
+  const r = RANGES.find((x) => x.key === state.trendRange) || RANGES[2];
+  const rows = groupTotals(state.sessions, exerciseFor,
+    { from: r.days ? Date.now() - (r.days * 86400000) : null });
+
+  if (!state.exercises.length) {
+    return `
+      <h2>Muscle groups</h2>
+      <div class="card">
+        <p class="hint" style="margin:0">Nothing to group by yet. Tag each exercise with a
+          <b>volume group</b> in the <b>Exercise library</b> (Routines tab) and this becomes a
+          per-muscle readout &mdash; the one view that cannot be built from set data alone, because
+          nothing in a logged set says what a dumbbell row trains.</p>
+        <button type="button" class="btn block primary" style="margin-top:10px"
+                data-action="library-go">Open the exercise library</button>
+      </div>`;
+  }
+  if (!tagged.length) {
+    return `
+      <h2>Muscle groups</h2>
+      <div class="card">
+        <p class="hint" style="margin:0">Your library has ${state.exercises.length}
+          exercise${state.exercises.length === 1 ? '' : 's'}, but none has a <b>volume group</b> yet.
+          Add one per exercise and this fills in, retroactively, for everything you have already
+          logged.</p>
+        <button type="button" class="btn block primary" style="margin-top:10px"
+                data-action="library-go">Open the exercise library</button>
+      </div>`;
+  }
+  if (!rows.length) {
+    return `
+      <h2>Muscle groups</h2>
+      <div class="card"><p class="hint" style="margin:0">No tagged exercise has been logged in this
+        range. Widen it above, or tag more of your library.</p></div>`;
+  }
+
+  const hi = Math.max(...rows.map((r) => r.direct + r.indirect), 1);
+  // groups in the library that this range never saw: the useful negative result
+  const trained = new Set(rows.map((r) => r.group));
+  const idle = [...new Set(tagged.flatMap((x) => [x.primary, ...x.secondary].filter(Boolean)))]
+    .filter((g) => !trained.has(g)).sort();
+
+  return `
+    <h2>Muscle groups</h2>
+    <div class="card">
+      ${rangeChips(state.trendRange)}
+      <div class="grp-hdr"><div>Muscle</div><div>Direct</div><div>Indirect</div></div>
+      ${rows.map((r) => `
+        <div class="grp-row" data-action="trend-group" data-group="${esc(r.group)}" role="button" tabindex="0">
+          <div class="grp-name">${esc(r.group)}
+            <div class="grp-bar"><span class="d" style="width:${Math.round((r.direct / hi) * 100)}%"></span><span
+              class="i" style="width:${Math.round((r.indirect / hi) * 100)}%"></span></div>
+          </div>
+          <div class="grp-n strong">${r.direct}</div>
+          <div class="grp-n dim">${r.indirect}</div>
+        </div>`).join('')}
+      <div class="small dim center" style="margin-top:8px">
+        <b>direct</b> = sets of an exercise whose volume group is that muscle &middot;
+        <b>indirect</b> = sets where it is listed under "other muscles".
+        Counted separately, never added together.
+      </div>
+      ${idle.length ? `<div class="small" style="margin-top:8px;color:var(--warn)">
+        Not trained in this range: ${esc(idle.join(', '))}</div>` : ''}
+    </div>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -356,6 +437,30 @@ export const trendsActions = {
   'trend-open': ({ name }) => { state.nav.trendName = name; },
   'trend-back': () => { state.nav.trendName = null; },
   'trend-range': ({ range }) => { state.trendRange = range; },
+
+  /** Which exercises actually produced a muscle group's sets. */
+  'trend-group': ({ group }) => {
+    const r = RANGES.find((x) => x.key === state.trendRange) || RANGES[2];
+    const from = r.days ? Date.now() - (r.days * 86400000) : null;
+    const rec = groupTotals(state.sessions, exerciseFor, { from }).find((x) => x.group === group);
+    if (!rec) return;
+    openModal({
+      title: group,
+      bodyHtml: `
+        <div class="kv"><span>Direct sets</span><span class="strong">${rec.direct}</span></div>
+        <div class="kv"><span>Indirect sets</span><span>${rec.indirect}</span></div>
+        ${rec.volume ? `<div class="kv"><span>Volume</span><span>${fmtNum(rec.volume)} ${esc(state.settings.unit)}</span></div>` : ''}
+        <div class="kv"><span>Last trained</span><span>${rec.lastAt ? esc(relDay(rec.lastAt)) : '—'}</span></div>
+        <p class="hint">From these exercises:</p>
+        <div class="btn-row" style="flex-direction:column;gap:8px">
+          ${rec.exercises.map((n) => `<button type="button" class="btn block"
+            data-action="trend-open" data-name="${esc(n)}">${esc(n)}</button>`).join('')}
+        </div>
+        <p class="hint">Volume counts only sets measured in reps, and only where a load is
+          known &mdash; a timed hold is real work that tonnage cannot express.</p>`,
+      cancelText: 'Close',
+    });
+  },
 
   'trend-pick': () => {
     const list = trainedExercises();

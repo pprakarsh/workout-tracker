@@ -67,6 +67,13 @@ export function render() {
   ], 'Effort logged per set', `RPE is how hard a set felt (1-10). RIR is how many reps you had
       left. Two scales for the same thing, stored separately &mdash; nothing is ever converted
       between them.`)}
+      ${sel('firstSide', s.firstSide === 'R' ? 'R' : 'L', [
+    ['L', 'Left first'], ['R', 'Right first'],
+  ], 'Unilateral exercises start with', `An exercise marked <b>unilateral</b> in the
+      exercise library logs each set twice, once per side. This decides which side gets the top
+      row, so reading order matches the order you actually work in.
+      <br><span class="dim">It only affects rows created from here on; a session already open
+      keeps the order it opened with.</span>`)}
       <label class="field"><span>Weight step for the +/- buttons</span>
         <input data-cf="weightStep" inputmode="decimal" value="${esc(fmtNum(s.weightStep))}"></label>
     </div>

@@ -7,13 +7,15 @@ import { normalizePlan } from './plan.js';
 import {
   blankSet, expandEntry, materializePlan, normalizeEntry, normalizeRoutine,
   parseSetTargets, setLabels, workingSets, lastWorkingSets, altNames, knownDefinition,
+  plannedRowCount, planIndexFor, sideForRow,
 } from './model.js';
+import { normalizeExercise, otherSide } from './exercise.js';
 
 // Re-exported so the store stays the single front door for callers: views ask
 // the store for everything about a session, shape helpers included.
 export {
   normalizeEntry, normalizeRoutine, parseSetTargets, setLabels, workingSets, materializePlan,
-  lastWorkingSets, altNames, knownDefinition,
+  lastWorkingSets, altNames, knownDefinition, plannedRowCount, sideForRow,
 };
 
 export const DEFAULT_SETTINGS = {
@@ -30,12 +32,21 @@ export const DEFAULT_SETTINGS = {
   // 'plan' fills new sets from the routine's targets; 'last' fills them from
   // what you actually did last time. The SET COUNT always comes from the plan.
   prefillFrom: 'last',
+  // which side of a unilateral exercise gets the first row. Whichever you
+  // habitually start with should be on top, because reading order is the order
+  // you will work in.
+  firstSide: 'L',
 };
 
 export const state = {
   ready: false,
   routines: [],
   sessions: [],          // every session, newest first
+  // the exercise library: one record per exercise NAME, keyed on normName.
+  // Its own object store rather than a blob in `meta` -- unlike the 10-day
+  // plan, this grows with every exercise you ever do and is written one record
+  // at a time, which is what an object store is for.
+  exercises: [],
   active: null,          // the in-progress session object (also present in .sessions)
   editSessionId: null,   // a FINISHED session opened for correction in History
   // transient view state: which interval blocks have their rounds expanded.
@@ -89,9 +100,10 @@ export async function setEditing(sessionId) {
 /* ------------------------------------------------------------------ */
 
 export async function init() {
-  const [routines, sessions, settings, activeId, timer, plan] = await Promise.all([
+  const [routines, sessions, exercises, settings, activeId, timer, plan] = await Promise.all([
     dbGetAll('routines'),
     dbGetAll('sessions'),
+    dbGetAll('exercises'),
     metaGet('settings', null),
     metaGet('activeSessionId', null),
     metaGet('timer', null),
@@ -100,6 +112,9 @@ export async function init() {
   state.routines = (routines || []).map(normalizeRoutine)
     .sort((a, b) => a.name.localeCompare(b.name));
   state.sessions = (sessions || []).sort((a, b) => b.startedAt - a.startedAt);
+  state.exercises = (exercises || []).map(normalizeExercise)
+    .filter((x) => x.key)
+    .sort((a, b) => a.name.localeCompare(b.name));
   state.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
   state.plan = normalizePlan(plan);
   state.active = activeId ? state.sessions.find((s) => s.id === activeId && !s.finishedAt) || null : null;
@@ -197,7 +212,7 @@ export async function startSession(routineId) {
     startedAt: Date.now(),
     finishedAt: null,
     unit: state.settings.unit,
-    entries: (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings, state.sessions)),
+    entries: (r ? r.entries : []).flatMap((e) => expandEntry(withLibraryDefaults(e), state.settings, state.sessions)),
     currentIdx: 0,
     rpe: null,
     bodyweight: null,
@@ -252,7 +267,7 @@ export async function createPastSession({ routineId = null, startedAt, finishedA
     startedAt: start,
     finishedAt: Number.isFinite(finishedAt) && finishedAt >= start ? Number(finishedAt) : start,
     unit: state.settings.unit,
-    entries: (r ? r.entries : []).flatMap((e) => expandEntry(e, state.settings, state.sessions, start)),
+    entries: (r ? r.entries : []).flatMap((e) => expandEntry(withLibraryDefaults(e), state.settings, state.sessions, start)),
     currentIdx: 0,
     rpe: null,
     bodyweight: null,
@@ -315,6 +330,9 @@ export async function saveSessionBackToRoutine() {
         name: e.swappedFrom || e.name,
         group: e.group,
         measure: e.measure,
+        unilateral: e.unilateral,
+        primary: e.primary,
+        secondary: e.secondary,
         // An Either/Or slot swapped mid-workout must not rewrite the routine:
         // the leg press being busy today is not a decision about next week. The
         // original name goes back in the slot and the one actually used goes
@@ -354,6 +372,19 @@ export const entryIndex = (id) => {
   const s = working();
   return s ? s.entries.findIndex((e) => e.id === id) : -1;
 };
+/**
+ * The exercise library record for a name, or null.
+ *
+ * Lives here rather than in exercisestore.js because it is a READ over state,
+ * like findEntry and getRoutine, and the store is the one module everything
+ * else may already import. exercisestore re-exports it so the library's own
+ * callers have a single front door.
+ */
+export const exerciseFor = (name) => {
+  const key = normName(name);
+  return key ? state.exercises.find((x) => x.key === key) || null : null;
+};
+
 export const findEntry = (id) => {
   const s = working();
   return s ? s.entries.find((e) => e.id === id) || null : null;
@@ -391,10 +422,40 @@ export async function stepBlock(dir) {
   await touch();
 }
 
+/**
+ * Apply what the library knows about an exercise to an entry being created.
+ *
+ * The library WINS for these five fields, rather than filling in blanks. It has
+ * to: normalizeEntry eagerly defaults `unilateral` to false and `secondary` to
+ * `[]`, so "the routine did not say" and "the routine said no" are the same
+ * value by the time an entry reaches here, and a fill-the-blanks rule could
+ * never act on either one.
+ *
+ * That is only safe because the exercise form writes these fields TO the
+ * library when you edit them (see views/exform.js syncLibrary), so there is one
+ * source of truth rather than two that disagree. What the routine keeps is what
+ * a routine is actually about: sets, reps, load, rest, order.
+ *
+ * Entries already inside a logged session are untouched -- they carry their own
+ * snapshot, so editing the library never reshapes a workout you already did.
+ */
+export function withLibraryDefaults(raw = {}) {
+  const ex = exerciseFor(raw.name);
+  if (!ex || ex.type !== 'lift') return raw;
+  return {
+    ...raw,
+    measure: ex.measure,
+    bodyweight: ex.bodyweight,
+    unilateral: ex.unilateral,
+    primary: ex.primary,
+    secondary: ex.secondary,
+  };
+}
+
 export async function addSessionEntry(raw) {
   const s = working();
   if (!s) return null;
-  const made = expandEntry(raw, state.settings, state.sessions);
+  const made = expandEntry(withLibraryDefaults(raw), state.settings, state.sessions);
   s.entries.push(...made);
   s.modified = true;
   await touch();
@@ -442,17 +503,23 @@ export async function swapEntryExercise(entryId, name) {
   if ((e.sets || []).some((x) => x.done)) return { blocked: 'logged' };
 
   const def = knownDefinition(state.routines, state.sessions, to);
+  const lib = exerciseFor(to);
   const from = e.name;
-  const measure = def?.measure || e.measure || 'reps';
+  const measure = lib?.measure || def?.measure || e.measure || 'reps';
   e.alternatives = altNames([...(e.alternatives || []), from], to);
   e.swappedFrom = e.swappedFrom || from;
   e.name = to;
   e.measure = measure;
-  e.bodyweight = def ? !!def.bodyweight : !!e.bodyweight;
+  e.bodyweight = lib ? lib.bodyweight : def ? !!def.bodyweight : !!e.bodyweight;
+  // the swapped-in exercise brings its own shape and its own muscles
+  e.unilateral = lib ? lib.unilateral : !!e.unilateral;
+  e.primary = lib ? lib.primary : e.primary;
+  e.secondary = lib ? lib.secondary : e.secondary;
   // rebuild the rows from the exercise now in the slot, not the one that was
   e.sets = [];
   materializePlan(e, state.settings.prefillFrom === 'last'
-    ? lastWorkingSets(state.sessions, to, measure, null) : null);
+    ? lastWorkingSets(state.sessions, to, measure, null) : null,
+  { firstSide: state.settings.firstSide });
   const s = working();
   if (s) s.modified = true;
   await touch();
@@ -467,6 +534,29 @@ export async function swapEntryExercise(entryId, name) {
  * that has a drop after it must not start a rest clock -- it must say "strip it
  * and go". Returns the set, so the caller can name the load to strip to.
  */
+/**
+ * The matching other-side row waiting immediately after this one.
+ *
+ * Same question `nextDropAfter` asks, for the same reason: the left and the
+ * right of one set are one set's work, so the rest belongs after the SECOND
+ * side, not between them. Confirming the first side has to move you on rather
+ * than start a two-minute countdown in the middle of a set.
+ */
+export function nextSideAfter(entryId, setId) {
+  const e = findEntry(entryId);
+  const sets = e?.sets || [];
+  const i = sets.findIndex((x) => x.id === setId);
+  if (i < 0 || !sets[i].side) return null;
+  const next = sets[i + 1];
+  if (!next || next.done || !next.side || next.side === sets[i].side) return null;
+  // "a different side on the next row" is not enough: set 2's left row also
+  // differs from set 1's right. The two rows must belong to the SAME set, and
+  // setLabels is the one place that decides what that means.
+  const labels = setLabels(sets);
+  const setNo = (l) => (l.match(/^\d+/) || [])[0];
+  return setNo(labels[i]) && setNo(labels[i]) === setNo(labels[i + 1]) ? next : null;
+}
+
 export function nextDropAfter(entryId, setId) {
   const e = findEntry(entryId);
   const sets = e?.sets || [];
@@ -584,9 +674,17 @@ export function activeSet(e) {
 }
 
 /** The planned target for set number i (0-based), per-set plan first. */
+/**
+ * The planned target for the i-th WORKING ROW.
+ *
+ * On a unilateral exercise two rows share one planned set, so the row index is
+ * mapped back to the plan rather than used directly -- otherwise set 2's left
+ * row would read set 1's target off the end of the plan.
+ */
 export function plannedSet(e, i) {
   if (!e || e.type !== 'lift') return null;
-  if (e.setTargets && e.setTargets[i]) return e.setTargets[i];
+  const pi = planIndexFor(e, i);
+  if (e.setTargets && e.setTargets[pi]) return e.setTargets[pi];
   if (e.weight !== null || e.repsMin !== null || e.repsMax !== null) {
     return { weight: e.weight, repsMin: e.repsMin, repsMax: e.repsMax };
   }
@@ -615,7 +713,8 @@ export async function addSet(entryId, { warmup = false } = {}) {
   // planned targets are indexed by WORKING set number, so warmups don't shift them
   const workingCount = workingSets(e).length;
   const plan = plannedSet(e, workingCount);
-  if (e.setTargets && e.setTargets[workingCount]) {
+  set.side = sideForRow(e, workingCount, state.settings.firstSide);
+  if (e.setTargets && e.setTargets[planIndexFor(e, workingCount)]) {
     set.weight = plan.weight ?? (prev ? prev.weight : null);
     set.reps = plan.repsMin ?? plan.repsMax ?? (prev ? prev.reps : null);
   } else {
@@ -693,7 +792,7 @@ export async function toggleWarmup(entryId, setId) {
 export async function fillPlannedSets(entryId) {
   const e = findEntry(entryId);
   if (!e || e.type !== 'lift') return 0;
-  const want = e.setTargets ? e.setTargets.length : (e.targetSets ?? 0);
+  const want = plannedRowCount(e);
   let made = 0;
   while (workingSets(e).length < want) {
     const i = workingSets(e).length;
@@ -701,6 +800,7 @@ export async function fillPlannedSets(entryId) {
     const set = blankSet(e.unit || state.settings.unit);
     set.weight = plan ? (plan.weight ?? null) : null;
     set.reps = plan ? (plan.repsMin ?? plan.repsMax ?? null) : null;
+    set.side = sideForRow(e, i, state.settings.firstSide);
     e.sets.push(set);
     made++;
   }
@@ -801,7 +901,7 @@ export function entryStatus(e) {
   const sets = workingSets(e);
   const done = sets.filter((s) => s.done).length;
   if (!done) return 'pending';
-  const target = e.targetSets ?? sets.length;
+  const target = plannedRowCount(e) || sets.length;
   return done >= target ? 'done' : 'partial';
 }
 

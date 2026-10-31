@@ -33,6 +33,8 @@ const section = (s) => console.log(`\n== ${s}`);
 const store = await import(`${APP}/js/store.js`);
 const clock = await import(`${APP}/js/clockstore.js`);
 const backupStore = await import(`${APP}/js/backupstore.js`);
+const ex = await import(`${APP}/js/exercise.js`);
+const xs = await import(`${APP}/js/exercisestore.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const nowView = await import(`${APP}/js/views/now.js`);
@@ -2362,6 +2364,271 @@ ok(await store.addDropSet(drWarmE.id, drWarmE.sets[0].id) === null,
 ok(await store.addDropSet(drE.id, 'no-such-set') === null, 'and an unknown set is a no-op');
 await store.discardSession();
 await store.deleteRoutine(drR.id);
+
+/* ------------------------------------------------------------------ */
+/* the exercise library: what an exercise IS                          */
+/* ------------------------------------------------------------------ */
+
+section('isometric / bodyweight / external weight are two questions, not one');
+ok(ex.normalizeExercise({ name: 'Plank', measure: 'isometric', bodyweight: true }).measure === 'time',
+  '"isometric" is a measure of time, so it normalises to time');
+const xbPlank = ex.normalizeExercise({ name: 'Plank', measure: 'isometric', bodyweight: true });
+ok(xbPlank.measure === 'time' && xbPlank.bodyweight === true,
+  'a bodyweight plank is BOTH timed and unloaded — one three-way enum could not say that');
+const xwPlank = ex.normalizeExercise({ name: 'Weighted Plank', measure: 'time', bodyweight: false });
+ok(xwPlank.measure === 'time' && xwPlank.bodyweight === false,
+  'and a weighted plank is timed and loaded');
+ok(ex.normalizeExercise({ name: 'Curl' }).measure === 'reps',
+  'saying nothing means reps, so an old record still reads correctly');
+ok(ex.kindLabel(xbPlank) === 'isometric hold, bodyweight',
+  `the pair renders as one phrase (${ex.kindLabel(xbPlank)})`);
+ok(ex.kindLabel(ex.normalizeExercise({ name: 'Carry', measure: 'distance' })) === 'loaded carry, external weight',
+  'and a carry reads as a carry');
+ok(ex.kindPills({ ...xbPlank, unilateral: true }).join(',') === 'isometric,bodyweight,per side',
+  `the pills say all three (${ex.kindPills({ ...xbPlank, unilateral: true }).join(',')})`);
+
+section('muscle groups are matched loosely, and a group we never heard of is kept');
+ok(ex.parseGroup('pecs') === 'Chest', 'pecs is Chest');
+ok(ex.parseGroup('QUADRICEPS') === 'Quads', 'case and synonym both handled');
+ok(ex.parseGroup('rear delts') === 'Rear Delts', 'a two-word group works');
+ok(ex.parseGroup('Serratus') === 'Serratus',
+  'a group this app does not know is kept as spelled, not rejected — an import must not fail on it');
+ok(ex.parseGroup('  ') === null && ex.parseGroup(null) === null, 'blank is no group');
+ok(ex.parseGroups('Biceps, forearms').join('|') === 'Biceps|Forearms', 'a list splits on commas');
+ok(ex.parseGroups(['lats', 'Lats']).length === 1, 'duplicates collapse after normalising');
+ok(ex.parseGroups('Chest, Triceps', 'pecs').join('|') === 'Triceps',
+  'the primary group is never also listed as "another muscle worked"');
+ok(ex.MUSCLE_GROUPS.includes('Lats') && ex.MUSCLE_GROUPS.includes('Hamstrings'),
+  `the vocabulary is there (${ex.MUSCLE_GROUPS.length} groups)`);
+
+section('an exercise is described once, keyed on its name');
+const xSaved = await xs.saveExercise({
+  name: 'Single-arm Dumbbell Row', unilateral: true, primary: 'back',
+  secondary: 'lats, biceps', notes: 'knee on bench',
+});
+ok(xSaved.key === 'single-arm dumbbell row', `keyed on the normalised name (${xSaved.key})`);
+ok(xSaved.unilateral === true && xSaved.primary === 'Back', 'with its attributes normalised');
+ok(xSaved.secondary.join('|') === 'Lats|Biceps', 'and its other muscles');
+ok(xs.exerciseFor('SINGLE-ARM DUMBBELL ROW') !== null, 'found again whatever the casing');
+ok(state.exercises.length === 1, 'one record');
+await xs.saveExercise({ name: 'Single-arm dumbbell ROW', primary: 'Lats' });
+ok(state.exercises.length === 1, 'saving the same name again updates rather than duplicating');
+ok(xs.exerciseFor('Single-arm Dumbbell Row').primary === 'Lats', 'with the new value');
+ok(await xs.deleteExercise('Single-arm Dumbbell Row') === true && state.exercises.length === 0,
+  'and it can be removed');
+
+section('the library fills itself from what you have already done');
+const xR = await store.createRoutine({
+  name: 'Seed Me',
+  entries: [
+    { name: 'Seeded Plank', measure: 'time', sets: 2, reps: '45' },
+    { name: 'Seeded Pull-up', bodyweight: true, sets: 3, reps: 8 },
+  ],
+});
+await xs.saveExercise({ name: 'Seeded Plank', primary: 'Core', notes: 'mine' });
+const xSeed = await xs.seedExerciseLibrary();
+ok(xSeed.added >= 1, `undescribed exercises were added (${xSeed.added})`);
+ok(xs.exerciseFor('Seeded Pull-up') !== null, 'including the one from the routine just created');
+ok(xs.exerciseFor('Seeded Plank').primary === 'Core',
+  'an exercise already described keeps what you told it');
+ok(xs.exerciseFor('Seeded Plank').notes === 'mine', 'notes and all');
+const xPu = xs.exerciseFor('Seeded Pull-up');
+ok(xPu.bodyweight === true, 'seeding carries over what the old data already knew');
+ok(xPu.primary === null && xPu.secondary.length === 0,
+  'but never guesses a muscle group from a name — a wrong tag silently poisons every trend');
+ok((await xs.seedExerciseLibrary()).added === 0, 'running it again adds nothing');
+
+section('a library is a JSON file, and importing it has three honest modes');
+const xFile = {
+  schema: xs.LIBRARY_SCHEMA,
+  exercises: [
+    { name: 'Seeded Pull-up', primary: 'Lats', secondary: ['Biceps'] },
+    { name: 'Imported Press', primary: 'chest', secondary: 'triceps, shoulders' },
+  ],
+};
+const xAdd = await xs.importLibrary(xFile, { mode: 'add' });
+ok(xAdd.added === 1 && xAdd.unchanged === 1,
+  `add only takes the new one (${xAdd.added} added, ${xAdd.unchanged} left alone)`);
+ok(xs.exerciseFor('Seeded Pull-up').primary === null,
+  'add mode never changes an exercise you already have');
+ok(xs.exerciseFor('Imported Press').primary === 'Chest', 'and the new one arrives normalised');
+const xUpd = await xs.importLibrary(xFile, { mode: 'update' });
+ok(xUpd.updated === 1, `update rewrites the one that changed (${xUpd.updated})`);
+ok(xs.exerciseFor('Seeded Pull-up').primary === 'Lats', 'so now it is tagged');
+ok(xs.exerciseFor('Seeded Pull-up').bodyweight === true,
+  'and update left bodyweight alone, because the file never mentioned it');
+const xPartial = await xs.importLibrary(
+  { exercises: [{ name: 'Seeded Pull-up', secondary: ['Forearms'] }] }, { mode: 'update' },
+);
+ok(xs.exerciseFor('Seeded Pull-up').primary === 'Lats',
+  'a file carrying only "secondary" does not reset the volume group');
+ok(xs.exerciseFor('Seeded Pull-up').secondary.join() === 'Forearms', 'but does replace what it names');
+ok(xPartial.updated === 1, 'and reports the update');
+ok((await xs.importLibrary([{ name: 'Bare Array Row' }], { mode: 'add' })).added === 1,
+  'a bare array works, so a hand-written file needs no schema line');
+const xRep = await xs.importLibrary({ exercises: [{ name: 'Only Me' }] }, { mode: 'replace' });
+ok(xRep.removed > 0 && state.exercises.length === 1,
+  `replace makes the file the library (${xRep.removed} removed)`);
+ok(xs.exerciseFor('Only Me') !== null, 'keeping what it listed');
+
+section('a broken file fails loudly rather than half-importing');
+let xErr = null;
+try { await xs.importLibrary('{ not json'); } catch (e) { xErr = e.message; }
+ok(/valid JSON/.test(xErr || ''), `bad JSON says so (${xErr})`);
+xErr = null;
+try { await xs.importLibrary({ hello: 'world' }); } catch (e) { xErr = e.message; }
+ok(/exercises/.test(xErr || ''), `a file with no list says what it expected (${xErr})`);
+ok((await xs.importLibrary({ exercises: [{ name: '' }, null, 42] })).skipped === 3,
+  'rows with no usable name are skipped and counted, not silently dropped');
+
+section('the library travels in a backup, because nothing could rebuild it');
+await xs.saveExercise({ name: 'Backup Me', primary: 'Glutes', unilateral: true });
+const xBackup = JSON.stringify(xi.backupObject());
+ok(JSON.parse(xBackup).exercises.length === state.exercises.length, 'the backup carries it');
+ok(backupStore.dataFingerprint().exercises === state.exercises.length,
+  'and the fingerprint counts it, so a restore can be checked');
+await backupStore.restoreAll({ routines: [], sessions: [], exercises: [] });
+ok(state.exercises.length === 0, 'a restore with an explicit empty library wipes it');
+await xi.importFromText(xBackup, { mode: 'replace' });
+ok(xs.exerciseFor('Backup Me')?.primary === 'Glutes', 'and a replace-restore brings it back');
+ok(xs.exerciseFor('Backup Me').unilateral === true, 'attributes intact');
+await backupStore.restoreAll({ routines: [], sessions: [] });
+ok(state.exercises.length > 0,
+  'a backup from before the library existed leaves it alone — absent is not the same as empty');
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+await store.deleteRoutine(xR.id);
+
+/* ------------------------------------------------------------------ */
+/* unilateral: left and right are kept apart                          */
+/* ------------------------------------------------------------------ */
+
+section('a unilateral exercise logs every planned set twice, once per side');
+await store.updateSettings({ requireEffort: false, firstSide: 'L', prefillFrom: 'last' });
+await xs.saveExercise({
+  name: 'Uni Row', unilateral: true, primary: 'Back', secondary: ['Lats', 'Biceps'],
+});
+const uR = await store.createRoutine({
+  name: 'Uni Day', entries: [{ name: 'Uni Row', unilateral: true, sets: 3, reps: 10, weight: 30 }],
+});
+ok(uR.entries[0].unilateral === true, 'the routine entry carries the flag');
+ok(store.plannedRowCount(uR.entries[0]) === 6,
+  `3 planned sets become 6 rows (${store.plannedRowCount(uR.entries[0])})`);
+const uS = await store.startSession(uR.id);
+const uE = uS.entries[0];
+ok(uE.sets.length === 6, `the session opens with 6 rows (${uE.sets.length})`);
+ok(uE.sets.map((s) => s.side).join('') === 'LRLRLR',
+  `alternating sides, left first (${uE.sets.map((s) => s.side).join('')})`);
+ok(store.setLabels(uE.sets).join(',') === '1L,1R,2L,2R,3L,3R',
+  `1L and 1R are the SAME set done twice, not sets 1 and 2 (${store.setLabels(uE.sets).join(',')})`);
+ok(uE.sets[0].weight === 30 && uE.sets[1].weight === 30,
+  'both sides open on the planned load');
+ok(store.plannedSet(uE, 2).weight === 30,
+  'the planned target maps back through the doubling rather than reading off the end');
+ok(fmt.targetLine(uR.entries[0]).includes('per side'),
+  `the target line says the count is per side (${fmt.targetLine(uR.entries[0])})`);
+
+section('the exercise is not "done" until both sides of every set are');
+for (const s of uE.sets.slice(0, 5)) await store.updateSet(uE.id, s.id, { reps: 10, done: true });
+ok(store.entryStatus(uE) === 'partial',
+  'five of six rows is still in progress — targetSets alone would have called it done after three');
+await store.updateSet(uE.id, uE.sets[5].id, { reps: 10, done: true });
+ok(store.entryStatus(uE) === 'done', 'and done once the sixth lands');
+
+section('rest belongs after the SECOND side, not between the two');
+await store.discardSession();
+const uS2 = await store.startSession(uR.id);
+const uE2 = uS2.entries[0];
+ok(store.nextSideAfter(uE2.id, uE2.sets[0].id).id === uE2.sets[1].id,
+  'the app can see the other side waiting after the left row');
+ok(store.nextSideAfter(uE2.id, uE2.sets[1].id) === null,
+  'and nothing waiting after the right one — that is where the rest goes');
+await store.updateSet(uE2.id, uE2.sets[1].id, { done: true });
+ok(store.nextSideAfter(uE2.id, uE2.sets[0].id) === null,
+  'a side already logged is not offered as the next one');
+
+section('which side comes first is a setting, and prefill follows the SIDE not the row');
+await store.updateSet(uE2.id, uE2.sets[0].id, { weight: 32.5, reps: 9, done: true });
+await store.updateSet(uE2.id, uE2.sets[1].id, { weight: 27.5, reps: 8, done: true });
+for (const s of uE2.sets.slice(2)) await store.updateSet(uE2.id, s.id, { weight: 30, reps: 8, done: true });
+await store.finishSession();
+await store.updateSettings({ firstSide: 'R' });
+const uS3 = await store.startSession(uR.id);
+const uE3 = uS3.entries[0];
+ok(uE3.sets.map((s) => s.side).join('') === 'RLRLRL',
+  `the setting flips the order (${uE3.sets.map((s) => s.side).join('')})`);
+ok(uE3.sets[0].side === 'R' && uE3.sets[0].weight === 27.5,
+  `the top row is now the right side and gets the RIGHT side's 27.5 (${uE3.sets[0].weight})`);
+ok(uE3.sets[1].side === 'L' && uE3.sets[1].weight === 32.5,
+  `and the left row gets the left's 32.5 (${uE3.sets[1].weight}) — matching by position would have swapped them`);
+await store.updateSettings({ firstSide: 'L' });
+await store.discardSession();
+
+section('a bilateral exercise is untouched by any of this');
+const bR = await store.createRoutine({
+  name: 'Bi Day', entries: [{ name: 'Bi Press', sets: 3, reps: 8, weight: 50 }],
+});
+const bS = await store.startSession(bR.id);
+ok(bS.entries[0].sets.length === 3, 'three planned sets, three rows');
+ok(bS.entries[0].sets.every((s) => s.side === null), 'with no side on any of them');
+ok(store.setLabels(bS.entries[0].sets).join(',') === '1,2,3', 'and plain numbering');
+await store.discardSession();
+await store.deleteRoutine(bR.id);
+
+/* ------------------------------------------------------------------ */
+/* per-muscle trends: direct and indirect, never blended              */
+/* ------------------------------------------------------------------ */
+
+section('sets are counted against the muscle groups their exercise is tagged with');
+const gRows = ex.groupTotals(state.sessions, xs.exerciseFor);
+const gBack = gRows.find((r) => r.group === 'Back');
+const gLats = gRows.find((r) => r.group === 'Lats');
+ok(!!gBack && gBack.direct === 6,
+  `the Uni Row's six rows are 6 DIRECT sets of Back (${gBack?.direct})`);
+ok(!!gLats && gLats.indirect === 6 && gLats.direct === 0,
+  `and 6 INDIRECT sets of Lats, kept in its own column (${gLats?.indirect} indirect, ${gLats?.direct} direct)`);
+ok(gBack.exercises.includes('Uni Row'), 'the group remembers which exercises produced it');
+ok(gBack.lastAt !== null, 'and when it was last trained');
+
+section('a muscle group total never silently adds the two kinds together');
+ok(gLats.direct + gLats.indirect === 6 && gLats.direct === 0,
+  'adding them is the caller\'s choice, not baked in with an invented 0.5 weighting');
+
+section('warmups and unconfirmed sets are excluded, exactly as elsewhere in Trends');
+const gWR = await store.createRoutine({
+  name: 'Group Filter', entries: [{ name: 'Group Lift', sets: 2, reps: 8, weight: 40 }],
+});
+await xs.saveExercise({ name: 'Group Lift', primary: 'Shoulders' });
+const gWS = await store.startSession(gWR.id);
+const gWE = gWS.entries[0];
+await store.addSet(gWE.id, { warmup: true });
+await store.updateSet(gWE.id, gWE.sets.find((s) => s.warmup).id, { weight: 20, reps: 10, done: true });
+await store.updateSet(gWE.id, gWE.sets.find((s) => !s.warmup).id, { weight: 40, reps: 8, done: true });
+await store.finishSession();
+const gSh = ex.groupTotals(state.sessions, xs.exerciseFor).find((r) => r.group === 'Shoulders');
+ok(gSh.direct === 1,
+  `one confirmed working set counted; the warmup and the untouched row did not (${gSh.direct})`);
+
+section('an entry carries its own tags, so editing the library never rewrites history');
+const gTagged = ex.groupTotals(
+  [{
+    finishedAt: 1, startedAt: 1,
+    entries: [{
+      name: 'Whatever', type: 'lift', primary: 'Neck', secondary: [],
+      sets: [{ done: true, reps: 5, weight: 10 }],
+    }],
+  }],
+  () => ({ primary: 'Chest', secondary: [] }),
+);
+ok(gTagged[0].group === 'Neck',
+  'the entry\'s own tag wins over the library, so a logged session keeps the meaning it had');
+
+section('an untagged exercise contributes nothing rather than guessing');
+ok(!ex.groupTotals(
+  [{ finishedAt: 1, startedAt: 1, entries: [{ name: 'Unknown', type: 'lift', sets: [{ done: true, reps: 5 }] }] }],
+  () => null,
+).length, 'no tag means no row — better than a wrong row');
+await store.deleteRoutine(uR.id);
+await store.deleteRoutine(gWR.id);
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

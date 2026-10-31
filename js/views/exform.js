@@ -6,7 +6,9 @@
 // routine editor and the mid-session "add exercise" flow. views/entry.js is
 // about one exercise being PERFORMED.
 import { state, parseSetTargets, getRoutine, saveRoutine, normalizeEntry, addSessionEntry, altNames, setLabels } from '../store.js';
+import { saveExercise } from '../exercisestore.js';
 import { exerciseLibrary, findInLibrary } from '../queries.js';
+import { exerciseFor } from '../store.js';
 import { esc, fmtNum, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
 import { builderHtml, wireBuilder, DEFAULT_LEGS } from './cardio.js';
@@ -87,6 +89,24 @@ export function exerciseFormHtml(e = {}) {
             ${measure === m.key ? 'selected' : ''}>${esc(m.long)}</option>`).join('')}
         </select></label>
       <p class="hint" id="exMeasureHint" style="margin-top:-4px">${esc(MEASURE_HINT[measure])}</p>
+      <label class="field"><span>One side at a time?</span>
+        <select name="unilateral">
+          <option value="0" ${e.unilateral ? '' : 'selected'}>Both sides together (barbell, machine)</option>
+          <option value="1" ${e.unilateral ? 'selected' : ''}>Unilateral &mdash; one arm / one leg at a time</option>
+        </select></label>
+      <p class="hint" style="margin-top:-4px">A unilateral exercise logs each planned set
+        <b>twice</b>, once per side, so "3 sets" means three per side and six rows. Which side comes
+        first is in Settings.</p>
+      <label class="field"><span>Volume group (for Trends)</span>
+        <input name="primary" list="muscleGroups" autocapitalize="words" placeholder="e.g. Biceps"
+               value="${esc(e.primary || '')}"></label>
+      <label class="field"><span>Other muscles worked</span>
+        <input name="secondary" list="muscleGroups" autocapitalize="words"
+               placeholder="e.g. Forearms, Core"
+               value="${esc((e.secondary || []).join(', '))}"></label>
+      <p class="hint" style="margin-top:-4px">Trends counts the volume group as <b>direct</b> sets and
+        the others as <b>indirect</b>, reported side by side rather than blended into one number.
+        Separate several with commas.</p>
       <div class="tiny" style="margin:2px 0 7px">Sets — weight and <span id="exAmountWord">${esc((MEASURES[measure] || MEASURES.reps).label.toLowerCase())}</span> for each set</div>
       <div class="strow-hdr"><div>Set</div><div>Weight (${esc(state.settings.unit)})</div><div id="exAmountHdr">${esc((MEASURES[measure] || MEASURES.reps).header)}</div><div>Drop</div><div></div></div>
       <div id="exRows">${planRows(e)}</div>
@@ -266,6 +286,9 @@ export function readExerciseForm(v, modal = null) {
     targetPace: parsePace(v.targetPace),
     rest: parseDur(v.rest),
     bodyweight: v.bodyweight === '1',
+    unilateral: v.unilateral === '1',
+    primary: v.primary || null,
+    secondary: v.secondary || '',
     measure: parseMeasure(v.measure),
     group: (v.group || '').trim() || null,
     notes: (v.notes || '').trim(),
@@ -331,8 +354,38 @@ export function readExerciseForm(v, modal = null) {
 /* exercise picker: reuse an exercise, or define a new one            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Push what the form says about the EXERCISE into the library.
+ *
+ * The form edits two different things at once: what this exercise is (measure,
+ * load, unilateral, muscles) and what this routine asks of it (sets, reps,
+ * rest). The first belongs to the library, so it goes there -- otherwise the
+ * same exercise could be "unilateral" in one routine and not in another, and
+ * every per-muscle trend would depend on which routine you happened to open.
+ *
+ * Only ever called from a form submit, so a value here is something the user
+ * just chose. An exercise not yet in the library is created; one already there
+ * keeps its notes.
+ */
+export async function syncLibrary(patch) {
+  if (!patch || !patch.name || patch.type === 'cardio') return null;
+  const existing = exerciseFor(patch.name);
+  return saveExercise({
+    ...(existing || {}),
+    name: patch.name,
+    type: 'lift',
+    measure: patch.measure,
+    bodyweight: patch.bodyweight,
+    unilateral: patch.unilateral,
+    primary: patch.primary,
+    secondary: patch.secondary,
+  });
+}
+
 /** dest is either the string 'session' or a routine id. */
 async function commitExercise(dest, patch) {
+  // the library first, so the entry created below reads the attributes back
+  await syncLibrary(patch);
   if (dest === 'session') {
     await addSessionEntry(patch);
     toast('Added to this session only');

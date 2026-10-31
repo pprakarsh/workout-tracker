@@ -27,6 +27,8 @@ js/planstore.js     writes for the plan -- the mirror of queries.js
 js/cardiostore.js   writes for a cardio log: the run's numbers and a block's rounds
 js/backupstore.js   whole-database replace (restore, device copy) + the confirmation counts
 js/clockstore.js    the workout clock: rest, holds, the drop-set prompt (ticking is in timer.js)
+js/exercise.js      exercise library SHAPE: muscle-group vocabulary, normaliser, per-group totals
+js/exercisestore.js exercise library writes: CRUD, seed-from-history, JSON import
 js/trends.js        progress analysis: e1RM, per-session series, PRs, weekly totals
 js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
 js/timefield.js     a duration as h/m/s boxes, so no colon is ever typed. Markup only
@@ -43,6 +45,7 @@ js/views/cardio.js  the cardio card: a straight run, or an interval block and it
 js/views/plan.js    "Plan" tab: ten day rows, assign a routine, mark done
 js/views/trends.js  "Trends" tab: weekly totals, and progress for one exercise
 js/views/settings.js "Settings" screen, reached from the header gear -- not a tab
+js/views/library.js "Exercise library" screen, reached from Routines -- not a tab
 js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
@@ -542,6 +545,98 @@ it and rounded to `settings.weightStep` so it is a load you can actually make wi
 have — deciding to drop usually happens at the moment the bar stops moving, which is the worst time
 to go looking for the exercise editor. `Skip the drop` on the bar deletes the stage and starts the
 rest that was being skipped for it.
+
+### The exercise library
+
+`state.exercises` is one record per exercise **name**, keyed on `normName`, in its own IndexedDB
+store (DB version 2 — every store is created behind a `contains()` guard, so an upgrade on an
+existing device adds only what is missing and touches no data).
+
+It exists because the derived `exerciseLibrary()` query in queries.js can only know what a routine or
+a session happened to record. **Nothing in a logged set says a dumbbell row is unilateral or that it
+trains your lats.** That is knowledge *about* an exercise, and it has nowhere to live unless it is
+stored once, by name, and read by everything that shares the name — including sessions logged before
+the record existed. The name-as-identity rule is what makes that retroactive and migration-free.
+
+**The library owns what an exercise IS; the routine owns what it ASKS OF IT.** Measure, load source,
+unilateral, muscle groups → library. Sets, reps, load, rest, order → routine. The same exercise is
+3×8 in one routine and 5×5 in another, which is exactly why the split is worth having.
+
+**"Isometric / bodyweight / external weight" is two questions, not one three-way choice.** `measure`
+says what the number means (`reps` / `time` / `distance`); `bodyweight` says where the load comes
+from. A bodyweight plank is *both* timed and unloaded, and a weighted plank is timed and loaded — no
+single enum can express that pair, so they stay orthogonal and `kindLabel` renders them as the one
+phrase a human would say. `parseMeasure` already accepted `isometric` as a spelling of `time`.
+
+**The library wins, and the form writes to it.** `withLibraryDefaults` *overwrites* those five fields
+on any entry being created, rather than filling blanks. It has to: `normalizeEntry` eagerly defaults
+`unilateral` to `false` and `secondary` to `[]`, so "the routine did not say" and "the routine said
+no" are the same value by then. That is only safe because the exercise form calls
+`syncLibrary(patch)` on submit from all three places it is used, so editing an attribute in the
+routine editor updates the library rather than creating a second, disagreeing copy. Entries already
+inside a logged session keep their own snapshot — editing the library never reshapes a workout you
+already did.
+
+**Seeding never guesses.** `seedExerciseLibrary()` creates a record for every exercise already in a
+routine or a session, carrying over what the old data knew (timed or not, bodyweight or not). Muscle
+groups and unilateral are left **blank on purpose**: "Row" could be a barbell row or a rowing
+machine, and a wrong tag is worse than no tag because it silently pollutes every trend built on it.
+
+**Import has three modes**, because "import" means three different things: `add` (only new ones,
+never touch what you have — the default), `update` (add, plus overwrite only the fields each incoming
+record actually *mentions*, which is why `mentioned()` reads the raw keys before normalisation gives
+everything a value), and `replace` (the file becomes the library). Routing is on the `schema` line,
+not the shape: `exercises` is also the legacy key for a routine's entries, so a bare
+`{ exercises: [...] }` keeps its old meaning.
+
+The library travels in the backup object, so it syncs through the gist automatically. Four collection
+sites had to learn about it: `init`, `restoreAll`, `backupObject` and `dataFingerprint`. Auditing
+them turned up that `importFromText`'s replace path had never passed `plan` through, so a
+replace-restore silently dropped the week you had planned.
+
+### Unilateral exercises: left and right kept apart
+
+A unilateral exercise logs **each planned set twice, once per side**, because a left arm and a right
+arm are not interchangeable and averaging them hides the imbalance you train unilaterally to find.
+
+`targetSets` keeps meaning **planned** sets — "3 sets" of a single-arm row is three per side, six
+rows. That invariant is what stops the routine form, the exports and every existing routine from
+needing to know this feature exists. The doubling lives in three small pure helpers (`rowsPerSet`,
+`plannedRowCount`, `planIndexFor`) which the row-index consumers go through: `materializePlan`,
+`plannedSet`, `fillPlannedSets`, `addSet` and `entryStatus`. Before this, `entryStatus` compared
+ticked rows against `targetSets` directly and would have called a six-row exercise done after three.
+
+- `set.side` is `'L' | 'R' | null`, a property of the **set** so a correction can un-side one row.
+- `setLabels` gives `1L`, `1R`, `2L`, `2R` — the two sides share the set's number, because numbering
+  them 1 and 2 would claim you did two sets. It tracks how many sides of the current set it has
+  emitted: "the other side of this set" and "the first side of the next set" both look like *a side
+  differing from the one before*, so the count is the only thing that distinguishes them.
+- `settings.firstSide` decides which side gets the top row, and **prefill matches by side, not by
+  position** — flip the setting and positional matching would fill your right arm from your left
+  arm's numbers.
+- Rest belongs after the **second** side. `nextSideAfter` is the same question `nextDropAfter` asks:
+  confirming the first side must move you on, not start a two-minute countdown mid-set. It compares
+  set *numbers* from `setLabels` rather than just "the next row has a different side", because set
+  2's left row also differs from set 1's right.
+
+### Per-muscle trends: direct and indirect, never blended
+
+`groupTotals` reports **direct** sets (the exercise's volume group) and **indirect** sets (its "other
+muscles") as two separate columns. The tempting move is to count a secondary muscle as half a set and
+report one number per group, but that fraction is invented — nothing in the data supports 0.5 over
+0.3 — and once blended the real counts cannot be recovered. They also answer different questions:
+"am I training chest" and "is my chest getting worked anyway".
+
+The muscle-group vocabulary is deliberately **flat**. Lats are part of your back, but a hierarchy
+would mean deciding whether a pulldown's lat sets also count as back sets, and any answer to that is
+an opinion dressed as data. `parseGroup` normalises synonyms (`pecs` → Chest) and **keeps an
+unrecognised group as you spelled it**, so importing someone else's library never fails on a group
+this app has not heard of.
+
+An entry's own tags beat the library's, so a session keeps the meaning it had when logged. An empty
+`secondary` counts as "not set" rather than "deliberately none", because `normalizeEntry` gives every
+entry `secondary: []` and treating that as an answer would mean the library's list could never apply
+to anything. An untagged exercise contributes **no row at all** — better than a wrong row.
 
 ### Editing a finished session
 

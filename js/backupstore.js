@@ -13,6 +13,7 @@ import { dbClear, dbPut, metaSet } from './db.js';
 import { normalizeRoutine } from './model.js';
 import { normalizePlan, prunePlan } from './plan.js';
 import { cardioLogged } from './cardio.js';
+import { restoreLibrary } from './exercisestore.js';
 
 /**
  * Wipe this device's data and write the backup verbatim — same ids, same
@@ -20,7 +21,8 @@ import { cardioLogged } from './cardio.js';
  * the state the backup was taken from.
  */
 export async function restoreAll({
-  routines = [], sessions = [], settings = null, activeSessionId = null, timer = null, plan = null,
+  routines = [], sessions = [], exercises = null, settings = null,
+  activeSessionId = null, timer = null, plan = null,
 }) {
   await Promise.all([dbClear('routines'), dbClear('sessions')]);
 
@@ -37,6 +39,11 @@ export async function restoreAll({
 
   if (settings) state.settings = { ...DEFAULT_SETTINGS, ...settings };
   await metaSet('settings', state.settings);
+
+  // A backup from before the library existed carries no `exercises` key at all.
+  // That is not the same as an empty library, so it leaves what is here alone;
+  // an explicit empty list does wipe it.
+  if (Array.isArray(exercises)) await restoreLibrary(exercises);
 
   // a backup without a plan predates the Plan tab; leave what is here alone
   if (plan) {
@@ -73,6 +80,7 @@ export function dataFingerprint() {
   return {
     routines: state.routines.length,
     sessions: state.sessions.length,
+    exercises: state.exercises.length,
     loggedSets: sets,
     oldest,
     newest,

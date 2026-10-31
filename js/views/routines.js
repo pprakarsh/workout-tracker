@@ -10,7 +10,7 @@ import {
   esc, fmtDate, fmtClock, fmtTimeOfDay, fmtNum, relDay, parseDur, APP_VERSION,
 } from '../util.js';
 import {
-  exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker,
+  exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker, syncLibrary,
 } from './exform.js';
 import { targetLine } from '../format.js';
 import { openModal, confirmDialog, toast, copyText } from '../ui.js';
@@ -146,6 +146,21 @@ export function render() {
     <div class="btn-row" style="margin-top:4px">
       <button type="button" class="btn primary" data-action="routine-new">+ New routine</button>
       <button type="button" class="btn" data-action="import-open">Import</button>
+    </div>
+
+    <h2>Exercise library</h2>
+    <div class="card" data-action="library-go" role="button" tabindex="0">
+      <div class="row">
+        <div style="flex:1;min-width:0">
+          <div class="strong">${state.exercises.length
+    ? `${state.exercises.length} exercise${state.exercises.length === 1 ? '' : 's'} described`
+    : 'Not set up yet'}</div>
+          <div class="sub dim">${state.exercises.length
+    ? 'Measure, load, unilateral and muscle groups — shared by every routine'
+    : 'Describe each exercise once: isometric or not, bodyweight or loaded, one side at a time, which muscles it trains'}</div>
+        </div>
+        <div class="dim">›</div>
+      </div>
     </div>
 
     <h2>Backup &amp; transfer</h2>
@@ -530,6 +545,7 @@ export const routineActions = {
       onSubmit: async (v, m) => {
         const patch = readExerciseForm(v, m);
         if (!patch.name) { toast('Name is required'); return false; }
+        await syncLibrary(patch);
         await mutateRoutineEntries(id, (rr) => {
           const i = rr.entries.findIndex((x) => x.id === entry);
           rr.entries[i] = normalizeEntry({ ...rr.entries[i], ...patch });

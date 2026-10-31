@@ -5,8 +5,9 @@ import {
   removeSessionEntry, moveEntryNext, moveSessionEntry, updateSessionEntry, entryStatus,
   addSessionEntry, working, editingPast, plannedSet, fillPlannedSets,
   setLabels, workingSets, toggleWarmup, toggleBodyweight, activeSet, setRestFor, undoSet,
-  setIsLoggable, setBlocker, setEffort, swapEntryExercise, addDropSet, nextDropAfter,
+  setIsLoggable, setBlocker, setEffort, swapEntryExercise, addDropSet, nextDropAfter, nextSideAfter,
 } from '../store.js';
+import { sideLabel } from '../exercise.js';
 import {
   startRest, startRestForSet, stopRest, startHold, startDropNow,
 } from '../clockstore.js';
@@ -21,6 +22,7 @@ import { targetLine, logSummary, restLine, loadLabel } from '../format.js';
 import { cardioBody, cardioStatic, handleLegInput } from './cardio.js';
 import {
   exerciseFormHtml, readExerciseForm, wireExerciseForm, openExercisePicker, openExerciseForm,
+  syncLibrary,
 } from './exform.js';
 import { openModal, closeModal, confirmDialog, toast } from '../ui.js';
 import { unlockAudio } from '../timer.js';
@@ -147,7 +149,7 @@ function setRow(e, s, label, workingIdx, allowRest) {
   const planned = plan ? fmtAmountRange(plan.repsMin, plan.repsMax, m.key) : '';
   const rPh = planned || m.placeholder;
   return `
-    <div class="set-row ${rowClass()} ${s.done ? 'done' : ''} ${s.warmup ? 'warm' : ''} ${s.drop ? 'drop' : ''}"
+    <div class="set-row ${rowClass()} ${s.done ? 'done' : ''} ${s.warmup ? 'warm' : ''} ${s.drop ? 'drop' : ''} ${s.side === 'R' ? 'sideR' : ''}"
          data-entry="${e.id}" data-set="${s.id}">
       <button type="button" class="idx" data-action="set-warmup" data-entry="${e.id}" data-set="${s.id}"
               title="${s.warmup ? 'Make this a working set' : 'Mark as a warmup set'}"
@@ -197,6 +199,11 @@ function confirmBar(e, allowRest) {
   // difference between a drop set that works and one that becomes two sets.
   const drop = allowRest ? nextDropAfter(e.id, s.id) : null;
   const dropSub = drop ? ` &mdash; then DROP to ${esc(loadLabel(drop))}, no rest` : '';
+  // The other side of this set, if it is still to come. Left and right are one
+  // set's work, so the rest belongs after the second side -- and the button has
+  // to say that, or tapping it looks like it forgot to start the clock.
+  const pair = allowRest && !drop ? nextSideAfter(e.id, s.id) : null;
+  const pairSub = pair ? ` &mdash; then the ${esc(sideLabel(pair.side))} side, no rest yet` : '';
   if (blocker === 'effort') {
     return `
       <button type="button" class="confirm needs" data-action="set-effort-then"
@@ -216,10 +223,10 @@ function confirmBar(e, allowRest) {
       </button>`;
   }
   return `
-    <button type="button" class="confirm ${drop ? 'todrop' : ''} ${s.drop ? 'isdrop' : ''}"
+    <button type="button" class="confirm ${drop ? 'todrop' : ''} ${pair ? 'topair' : ''} ${s.drop ? 'isdrop' : ''}"
             data-action="set-confirm" data-entry="${e.id}" data-set="${s.id}">
-      <span class="big">&#10003;&nbsp; ${loadLabel(s) === '—' && m.key !== 'reps' ? `${esc(fmtAmount(s.reps, m.key))}` : `${esc(loadLabel(s))} &times; ${esc(fmtAmount(s.reps, m.key))}`}</span>
-      <span class="sub">${s.drop ? `drop ${esc(label)}` : `set ${esc(label)}`}${drop ? dropSub
+      <span class="big">&#10003;&nbsp; ${loadLabel(s) === '—' && m.key !== 'reps' ? `${esc(fmtAmount(s.reps, m.key))}` : `${esc(loadLabel(s))} &times; ${esc(fmtAmount(s.reps, m.key))}`}${s.side ? ` <span class="sidetag">${esc(sideLabel(s.side))}</span>` : ''}</span>
+      <span class="sub">${s.drop ? `drop ${esc(label)}` : `set ${esc(label)}`}${drop ? dropSub : pair ? pairSub
     : allowRest ? (s.drop ? ' &mdash; logs it, then rest' : ' &mdash; logs it and starts rest')
       : ' &mdash; log it'}</span>
     </button>`;
@@ -532,6 +539,10 @@ export const entryActions = {
     // thing you planned, so the drop prompt takes the bar instead.
     const drop = nextDropAfter(entry, target.id);
     if (drop) { await startDropNow(entry, drop.id); return; }
+    // The other side of a unilateral set is the same set again. No rest between
+    // them, and no prompt either: the card has already moved to that row, which
+    // is all the instruction "now the other arm" needs.
+    if (nextSideAfter(entry, target.id)) return;
     await startRestForSet(entry, target.id);
   },
 
@@ -725,6 +736,7 @@ export const entryActions = {
       onSubmit: async (v, m) => {
         const patch = readExerciseForm(v, m);
         if (!patch.name) { toast('Name is required'); return false; }
+        await syncLibrary(patch);
         if (patch.type !== e.type) {
           // switching type needs the matching log container
           patch.sets = patch.type === 'lift' ? (e.sets || []) : null;

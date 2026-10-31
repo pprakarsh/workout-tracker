@@ -1,0 +1,329 @@
+// "Exercise library" — the screen where an exercise is described once.
+//
+// A screen reached from the Routines tab, deliberately not a seventh tab: this
+// is something you set up and then rarely open, and the tab bar is for the five
+// things you touch mid-workout. Same arrangement as Settings.
+//
+// What lives here is knowledge ABOUT an exercise -- how it is measured, where
+// the load comes from, whether it is one limb at a time, which muscles it
+// trains. What does NOT live here is targets, rest or per-set plans: the same
+// exercise is 3x8 in one routine and 5x5 in another, so those belong to the
+// routine. The split is the whole reason a library is worth having.
+import { state, exerciseFor } from '../store.js';
+import {
+  saveExercise, deleteExercise, renameExercise, seedExerciseLibrary,
+  importLibrary, libraryObject,
+} from '../exercisestore.js';
+import { exerciseLibrary } from '../queries.js';
+import { MUSCLE_GROUPS, kindPills, kindLabel } from '../exercise.js';
+import { MEASURES } from '../measure.js';
+import { esc, normName, relDay, download } from '../util.js';
+import { openModal, closeModal, confirmDialog, toast } from '../ui.js';
+
+const search = () => (state.nav.libQuery || '').trim();
+
+/** Exercises known to the app but not yet described in the library. */
+function untagged() {
+  return exerciseLibrary()
+    .filter((x) => !exerciseFor(x.key))
+    .map((x) => ({ key: x.key, name: x.name, performed: x.performed, routines: x.routines }));
+}
+
+/** Described, but with no volume group — so it contributes nothing to Trends. */
+const ungrouped = () => state.exercises.filter((x) => !x.primary && x.type === 'lift');
+
+function row(ex) {
+  const pills = kindPills(ex);
+  const used = exerciseLibrary().find((x) => x.key === ex.key);
+  return `
+    <div class="sess-item" data-action="lib-edit" data-key="${esc(ex.key)}" role="button" tabindex="0">
+      <div class="body">
+        <div class="nm">${esc(ex.name)}
+          ${pills.map((p) => `<span class="pill">${esc(p)}</span>`).join('')}</div>
+        <div class="sub">${ex.primary
+    ? `<b>${esc(ex.primary)}</b>${ex.secondary.length ? ` &middot; ${esc(ex.secondary.join(', '))}` : ''}`
+    : '<span class="warnmsg">no volume group &mdash; not counted in Trends</span>'}</div>
+        ${used && used.lastPerformed
+    ? `<div class="sub dim">last done ${esc(relDay(used.lastPerformed).toLowerCase())}</div>` : ''}
+      </div>
+      <div class="dim">›</div>
+    </div>`;
+}
+
+export function render() {
+  const q = normName(search());
+  const all = state.exercises;
+  const shown = q ? all.filter((x) => x.key.includes(q) || (x.primary || '').toLowerCase().includes(q)
+    || x.secondary.some((g) => g.toLowerCase().includes(q))) : all;
+  const missing = untagged();
+  const noGroup = ungrouped();
+
+  return `
+    <button type="button" class="btn sm ghost" data-action="lib-back">← Routines</button>
+
+    <div class="card" style="margin-top:12px">
+      <h2 style="margin-top:0">Exercise library</h2>
+      <p class="hint" style="margin-top:0">Describe an exercise once here and every routine, every
+        session and every trend that uses the name picks it up &mdash; including sessions you logged
+        before. Targets and rest stay on the routine, because the same exercise is three sets of
+        eight in one and five of five in another.</p>
+      <div class="kv"><span>Described</span><span class="strong">${all.length}</span></div>
+      <div class="kv"><span>Seen but not described</span><span>${missing.length}</span></div>
+      <div class="kv"><span>Without a volume group</span><span>${noGroup.length}</span></div>
+      <div class="btn-row" style="margin-top:10px">
+        <button type="button" class="btn primary" data-action="lib-new">+ New exercise</button>
+        ${missing.length ? `<button type="button" class="btn" data-action="lib-seed">Add the ${missing.length} missing</button>` : ''}
+      </div>
+    </div>
+
+    ${missing.length ? `
+      <div class="card" style="border-color:var(--warn)">
+        <div class="tiny" style="color:var(--warn);font-weight:700">NOT IN THE LIBRARY YET</div>
+        <p class="hint" style="margin-top:4px">These are in a routine or a logged session but have
+          no record here, so Trends cannot group them. <b>Add the ${missing.length} missing</b> creates
+          a record for each, carrying over what the old data already knew &mdash; timed or not,
+          bodyweight or not. Muscle groups are left blank on purpose: guessing them from a name
+          would quietly poison every trend built on top.</p>
+        <div class="chip-wrap">${missing.slice(0, 40).map((x) => `<button type="button" class="chip"
+          data-action="lib-new" data-name="${esc(x.name)}">${esc(x.name)}</button>`).join('')}</div>
+      </div>` : ''}
+
+    <div class="card flat">
+      <input id="libSearch" data-lib-search inputmode="search" placeholder="Search name or muscle"
+             value="${esc(search())}" aria-label="Search the exercise library">
+    </div>
+
+    ${shown.length ? shown.map(row).join('')
+    : `<div class="empty">${all.length
+      ? 'Nothing matches that search.'
+      : 'The library is empty. <b>+ New exercise</b> to describe one, or import a file below.'}</div>`}
+
+    <div class="card" style="margin-top:12px">
+      <h2 style="margin-top:0">Import / export</h2>
+      <p class="hint" style="margin-top:0">A plain JSON list. Export it, edit it on a laptop, import
+        it back &mdash; or write one from scratch. Only <code>name</code> is required; everything else
+        is optional and anything you leave out keeps its default.</p>
+      <div class="btn-row">
+        <button type="button" class="btn" data-action="lib-export">Export JSON</button>
+        <button type="button" class="btn" data-action="lib-copy">Copy to clipboard</button>
+        <button type="button" class="btn primary" data-action="lib-import">Import JSON</button>
+      </div>
+      <details style="margin-top:10px">
+        <summary class="tiny">What the file looks like</summary>
+        <pre class="code">${esc(SAMPLE_LIBRARY)}</pre>
+        <p class="hint"><b>measure</b> is <code>reps</code>, <code>time</code> (an isometric hold) or
+          <code>distance</code> (a loaded carry) &mdash; <code>isometric</code> is accepted and means
+          <code>time</code>. <b>bodyweight</b> and <b>measure</b> are separate questions on purpose: a
+          plank is timed <em>and</em> unloaded, and a weighted plank is timed and loaded, so neither
+          one can be a single three-way choice. Muscle names are matched loosely, so
+          <code>pecs</code>, <code>Chest</code> and <code>chest</code> all land on Chest, and a group
+          this app has never heard of is kept as you spelled it.</p>
+      </details>
+    </div>`;
+}
+
+export const SAMPLE_LIBRARY = `{
+  "schema": "workout-tracker/exercise-library@1",
+  "exercises": [
+    { "name": "Barbell Bench Press", "primary": "Chest",
+      "secondary": ["Triceps", "Shoulders"] },
+    { "name": "Pull-up", "bodyweight": true, "primary": "Lats",
+      "secondary": ["Biceps", "Forearms"] },
+    { "name": "Front Plank", "measure": "isometric", "bodyweight": true,
+      "primary": "Core" },
+    { "name": "Single-arm Dumbbell Row", "unilateral": true, "primary": "Back",
+      "secondary": ["Lats", "Biceps"] },
+    { "name": "Farmer Carry", "measure": "distance", "primary": "Forearms",
+      "secondary": ["Traps", "Core"] }
+  ]
+}`;
+
+/* ------------------------------------------------------------------ */
+/* the one-exercise form                                              */
+/* ------------------------------------------------------------------ */
+
+const groupField = (name, label, value, hint) => `
+  <label class="field"><span>${label}</span>
+    <input name="${name}" list="muscleGroups" autocapitalize="words" placeholder="${esc(hint)}"
+           value="${esc(value)}"></label>`;
+
+function exerciseForm(ex) {
+  const e = ex || {};
+  return `
+    <label class="field"><span>Exercise name</span>
+      <input name="name" list="exerciseNames" autocapitalize="words" required
+             placeholder="e.g. Single-arm Dumbbell Row" value="${esc(e.name || '')}"></label>
+    <label class="field"><span>Each set is measured in</span>
+      <select name="measure">
+        ${Object.values(MEASURES).map((m) => `<option value="${m.key}"
+          ${(e.measure || 'reps') === m.key ? 'selected' : ''}>${esc(m.long)}</option>`).join('')}
+      </select></label>
+    <label class="field"><span>The load is</span>
+      <select name="bodyweight">
+        <option value="0" ${e.bodyweight ? '' : 'selected'}>External weight (barbell, machine, dumbbells)</option>
+        <option value="1" ${e.bodyweight ? 'selected' : ''}>Your own bodyweight</option>
+      </select></label>
+    <p class="hint" style="margin-top:-4px">These two are independent: a plank is
+      <b>timed</b> and <b>bodyweight</b>, a weighted plank is timed and loaded.</p>
+    <label class="field"><span>One side at a time?</span>
+      <select name="unilateral">
+        <option value="0" ${e.unilateral ? '' : 'selected'}>Both sides together</option>
+        <option value="1" ${e.unilateral ? 'selected' : ''}>Unilateral &mdash; one arm / one leg</option>
+      </select></label>
+    <p class="hint" style="margin-top:-4px">A unilateral exercise logs every planned set
+      <b>twice</b>, once per side, so a routine asking for 3 sets opens 6 rows &mdash; left and right
+      kept apart, which is the point of training one side at a time.</p>
+    ${groupField('primary', 'Volume group', e.primary || '', 'e.g. Lats')}
+    ${groupField('secondary', 'Other muscles worked', (e.secondary || []).join(', '), 'e.g. Biceps, Forearms')}
+    <p class="hint" style="margin-top:-4px">Trends counts the volume group as <b>direct</b> sets and
+      the others as <b>indirect</b>, side by side and never blended &mdash; any single number would
+      need a made-up weighting. Commas separate several.
+      ${MUSCLE_GROUPS.slice(0, 6).join(', ')}… or your own.</p>
+    <label class="field"><span>Notes (optional)</span>
+      <textarea name="notes" rows="2" placeholder="Setup, cues, pin position…">${esc(e.notes || '')}</textarea></label>`;
+}
+
+function readForm(v) {
+  return {
+    name: (v.name || '').trim(),
+    measure: v.measure,
+    bodyweight: v.bodyweight === '1',
+    unilateral: v.unilateral === '1',
+    primary: v.primary || null,
+    secondary: v.secondary || '',
+    notes: v.notes || '',
+  };
+}
+
+export const libraryActions = {
+  'library-go': () => { state.nav = { libQuery: '' }; state.lastTab = state.tab; state.tab = 'library'; },
+  'lib-back': () => { state.tab = state.lastTab === 'library' ? 'routines' : (state.lastTab || 'routines'); },
+
+  'lib-new': ({ name }) => {
+    openModal({
+      title: name ? `Describe ${name}` : 'New exercise',
+      bodyHtml: exerciseForm(name ? { name } : null),
+      okText: 'Save',
+      onSubmit: async (v) => {
+        const patch = readForm(v);
+        if (!patch.name) { toast('An exercise needs a name'); return false; }
+        if (exerciseFor(patch.name)) {
+          toast(`${patch.name} is already in the library — open it to edit`, 4000);
+          return false;
+        }
+        await saveExercise(patch);
+        toast(`${patch.name} added`);
+        return true;
+      },
+    });
+  },
+
+  'lib-edit': ({ key }) => {
+    const ex = exerciseFor(key);
+    if (!ex) return;
+    openModal({
+      title: ex.name,
+      bodyHtml: `
+        ${exerciseForm(ex)}
+        <p class="hint">${esc(kindLabel(ex))}.</p>
+        <button type="button" class="btn block danger" data-action="lib-del"
+                data-key="${esc(ex.key)}">Remove from the library</button>`,
+      okText: 'Save',
+      onSubmit: async (v) => {
+        const patch = readForm(v);
+        if (!patch.name) { toast('An exercise needs a name'); return false; }
+        // A rename here does not touch history, because identity in this app is
+        // the name: the old sets stay under the old name. Say so rather than
+        // quietly orphaning them.
+        if (normName(patch.name) !== ex.key) {
+          await renameExercise(ex.key, patch.name);
+          await saveExercise({ ...patch, createdAt: ex.createdAt });
+          toast(`Renamed. Sets logged as "${ex.name}" keep that name — history is keyed on it.`, 6000);
+          return true;
+        }
+        await saveExercise({ ...patch, createdAt: ex.createdAt });
+        toast('Saved');
+        return true;
+      },
+    });
+  },
+
+  'lib-del': async ({ key }) => {
+    const ex = exerciseFor(key);
+    if (!ex) return;
+    const yes = await confirmDialog(
+      `Only the library record goes. Every routine and every logged set keeps the name and stays `
+      + `exactly as it is — but ${ex.name} will stop being counted in the per-muscle trends `
+      + 'until it is described again.',
+      { title: `Remove ${ex.name}?`, okText: 'Remove', danger: true },
+    );
+    if (!yes) return;
+    await deleteExercise(key);
+    closeModal();
+    toast(`${ex.name} removed from the library`);
+  },
+
+  'lib-seed': async () => {
+    const res = await seedExerciseLibrary();
+    toast(res.added
+      ? `${res.added} exercise${res.added === 1 ? '' : 's'} added. Tag them with a volume group to see per-muscle trends.`
+      : 'Nothing to add — every exercise is already described.', 5000);
+  },
+
+  'lib-export': () => {
+    download('exercise-library.json', JSON.stringify(libraryObject(), null, 2), 'application/json');
+    toast('Exported');
+  },
+
+  'lib-copy': async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(libraryObject(), null, 2));
+      toast('Library copied to the clipboard');
+    } catch {
+      toast('Could not reach the clipboard — use Export instead');
+    }
+  },
+
+  'lib-import': () => {
+    openModal({
+      title: 'Import an exercise library',
+      bodyHtml: `
+        <label class="field"><span>What should happen to exercises already in the library?</span>
+          <select name="mode">
+            <option value="add" selected>Add only the new ones — never change what I have</option>
+            <option value="update">Add new ones AND update the fields the file mentions</option>
+            <option value="replace">Replace the library with this file</option>
+          </select></label>
+        <p class="hint" style="margin-top:-4px"><b>Update</b> only touches the fields each record
+          actually contains, so a file carrying nothing but muscle groups will not reset anything
+          else. <b>Replace</b> deletes any exercise the file does not list.</p>
+        <label class="field"><span>Paste the JSON</span>
+          <textarea name="json" rows="9" placeholder='{ "exercises": [ { "name": "…" } ] }'></textarea></label>
+        <p class="hint">Nothing leaves this device.</p>`,
+      okText: 'Import',
+      onSubmit: async (v) => {
+        const text = (v.json || '').trim();
+        if (!text) { toast('Paste the JSON first'); return false; }
+        try {
+          const r = await importLibrary(text, { mode: v.mode || 'add' });
+          const bits = [];
+          if (r.added) bits.push(`${r.added} added`);
+          if (r.updated) bits.push(`${r.updated} updated`);
+          if (r.unchanged) bits.push(`${r.unchanged} left alone`);
+          if (r.removed) bits.push(`${r.removed} removed`);
+          if (r.skipped) bits.push(`${r.skipped} skipped (no name)`);
+          toast(bits.length ? bits.join(' · ') : 'Nothing to do', 6000);
+          return true;
+        } catch (err) {
+          toast(err.message, 7000);
+          return false;
+        }
+      },
+    });
+  },
+};
+
+/** Live search, wired from app.js like the other field handlers. */
+export function handleLibrarySearch(el) {
+  state.nav.libQuery = el.value;
+}

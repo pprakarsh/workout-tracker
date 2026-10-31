@@ -48,6 +48,9 @@ export function targetLine(e) {
         bits.push(`@ ${fmtNum(e.weight)} ${e.unit || state.settings.unit}`);
       }
     }
+    // the plan's set count is PER SIDE on a unilateral exercise, so saying so
+    // is the difference between "3 sets" and six rows appearing
+    if (e.unilateral) bits.push('per side');
   } else if (isIntervals(e)) {
     // the pattern says it all: "1:00 @ 8:00/km + 1:30 walk @ 6:00/km x 6"
     const unit = e.distanceUnit || state.settings.distanceUnit;

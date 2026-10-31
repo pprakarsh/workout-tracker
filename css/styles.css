@@ -243,6 +243,25 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 /* the tap that leads into a drop, and the drop's own confirm */
 .confirm.todrop{border-color:var(--warn)}
 .confirm.todrop .sub{color:var(--warn);font-weight:700}
+/* unilateral: the side a row belongs to, and the hand-off to the other side */
+.confirm.topair .sub{color:var(--accent);font-weight:700}
+.sidetag{font-size:12px;font-weight:700;opacity:.8;text-transform:uppercase;letter-spacing:.04em}
+.set-row.sideR{background:color-mix(in srgb, var(--accent) 5%, transparent)}
+.set-row .idx .sd{font-size:9px}
+.exmeta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.pill.grp2{background:transparent;border:1px solid var(--fg3);color:var(--fg3)}
+.chip-wrap{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+#libSearch{width:100%}
+/* per-muscle readout: two counts that are never added together */
+.grp-hdr,.grp-row{display:grid;grid-template-columns:1fr 48px 56px;gap:6px;align-items:center}
+.grp-hdr{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg3);font-weight:700;padding:6px 2px 4px}
+.grp-row{min-height:44px;padding:4px 2px;border-top:1px solid var(--line)}
+.grp-row:active{opacity:.6}
+.grp-name{font-size:14px;font-weight:600;min-width:0}
+.grp-bar{display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:5px;background:var(--line)}
+.grp-bar .d{background:var(--accent)}
+.grp-bar .i{background:var(--fg3);opacity:.55}
+.grp-n{text-align:right;font-variant-numeric:tabular-nums;font-size:15px}
 .confirm.isdrop{background:var(--warn);color:#241a02;border-color:var(--warn)}
 .restbar-top.drop .t1{color:var(--warn);font-weight:800;letter-spacing:.3px}
 #restBar .clock.drop{color:var(--warn)}

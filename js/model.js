@@ -9,6 +9,7 @@
 import { uid, num, parseReps, parseDur, normName } from './util.js';
 import { parsePace, intervalSpec, isIntervals, plannedLegs, resolveRun, storedSeconds } from './cardio.js';
 import { parseMeasure, parseAmountRange } from './measure.js';
+import { otherSide, parseSide, parseGroup, parseGroups } from './exercise.js';
 
 /**
  * Per-set targets: a plan with a different load/reps for each set.
@@ -142,6 +143,15 @@ export function normalizeEntry(raw = {}) {
     // a bodyweight movement: pull-ups, dips, push-ups. Sets default to BW and
     // any `weight` logged is treated as ADDED load.
     bodyweight: !!(raw.bodyweight ?? raw.bw),
+    // one limb at a time, so the plan's sets are logged twice -- once per side.
+    // Carried on the ENTRY as well as in the library so a session stays
+    // self-describing: editing the library must not retroactively change the
+    // shape of a workout already logged.
+    unilateral: !!(raw.unilateral ?? raw.perSide),
+    // muscle groups, for per-group trends. Copied from the library when the
+    // entry is created; the entry's own value wins thereafter.
+    primary: parseGroup(raw.primary ?? raw.muscle) || null,
+    secondary: parseGroups(raw.secondary ?? raw.otherMuscles, raw.primary ?? raw.muscle),
     // cardio targets
     targetDistance: num(raw.distance ?? raw.targetDistance),
     distanceUnit: raw.distanceUnit || null,
@@ -196,6 +206,9 @@ export const blankSet = (unit, warmup = false) => ({
   // a drop stage: strip the load and keep going, NO rest before it. Belongs to
   // the working set above it -- see setLabels and nextIsDrop.
   drop: false,
+  // 'L' | 'R' on a unilateral exercise, null otherwise. A side is a property of
+  // the SET, not of the entry, so a correction can un-side one row.
+  side: null,
   warmup, note: '', done: false, completedAt: null, rest: null,
 });
 
@@ -209,16 +222,56 @@ export const blankSet = (unit, warmup = false) => ({
  */
 export function setLabels(sets = []) {
   let w = 0; let n = 0; let d = 0;
+  // how many sides of the CURRENT numbered set have been emitted. Needed because
+  // "the other side of the same set" and "the first side of the next set" look
+  // identical from the row alone -- both are a side differing from the one before.
+  let sides = 0; let prev = null;
   return sets.map((s) => {
-    if (s.warmup) { d = 0; return `W${++w}`; }
-    if (s.drop && n > 0) return `${n}${'\u2193'.repeat(++d)}`;
+    if (s.warmup) { d = 0; sides = 0; prev = null; return `W${++w}`; }
+    if (s.drop && n > 0) return `${n}${s.side || ''}${'\u2193'.repeat(++d)}`;
     d = 0;
-    return String(++n);
+    // The two sides of one set share its number: 1L and 1R are the same set,
+    // done twice. Numbering them 1 and 2 would claim you did two sets.
+    if (s.side && sides === 1 && prev && s.side !== prev) {
+      sides = 2; prev = s.side;
+      return `${n}${s.side}`;
+    }
+    sides = s.side ? 1 : 0;
+    prev = s.side || null;
+    return `${++n}${s.side || ''}`;
   });
 }
 
 /** Sets that count towards targets, volume and records. */
 export const workingSets = (e) => (e.sets || []).filter((s) => !s.warmup);
+
+/**
+ * How many logged rows one planned set becomes.
+ *
+ * A unilateral exercise is logged twice per set -- once per side -- because a
+ * left arm and a right arm are not interchangeable and averaging them hides the
+ * imbalance you train unilaterally to find. `targetSets` keeps meaning PLANNED
+ * sets, so "3 sets" of a single-arm row is three sets per side, six rows. That
+ * invariant is what stops the routine form, the exports and every existing
+ * routine from needing to know this feature exists.
+ */
+export const rowsPerSet = (e) => (e?.unilateral ? 2 : 1);
+
+/** Rows a plan materialises into, after the unilateral doubling. */
+export function plannedRowCount(e) {
+  const want = e?.setTargets ? e.setTargets.length : (e?.targetSets ?? 0);
+  return want * rowsPerSet(e);
+}
+
+/** Which planned set the i-th working ROW belongs to. */
+export const planIndexFor = (e, row) => Math.floor(row / rowsPerSet(e));
+
+/** The side for the i-th working row: null unless the exercise is unilateral. */
+export const sideForRow = (e, row, firstSide = 'L') => {
+  if (!e?.unilateral) return null;
+  const first = firstSide === 'R' ? 'R' : 'L';
+  return row % 2 === 0 ? first : otherSide(first);
+};
 
 /**
  * A fresh cardio log. Pre-filled from the entry's targets, like a lift's sets
@@ -290,7 +343,7 @@ export function expandEntry(entry, settings, sessions = null, before = null) {
   const e = normalizeEntry(entry);
   const prior = sessions && settings.prefillFrom === 'last'
     ? lastWorkingSets(sessions, e.name, e.measure || 'reps', before) : null;
-  return [materializePlan(toSessionEntry(e, settings), prior)];
+  return [materializePlan(toSessionEntry(e, settings), prior, { firstSide: settings.firstSide })];
 }
 
 /**
@@ -325,12 +378,21 @@ export function lastWorkingSets(sessions = [], name, measure = 'reps', before = 
  * rows come from last time. Taking the count from last time too would ratchet a
  * routine down for good: cut a 5x5 short at three sets once and every session
  * after it would open as a 3x5.
+ *
+ * A unilateral exercise doubles the rows -- one per side -- and matches last
+ * time BY SIDE rather than by position, because `firstSide` is a setting: flip
+ * it and positional matching would prefill your right arm with your left arm's
+ * numbers.
  */
-export function materializePlan(entry, prior = null) {
+export function materializePlan(entry, prior = null, { firstSide = 'L' } = {}) {
   if (entry.type !== 'lift') return entry;
-  const want = entry.setTargets ? entry.setTargets.length : (entry.targetSets ?? 0);
+  const want = plannedRowCount(entry);
+  // last time's sets, split by side, so a side can be matched to its own history
+  const bySide = { L: [], R: [] };
+  (prior || []).forEach((x) => { if (x.side === 'L' || x.side === 'R') bySide[x.side].push(x); });
   for (let i = entry.sets.length; i < want; i++) {
-    const plan = entry.setTargets?.[i]
+    const pi = planIndexFor(entry, i);
+    const plan = entry.setTargets?.[pi]
       || (entry.weight !== null || entry.repsMin !== null
         ? { weight: entry.weight, repsMin: entry.repsMin, repsMax: entry.repsMax } : null);
     const set = blankSet(entry.unit);
@@ -338,10 +400,13 @@ export function materializePlan(entry, prior = null) {
     // a drop stage is part of the PLAN, not of last time's performance: it says
     // how this set is to be done, so it comes from the target even when the
     // numbers come from history
-    set.drop = !!(entry.setTargets?.[i]?.drop);
+    set.drop = !!(entry.setTargets?.[pi]?.drop);
+    set.side = sideForRow(entry, i, firstSide);
     // last time's matching set, else the one before it, so a longer plan still
     // fills to the end rather than trailing off into blanks
-    const was = prior ? (prior[i] || prior[prior.length - 1]) : null;
+    const mine = set.side && bySide[set.side].length ? bySide[set.side] : prior;
+    const idx = set.side && bySide[set.side].length ? Math.floor(i / 2) : i;
+    const was = mine ? (mine[idx] || mine[mine.length - 1]) : null;
     if (was) {
       set.weight = was.weight ?? null;
       set.reps = was.reps ?? null;

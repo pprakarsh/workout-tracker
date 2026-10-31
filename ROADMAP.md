@@ -27,6 +27,10 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Timing an isometric hold on the clock | Same timestamp clock as rest (`kind:'hold'`), counts up, writes the seconds it measured into the set |
 | Either / Or exercises per routine slot | "Leg Press OR Hack Squat" — one tap on the day; prefill then comes from that exercise's own history, and the routine keeps the original |
 | Drop sets | `100x8 > 80x6 > 60x5` in the plan, or one tap mid-set; the confirm says "then DROP, no rest" before you tap and the bar replaces the countdown |
+| Exercise library | One record per exercise name: measure, load source, unilateral, volume group, other muscles. Describe it once and every routine, session and trend picks it up — retroactively |
+| Library import / export as JSON | Three modes: add only, update the mentioned fields, or replace. Muscle names matched loosely; an unknown group is kept as spelled |
+| Unilateral exercises | Each planned set logs twice, once per side (`1L`, `1R`); prefill matches by side; rest comes after the second side. First side is a setting |
+| Per-muscle volume trends | Direct and indirect sets per group, side by side and never blended, plus what you have not trained in the range |
 | Session progress bar | Entry completion, in the Now header |
 | Plan tab: 10 days ahead, 7 behind | Assign a routine per day, rest days, push/pull a day; done is derived from history, and the week behind shows adherence |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |
@@ -59,14 +63,12 @@ plate calculator is offered, and whether your history becomes more than a list.
 | 3 | **Screen wake lock** during a workout | `navigator.wakeLock` is supported in iOS Safari 16.4+. Stops you unlocking the phone between every set | S | verify support on your iOS version |
 | 4 | **Set notes UI** | `set.note` already exists in the model with no input | S | — |
 | 5 | **Rest suggestion from your own history** — default to the median rest you actually took for that exercise | Logged rest is currently write-only | S | — |
-| 6 | **Muscle-group tags** → weekly volume per muscle | The one view Trends cannot build today, because nothing tags an exercise | M | Tag once per exercise in the library; never guess from names |
 
 ## Later
 
 | Feature | Why | Effort | Notes |
 |---|---|---|---|
 | **Progress charts** — bodyweight, weekly volume, e1RM per lift | Makes trends visible | M | Needs one small inline SVG helper; no dependency |
-| **Muscle-group tags per exercise** → weekly volume and balance per muscle | Answers "am I neglecting pulling?" | M | Tag once per exercise in the library; don't guess from names |
 | **Repeat a past session** as a new workout | Covers ad-hoc days with no routine | S | — |
 | **Calendar / streak view** in History | Training pattern at a glance | M | — |
 | **Search History by exercise or note** | Date filtering is done; text search is the other half | S | — |

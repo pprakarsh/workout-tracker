@@ -1964,5 +1964,133 @@ await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
+section('the exercise library: described once, used everywhere');
+await click('#tabBar .tab[data-tab="routines"]');
+ok(/Exercise library/.test(view()), 'the Routines tab offers the library');
+await click('[data-action="library-go"]', 'Exercise library');
+await sleep(60);
+ok(/Exercise library/.test(view()), 'the library screen opened');
+ok($('[data-action="lib-new"]') !== null, 'a new exercise can be described');
+ok(/NOT IN THE LIBRARY YET/.test(view()),
+  'and it names the exercises it has seen but has no record for');
+ok($('[data-action="lib-seed"]') !== null, 'with one tap to add them all');
+
+await click('[data-action="lib-seed"]', 'Add the missing');
+await sleep(120);
+ok(store.state.exercises.length > 0, `seeding filled the library (${store.state.exercises.length})`);
+ok(!/NOT IN THE LIBRARY YET/.test(view()), 'and the warning is gone');
+const lbPlank = store.state.exercises.find((x) => x.key === 'plank' || x.key === 'front plank');
+ok(!lbPlank || lbPlank.measure === 'time',
+  'a plank came through as timed, because the old data already knew that');
+ok(store.state.exercises.every((x) => x.primary === null),
+  'but nothing was given a muscle group — guessing one from a name would poison every trend');
+ok(/no volume group/.test(view()), 'and each row says so, so it is obvious what is missing');
+
+section('describing an exercise is a form, and it reaches Trends');
+await click('[data-action="lib-new"]', '+ New exercise');
+await sleep(60);
+ok($('#modalRoot select[name="measure"]') !== null, 'measure is asked for');
+ok($('#modalRoot select[name="bodyweight"]') !== null, 'where the load comes from, separately');
+ok($('#modalRoot select[name="unilateral"]') !== null, 'and whether it is one side at a time');
+ok($('#modalRoot input[name="primary"]') !== null, 'with a volume group');
+ok($('#modalRoot input[name="secondary"]') !== null, 'and other muscles');
+ok(/independent/.test($('#modalRoot').textContent),
+  'the form explains that timed and bodyweight are separate questions');
+await type('#modalRoot input[name="name"]', 'Cable Fly');
+await type('#modalRoot input[name="primary"]', 'pecs');
+await type('#modalRoot input[name="secondary"]', 'shoulders');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(110);
+const lbFly = store.state.exercises.find((x) => x.key === 'cable fly');
+ok(!!lbFly, 'the exercise was added');
+ok(lbFly.primary === 'Chest', `"pecs" was understood as Chest (${lbFly?.primary})`);
+ok(lbFly.secondary.join() === 'Shoulders', 'and the other muscle normalised too');
+
+section('the library exports and imports as JSON');
+ok($('[data-action="lib-export"]') !== null, 'export is offered');
+ok($('[data-action="lib-import"]') !== null, 'and import');
+await click('[data-action="lib-import"]', 'Import JSON');
+await sleep(60);
+ok($('#modalRoot select[name="mode"]') !== null, 'the merge mode is asked, not guessed');
+ok(/never change what I have/.test($('#modalRoot').textContent), 'with the safe option first');
+await type('#modalRoot textarea[name="json"]',
+  '{"exercises":[{"name":"Cable Fly","secondary":["Biceps"]},{"name":"Zercher Squat","primary":"Quads"}]}');
+$('#modalRoot select[name="mode"]').value = 'update';
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(140);
+ok(store.state.exercises.find((x) => x.key === 'zercher squat')?.primary === 'Quads',
+  'the new exercise arrived');
+const lbFly2 = store.state.exercises.find((x) => x.key === 'cable fly');
+ok(lbFly2.secondary.join() === 'Biceps', 'the mentioned field was updated');
+ok(lbFly2.primary === 'Chest',
+  'and the volume group the file never mentioned was left alone');
+
+section('unilateral exercises log left and right separately');
+await xi.importFromText(JSON.stringify({
+  schema: 'workout-tracker/exercise-library@1',
+  exercises: [{ name: 'Split Squat', unilateral: true, primary: 'Quads', secondary: ['Glutes'] }],
+}));
+await sleep(80);
+ok(store.state.exercises.find((x) => x.key === 'split squat')?.unilateral === true,
+  'a library file can declare it');
+await xi.importFromText(JSON.stringify({
+  name: 'Uni Day', entries: [{ name: 'Split Squat', sets: 2, reps: 10, weight: 20 }],
+}));
+await sleep(80);
+await click('#tabBar .tab[data-tab="now"]');
+const uR = store.state.routines.find((r) => r.name === 'Uni Day');
+await click(`[data-action="routine-start"][data-id="${uR.id}"]`, 'Start');
+await sleep(60);
+const uE = () => store.state.active.entries[0];
+ok(uE().unilateral === true,
+  'the routine never said so — the library did, and the session picked it up');
+ok($$('.set-row').length === 4, `2 planned sets opened 4 rows (${$$('.set-row').length})`);
+const uLabels = $$('.set-row').map((r) => r.querySelector('.idx').textContent.trim());
+ok(uLabels.join(',') === '1L,1R,2L,2R', `labelled per side (${uLabels.join(',')})`);
+ok($$('.set-row')[1].classList.contains('sideR'), 'the right-side rows are marked');
+
+section('no rest between the two sides; the rest comes after the second');
+ok(/then the right side/.test($('.confirm[data-action="set-confirm"] .sub').textContent),
+  `the first side says what follows (${$('.confirm[data-action="set-confirm"] .sub').textContent.trim()})`);
+ok(/no rest yet/.test($('.confirm[data-action="set-confirm"] .sub').textContent),
+  'and that no rest starts yet');
+await click('.confirm[data-action="set-confirm"]', 'confirm the left side');
+await sleep(80);
+ok(uE().sets[0].done === true, 'the left side is logged');
+ok(store.state.timer === null, 'and NO clock started — left and right are one set of work');
+ok(/right/.test($('.confirm[data-action="set-confirm"] .big').textContent),
+  `the card moved to the right side (${$('.confirm[data-action="set-confirm"] .big').textContent.trim()})`);
+ok(/logs it and starts rest/.test($('.confirm[data-action="set-confirm"] .sub').textContent),
+  'which now promises the rest');
+await click('.confirm[data-action="set-confirm"]', 'confirm the right side');
+await sleep(80);
+ok(store.state.timer !== null && store.state.timer.kind === 'rest',
+  'confirming the second side starts the rest');
+await click('#restBar [data-action="rest-stop"]', 'Stop');
+await sleep(60);
+
+section('per-muscle trends appear once exercises are tagged');
+for (const s of uE().sets) await store.updateSet(uE().id, s.id, { weight: 20, reps: 10, done: true });
+await store.finishSession();
+await sleep(80);
+await click('#tabBar .tab[data-tab="trends"]');
+await sleep(80);
+ok(/Muscle groups/.test(view()), 'Trends has a muscle-group section');
+ok(/Quads/.test(view()), 'the tagged group shows up');
+ok($$('.grp-row').length > 0, `with a row per group (${$$('.grp-row').length})`);
+ok(/Direct/.test(view()) && /Indirect/.test(view()),
+  'direct and indirect are separate columns');
+ok(/never added together/.test(view()),
+  'and it says they are not blended, because any single number would need an invented weighting');
+const trQuads = $$('.grp-row').find((r) => /Quads/.test(r.textContent));
+ok(!!trQuads, 'Quads is listed');
+trQuads.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(80);
+ok(!$('#modalRoot').hidden, 'tapping a group opens its detail');
+ok(/Split Squat/.test($('#modalRoot').textContent),
+  'naming the exercises that produced the sets');
+await click('#modalRoot [data-mclose]', 'Close');
+await sleep(50);
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,6 +1,7 @@
 // Bootstrap: load state, render the active tab, route delegated events.
 import { state, init, subscribe } from './store.js';
 import { exerciseNames } from './queries.js';
+import { MUSCLE_GROUPS } from './exercise.js';
 import { renderRestBar, timerActions, unlockAudio } from './timer.js';
 import {
   initSync, autoPullOnLaunch, autoPullOnForeground, watchRoutines, setSyncNotifier,
@@ -18,6 +19,7 @@ import { cardioActions } from './views/cardio.js';
 import * as planView from './views/plan.js';
 import * as trendsView from './views/trends.js';
 import * as settingsView from './views/settings.js';
+import * as libraryView from './views/library.js';
 
 const VIEWS = {
   now: nowView,
@@ -27,6 +29,7 @@ const VIEWS = {
   trends: trendsView,
   routines: routinesView,
   settings: settingsView,
+  library: libraryView,
 };
 
 const TITLES = {
@@ -37,6 +40,7 @@ const TITLES = {
   trends: 'Trends',
   routines: 'Routines',
   settings: 'Settings',
+  library: 'Exercises',
 };
 
 const ACTIONS = {
@@ -47,6 +51,7 @@ const ACTIONS = {
   ...planView.planActions,
   ...trendsView.trendsActions,
   ...settingsView.settingsActions,
+  ...libraryView.libraryActions,
   ...historyView.historyActions,
   ...routinesView.routineActions,
   ...timerActions,
@@ -90,6 +95,18 @@ export function render() {
       dl.dataset.count = String(names.length);
     }
 
+    // The muscle-group vocabulary plus any custom group already in use, so a
+    // group you invented once is offered the next time rather than retyped.
+    const gdl = document.getElementById('muscleGroups');
+    const groups = [...new Set([
+      ...MUSCLE_GROUPS,
+      ...state.exercises.flatMap((x) => [x.primary, ...x.secondary].filter(Boolean)),
+    ])].sort();
+    if (gdl.dataset.count !== String(groups.length)) {
+      gdl.innerHTML = groups.map((n) => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
+      gdl.dataset.count = String(groups.length);
+    }
+
     renderRestBar();
   } finally {
     rendering = false;
@@ -131,6 +148,7 @@ document.addEventListener('click', async (ev) => {
 // Live field edits persist silently (no re-render) so the keyboard and caret stay put.
 document.addEventListener('change', async (ev) => {
   if (ev.target.dataset?.cf) await settingsView.handleSettingsField(ev.target);
+  if (ev.target.dataset?.libSearch !== undefined) libraryView.handleLibrarySearch(ev.target);
 });
 
 document.addEventListener('input', async (ev) => {
