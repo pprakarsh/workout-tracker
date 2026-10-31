@@ -40,7 +40,7 @@ const TITLES = {
   trends: 'Trends',
   routines: 'Routines',
   settings: 'Settings',
-  library: 'Exercises',
+  library: 'Library',
 };
 
 const ACTIONS = {
@@ -148,7 +148,6 @@ document.addEventListener('click', async (ev) => {
 // Live field edits persist silently (no re-render) so the keyboard and caret stay put.
 document.addEventListener('change', async (ev) => {
   if (ev.target.dataset?.cf) await settingsView.handleSettingsField(ev.target);
-  if (ev.target.dataset?.libSearch !== undefined) libraryView.handleLibrarySearch(ev.target);
 });
 
 document.addEventListener('input', async (ev) => {
@@ -159,6 +158,7 @@ document.addEventListener('input', async (ev) => {
   if (t.dataset?.rf) return routinesView.handleRoutineField(t);
   if (t.dataset?.hf) return historyView.handleHistoryField(t);
   if (t.dataset?.cf) return settingsView.handleSettingsField(t);
+  if (t.dataset?.libSearch !== undefined) return libraryView.handleLibrarySearch(t);
   return undefined;
 });
 

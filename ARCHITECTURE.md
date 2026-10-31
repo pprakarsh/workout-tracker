@@ -29,6 +29,9 @@ js/backupstore.js   whole-database replace (restore, device copy) + the confirma
 js/clockstore.js    the workout clock: rest, holds, the drop-set prompt (ticking is in timer.js)
 js/exercise.js      exercise library SHAPE: muscle-group vocabulary, normaliser, per-group totals
 js/exercisestore.js exercise library writes: CRUD, seed-from-history, JSON import
+js/catalog.js       the built-in catalogue: parse, classify, search (read-only, shipped)
+js/catalogdata.js   the catalogue's gym half: strength, power, Olympic, plyo, isometric, carry, core
+js/catalogconditioning.js the catalogue's conditioning half: running, cardio, mobility, prehab
 js/trends.js        progress analysis: e1RM, per-session series, PRs, weekly totals
 js/chart.js         charts as SVG strings: scatter+line and bars. No dependency
 js/timefield.js     a duration as h/m/s boxes, so no colon is ever typed. Markup only
@@ -45,7 +48,7 @@ js/views/cardio.js  the cardio card: a straight run, or an interval block and it
 js/views/plan.js    "Plan" tab: ten day rows, assign a routine, mark done
 js/views/trends.js  "Trends" tab: weekly totals, and progress for one exercise
 js/views/settings.js "Settings" screen, reached from the header gear -- not a tab
-js/views/library.js "Exercise library" screen, reached from Routines -- not a tab
+js/views/library.js "Library" tab: your exercises, and browsing the built-in catalogue
 js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
@@ -637,6 +640,65 @@ An entry's own tags beat the library's, so a session keeps the meaning it had wh
 `secondary` counts as "not set" rather than "deliberately none", because `normalizeEntry` gives every
 entry `secondary: []` and treating that as an answer would mean the library's list could never apply
 to anything. An untagged exercise contributes **no row at all** — better than a wrong row.
+
+### The built-in catalogue
+
+**751 exercises** ship with the app, as one line each across two data files -- `js/catalogdata.js`
+(the gym: strength, power, Olympic, plyometric, isometric, carry, core) and
+`js/catalogconditioning.js` (running, other cardio, mobility, prehab). `js/catalog.js` parses and
+searches both. Split that way so no file fights the 1000-line cap: data there, mechanism here. For
+calibration, the well-known public datasets run 650-900 exercises and the paywalled ones claim
+11,000+, which is mostly variations-of-variations; this sits in the same band as the good free ones
+and the Library tab's **+ New exercise** covers whatever it does not know.
+Nothing in it is state — it ships with the app, is never written to, and is never synced.
+
+```
+Name | category | equipment | measure[:flags] | primary | secondary,…
+Single-arm Dumbbell Row|strength|dumbbell|reps:uni|Back|Lats,Biceps
+Front Plank|isometric|bodyweight|time:bw|Core|Shoulders
+Easy Run|running|none|cardio|Full Body|
+```
+
+**Every exercise carries three independent marks**, because they answer three different questions
+and no single label can carry all of them:
+
+| | what it says | values |
+|---|---|---|
+| `category` | what KIND of training this is | strength, power, olympic, plyo, isometric, carry, core, running, cardio, mobility, prehab |
+| `measure` | what the number on a set means | reps, time, distance (or cardio → duration + pace) |
+| `bodyweight` | where the load comes from | your own body, or an external one |
+
+A plank is isometric + timed + bodyweight; a weighted plank is isometric + timed + externally
+loaded; a push-up is strength + reps + bodyweight; a run is running + cardio + no load at all.
+Cardio gets its own `loadKind` bucket rather than being forced to claim "external weight".
+
+**Catalogue vs library.** The catalogue is what the *app* knows — shipped, read-only. The library is
+what *you* have decided — yours, editable, synced, backed up. Adopting a catalogue exercise **copies**
+it into your library; from then on it is yours to edit and the catalogue is only its origin.
+
+**Provenance is asked, not stored.** A library record keeps no `source` flag; `catalogFor(name)`
+answers "did the app ship this?" on demand. A stored flag would go stale the moment the catalogue
+gained an exercise, and would need a migration to fix. `asLibraryRecord` deliberately drops
+`builtIn`, `category` and `equipment` for the same reason — all three are re-derivable by name.
+
+**That is what the UI styles.** An exercise the catalogue has never heard of gets a dashed accent
+edge and a `yours` tag. The two are not the same kind of thing: a catalogue entry is a shared
+definition you adopted, and one you invented is yours alone, unchecked, and the one that will look
+wrong if you mistyped the name.
+
+**Browse without typing.** The Library tab has two modes. *Mine* is your library; *Browse* is the
+catalogue with a filter chip per kind and a count, so it can be explored by tapping rather than by
+guessing a search term. Search covers name, muscle group and equipment, with word-prefix ranking so
+"press" puts Bench Press above something that merely contains the letters.
+
+**The routine picker searches both.** Adding an exercise offers your own exercises first (they carry
+targets and history worth reusing) and catalogue matches second under their own heading. A catalogue
+pick fills in measure, load, side and muscles and leaves **sets, reps and rest blank** — the
+catalogue has no opinion on those, and a made-up 3×10 in your routine would be worse than a blank.
+
+The live search repaints **only** the list container (`#libList`), not the view: a full re-render
+replaces the input being typed into and takes the keyboard with it. The exercise picker already
+worked this way; the Library tab now does too.
 
 ### Editing a finished session
 

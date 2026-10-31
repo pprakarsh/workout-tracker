@@ -34,7 +34,7 @@ console.log('\n== the shell itself must be visible');
 ok(display('viewRoot') !== 'none', `#viewRoot is visible (${display('viewRoot')})`);
 ok(display('tabBar') === 'flex', `#tabBar lays out as flex (${display('tabBar')})`);
 ok(display('appHeader') === 'flex', `#appHeader lays out as flex (${display('appHeader')})`);
-ok(document.querySelectorAll('#tabBar .tab').length === 6, 'six tab buttons exist');
+ok(document.querySelectorAll('#tabBar .tab').length === 7, 'seven tab buttons exist');
 
 console.log('\n== no stray CSS placeholders');
 ok(!/#1f3character|TODO|FIXME/.test(css), 'no broken colour values or leftover markers');

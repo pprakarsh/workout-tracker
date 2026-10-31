@@ -31,6 +31,10 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Library import / export as JSON | Three modes: add only, update the mentioned fields, or replace. Muscle names matched loosely; an unknown group is kept as spelled |
 | Unilateral exercises | Each planned set logs twice, once per side (`1L`, `1R`); prefill matches by side; rest comes after the second side. First side is a setting |
 | Per-muscle volume trends | Direct and indirect sets per group, side by side and never blended, plus what you have not trained in the range |
+| Built-in exercise catalogue, 500+ | Strength, power, Olympic, plyometric, isometric, carry, core, running, cardio, mobility and prehab — every one marked with its kind, its load source and whether it is per side |
+| Library as its own tab, with Browse | Tap a kind to browse without typing; search by name, muscle or equipment; one tap adopts a catalogue exercise into your library |
+| Your own exercises look different | A dashed accent edge and a "yours" tag, because nobody has checked an exercise you invented |
+| Catalogue in the routine picker | Adding an exercise to a routine searches your own AND the catalogue, under separate headings |
 | Session progress bar | Entry completion, in the Now header |
 | Plan tab: 10 days ahead, 7 behind | Assign a routine per day, rest days, push/pull a day; done is derived from history, and the week behind shows adherence |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |

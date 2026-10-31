@@ -12,6 +12,7 @@ import {
   startRest, startRestForSet, stopRest, startHold, startDropNow,
 } from '../clockstore.js';
 import { findInLibrary, lastLogFor, recentWeights } from '../queries.js';
+import { catalogFor, asLibraryRecord } from '../catalog.js';
 import { esc, fmtNum, fmtReps, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { readTimeDom } from '../timefield.js';
 import { updateLog } from '../cardiostore.js';
@@ -782,6 +783,19 @@ export const entryActions = {
     const hit = findInLibrary(key);
     if (!hit || !hit.def) { toast('Could not load that exercise'); return; }
     openExerciseForm(dest, hit.def, { title: hit.name });
+  },
+
+  /**
+   * Picked from the built-in catalogue. It brings what the exercise IS, not
+   * what to do with it: the form opens with measure, load, side and muscles
+   * filled in and the sets/reps/rest blank, because the catalogue has no
+   * opinion on those and a made-up 3x10 in your routine would be worse than a
+   * blank one.
+   */
+  'ex-catalog': ({ dest, key }) => {
+    const hit = catalogFor(key);
+    if (!hit) { toast('Could not load that exercise'); return; }
+    openExerciseForm(dest, asLibraryRecord(hit), { title: hit.name });
   },
 };
 

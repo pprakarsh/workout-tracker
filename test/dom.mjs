@@ -73,7 +73,7 @@ await store.updateSettings({ requireEffort: false });
 section('boot');
 ok(store.state.ready, 'store initialised');
 ok(view().length > 0, 'something rendered');
-ok($$('#tabBar .tab').length === 6, `six tabs present (${[...$$('#tabBar .tab')].map((b) => b.dataset.tab).join(',')})`);
+ok($$('#tabBar .tab').length === 7, `seven tabs present (${[...$$('#tabBar .tab')].map((b) => b.dataset.tab).join(',')})`);
 
 section('seed a routine, then start it from the Now tab');
 await xi.importFromText(routinesView.SAMPLE);
@@ -462,7 +462,8 @@ ok(/Ladder Press/.test($('#exLib').textContent), 'the match is the one expected'
 $('#exSearch').value = 'zzzz no such thing';
 $('#exSearch').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 await sleep(30);
-ok(/Nothing matches/.test($('#exLib').textContent), 'a miss says so rather than showing everything');
+ok(/Nothing matches/.test($('#modalRoot').textContent),
+  'a miss says so rather than showing everything');
 $('#exSearch').value = 'ladder';
 $('#exSearch').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 await sleep(30);
@@ -1032,7 +1033,7 @@ ok(!closedRow.textContent.includes('unfinished'), 'and the row stops saying unfi
 await store.deleteSession(openId);
 
 section('Settings is a screen reached from the header, not a seventh tab');
-ok($$('#tabBar .tab').length === 6, 'the tab bar stays at six');
+ok($$('#tabBar .tab').length === 7, 'the tab bar stays at seven');
 ok($('#appHeader [data-action="settings-go"]') !== null, 'the gear is in the header, visible everywhere');
 await click('#tabBar .tab[data-tab="history"]');
 await click('[data-action="settings-go"]');
@@ -1967,9 +1968,11 @@ await sleep(90);
 section('the exercise library: described once, used everywhere');
 await click('#tabBar .tab[data-tab="routines"]');
 ok(/Exercise library/.test(view()), 'the Routines tab offers the library');
-await click('[data-action="library-go"]', 'Exercise library');
+await click('#tabBar .tab[data-tab="library"]', 'Library tab');
 await sleep(60);
-ok(/Exercise library/.test(view()), 'the library screen opened');
+ok(store.state.tab === 'library', 'the library is its own tab');
+ok(/Browse all/.test(view()), 'the library screen opened, offering the catalogue');
+ok(/In your library/.test(view()), 'and your own side of it');
 ok($('[data-action="lib-new"]') !== null, 'a new exercise can be described');
 ok(/NOT IN THE LIBRARY YET/.test(view()),
   'and it names the exercises it has seen but has no record for');
@@ -2091,6 +2094,104 @@ ok(/Split Squat/.test($('#modalRoot').textContent),
   'naming the exercises that produced the sets');
 await click('#modalRoot [data-mclose]', 'Close');
 await sleep(50);
+
+section('the catalogue is browsable from its own tab, without typing');
+await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await sleep(60);
+await click('[data-action="lib-mode"][data-mode="browse"]', 'Browse all');
+await sleep(80);
+ok(/Browse all/.test(view()), 'browse mode opened');
+ok($$('[data-action="lib-cat"]').length > 8,
+  `a filter chip per kind, so it can be browsed with taps (${$$('[data-action="lib-cat"]').length})`);
+ok($$('.exrow.built').length > 20, `catalogue rows are listed (${$$('.exrow.built').length})`);
+const lcIso = $$('[data-action="lib-cat"]').find((b) => /Isometric/.test(b.textContent));
+ok(!!lcIso, 'Isometric is one of the kinds');
+lcIso.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(80);
+ok(store.state.nav.libCat === 'isometric', 'tapping it filters to that kind');
+ok($$('.exrow.built').length > 10, 'and shows them');
+ok(/isometric/.test($('.exrow.built').textContent),
+  'with the kind marked on every row');
+ok(/bodyweight|external weight/.test($('.exrow.built').textContent),
+  'and where the load comes from');
+
+const lcRun = $$('[data-action="lib-cat"]').find((b) => /Running/.test(b.textContent));
+ok(!!lcRun, 'Running is one of the kinds');
+lcRun.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(80);
+ok($$('.exrow.built').length > 10, 'running has its own list');
+ok(/cardio/.test($('.exrow.built').textContent), 'marked as cardio rather than as a weight');
+const lcCardio = $$('[data-action="lib-cat"]').find((b) => /Cardio/.test(b.textContent));
+ok(!!lcCardio, 'and Cardio is a kind of its own, beside Running');
+
+section('adding from the catalogue is one tap, and then it is yours to edit');
+await click('[data-action="lib-cat"][data-cat=""]', 'All');
+await sleep(60);
+await type('#libSearch', 'turkish');
+await sleep(80);
+const lcAdd = $('[data-action="lib-add"]');
+ok(!!lcAdd, 'the search found it with an add affordance');
+const lcBefore = store.state.exercises.length;
+lcAdd.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(100);
+ok(store.state.exercises.length === lcBefore + 1, 'tapping it added one exercise');
+const lcTgu = store.state.exercises.find((x) => x.key === 'turkish get-up');
+ok(!!lcTgu, 'the right one');
+ok(lcTgu.unilateral === true && lcTgu.primary === 'Core',
+  'with its attributes, so nothing had to be typed');
+await sleep(40);
+ok($('[data-action="lib-add"][data-key="turkish get-up"]') === null
+  && $('[data-action="lib-edit"][data-key="turkish get-up"]') !== null,
+  'and the row now opens for editing instead of offering to add it again');
+
+section('your own exercises look different from the ones the app shipped');
+await click('[data-action="lib-mode"][data-mode="mine"]', 'Mine');
+await sleep(80);
+await click('[data-action="lib-new"]', '+ New exercise');
+await sleep(60);
+await type('#modalRoot input[name="name"]', 'Prakarsh Special Raise');
+await type('#modalRoot input[name="primary"]', 'Shoulders');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(120);
+const lcMineRow = $$('.exrow').find((r) => /Prakarsh Special Raise/.test(r.textContent));
+ok(!!lcMineRow, 'the invented exercise is listed');
+ok(lcMineRow.classList.contains('mine'),
+  'and styled as yours, because nobody has checked it and it is the one that will look wrong');
+ok(/yours/.test(lcMineRow.textContent), 'with an explicit tag saying so');
+const lcBuiltRow = $$('.exrow').find((r) => /Turkish Get-up/.test(r.textContent));
+ok(!!lcBuiltRow && !lcBuiltRow.classList.contains('mine'),
+  'while an adopted catalogue exercise is not marked as yours');
+ok(!/yours/.test(lcBuiltRow.textContent), 'and carries no "yours" tag');
+ok(/Power/.test(lcBuiltRow.textContent),
+  `but does carry the kind the catalogue gave it (${lcBuiltRow.querySelector('.nm').textContent.trim()})`);
+
+section('adding an exercise to a routine can pick from the catalogue');
+await click('#tabBar .tab[data-tab="routines"]');
+await sleep(60);
+const lcR = store.state.routines[0];
+await click(`[data-action="routine-open"][data-id="${lcR.id}"]`, 'open a routine');
+await sleep(60);
+await click('[data-action="rentry-add"]', '+ Add exercise');
+await sleep(80);
+ok($('#exSearch') !== null, 'the picker opened with one search box');
+ok(/catalogue/.test($('#modalRoot').textContent), 'and says the catalogue is searchable too');
+$('#exSearch').value = 'zercher';
+$('#exSearch').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(60);
+ok($('#exCat [data-action="ex-catalog"]') !== null,
+  'a catalogue match is offered when adding to a routine');
+ok(/FROM THE CATALOGUE/.test($('#modalRoot').textContent),
+  'under a heading that separates it from your own');
+await click('#exCat [data-action="ex-catalog"]', 'Zercher Squat');
+await sleep(90);
+ok($('#modalRoot input[name="name"]')?.value === 'Zercher Squat',
+  `the form opened prefilled with the catalogue name (${$('#modalRoot input[name="name"]')?.value})`);
+ok($('#modalRoot input[name="primary"]')?.value === 'Quads',
+  'and its volume group, so nothing has to be retyped');
+ok($('#modalRoot select[name="measure"]')?.value === 'reps', 'and how it is measured');
+await click('#modalRoot [data-mclose]', 'Cancel');
+await sleep(60);
+store.state.nav = {};
 
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

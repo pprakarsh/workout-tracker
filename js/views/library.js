@@ -16,11 +16,17 @@ import {
 } from '../exercisestore.js';
 import { exerciseLibrary } from '../queries.js';
 import { MUSCLE_GROUPS, kindPills, kindLabel } from '../exercise.js';
+import {
+  CATALOG, CATEGORIES, catalogFor, catalogCounts, searchCatalog, categoryLabel,
+  loadKind, asLibraryRecord,
+} from '../catalog.js';
 import { MEASURES } from '../measure.js';
 import { esc, normName, relDay, download } from '../util.js';
 import { openModal, closeModal, confirmDialog, toast } from '../ui.js';
 
 const search = () => (state.nav.libQuery || '').trim();
+const mode = () => (state.nav.libMode === 'browse' ? 'browse' : 'mine');
+const activeCat = () => state.nav.libCat || null;
 
 /** Exercises known to the app but not yet described in the library. */
 function untagged() {
@@ -32,14 +38,41 @@ function untagged() {
 /** Described, but with no volume group — so it contributes nothing to Trends. */
 const ungrouped = () => state.exercises.filter((x) => !x.primary && x.type === 'lift');
 
+/** The three marks every exercise carries: kind, load, and per-side. */
+function marks(ex, cat) {
+  const out = [];
+  if (cat) out.push({ cls: 'cat', text: categoryLabel(cat.category) });
+  const load = loadKind(ex);
+  out.push({
+    cls: load === 'bodyweight' ? 'bw' : load === 'none' ? '' : 'ext',
+    text: load === 'bodyweight' ? 'bodyweight' : load === 'none' ? 'cardio' : 'external weight',
+  });
+  if (ex.measure === 'time' && ex.type !== 'cardio') out.push({ cls: 'iso', text: 'isometric' });
+  if (ex.measure === 'distance') out.push({ cls: '', text: 'distance' });
+  if (ex.unilateral) out.push({ cls: '', text: 'per side' });
+  return out;
+}
+
+/**
+ * One row in YOUR library.
+ *
+ * An exercise the catalogue has never heard of is marked as yours and styled
+ * differently -- dashed edge, "yours" tag -- because the two are not the same
+ * kind of thing. A catalogue entry is a shared definition you adopted; one you
+ * invented is yours alone, nobody has checked it, and it is the one that will
+ * look wrong if you mistyped the name.
+ */
 function row(ex) {
-  const pills = kindPills(ex);
+  const cat = catalogFor(ex.key);
+  const mine = !cat;
   const used = exerciseLibrary().find((x) => x.key === ex.key);
   return `
-    <div class="sess-item" data-action="lib-edit" data-key="${esc(ex.key)}" role="button" tabindex="0">
+    <div class="sess-item exrow ${mine ? 'mine' : ''}" data-action="lib-edit"
+         data-key="${esc(ex.key)}" role="button" tabindex="0">
       <div class="body">
         <div class="nm">${esc(ex.name)}
-          ${pills.map((p) => `<span class="pill">${esc(p)}</span>`).join('')}</div>
+          ${mine ? '<span class="pill mine">yours</span>' : ''}
+          ${marks(ex, cat).map((m) => `<span class="pill ${m.cls}">${esc(m.text)}</span>`).join('')}</div>
         <div class="sub">${ex.primary
     ? `<b>${esc(ex.primary)}</b>${ex.secondary.length ? ` &middot; ${esc(ex.secondary.join(', '))}` : ''}`
     : '<span class="warnmsg">no volume group &mdash; not counted in Trends</span>'}</div>
@@ -50,28 +83,112 @@ function row(ex) {
     </div>`;
 }
 
-export function render() {
+/** One row in the catalogue browser. */
+function catRow(ex) {
+  const have = exerciseFor(ex.key);
+  // Static action names per branch, not `data-action="${have ? a : b}"`: the
+  // style guard's regex reads the markup literally and cannot see through an
+  // interpolation, so an interpolated name reads as a dead handler.
+  const body = `
+      <div class="body">
+        <div class="nm">${esc(ex.name)}
+          ${marks(ex, ex).map((m) => `<span class="pill ${m.cls}">${esc(m.text)}</span>`).join('')}</div>
+        <div class="sub">${ex.primary ? `<b>${esc(ex.primary)}</b>` : ''}${
+  ex.secondary.length ? ` &middot; ${esc(ex.secondary.join(', '))}` : ''}${
+  ex.equipment !== 'none' ? ` &middot; ${esc(ex.equipment)}` : ''}</div>
+      </div>`;
+  return have
+    ? `<div class="sess-item exrow built" data-action="lib-edit" data-key="${esc(ex.key)}"
+            role="button" tabindex="0">${body}<div class="ok">✓</div></div>`
+    : `<div class="sess-item exrow built" data-action="lib-add" data-key="${esc(ex.key)}"
+            role="button" tabindex="0">${body}<div class="dim">+</div></div>`;
+}
+
+function tabs() {
+  const n = state.exercises.length;
+  return `
+    <div class="hist-chips libtabs">
+      <button type="button" class="chip ${mode() === 'mine' ? 'on' : ''}"
+              data-action="lib-mode" data-mode="mine">Mine${n ? ` (${n})` : ''}</button>
+      <button type="button" class="chip ${mode() === 'browse' ? 'on' : ''}"
+              data-action="lib-mode" data-mode="browse">Browse all ${CATALOG.length}</button>
+    </div>`;
+}
+
+/**
+ * Just the rows, so typing in the search box can repaint the list WITHOUT a
+ * full re-render.
+ *
+ * A full render replaces #viewRoot, which destroys the input being typed into
+ * and takes the keyboard with it. The exercise picker already solves this by
+ * rewriting only its list container; the same trick applies here.
+ */
+export function listHtml() {
+  if (mode() === 'browse') {
+    const hits = searchCatalog(search(), { category: activeCat() });
+    if (!hits.length) {
+      return '<div class="empty">Nothing matches. Try a muscle name, or <b>+ New exercise</b> under Mine.</div>';
+    }
+    return hits.slice(0, 150).map(catRow).join('')
+      + (hits.length > 150
+        ? `<div class="small dim center">Showing 150 of ${hits.length} — narrow the search.</div>` : '');
+  }
   const q = normName(search());
   const all = state.exercises;
   const shown = q ? all.filter((x) => x.key.includes(q) || (x.primary || '').toLowerCase().includes(q)
     || x.secondary.some((g) => g.toLowerCase().includes(q))) : all;
+  if (shown.length) return shown.map(row).join('');
+  return `<div class="empty">${all.length
+    ? 'Nothing matches that search.'
+    : `Your library is empty. <b>Browse all ${CATALOG.length}</b> to pick from the catalogue, or
+       <b>+ New exercise</b> to describe your own.`}</div>`;
+}
+
+function browse() {
+  const counts = catalogCounts();
+  return `
+    ${tabs()}
+    <div class="card flat">
+      <input id="libSearch" data-lib-search inputmode="search"
+             placeholder="Search ${CATALOG.length} exercises by name, muscle or kit"
+             value="${esc(search())}" aria-label="Search the exercise catalogue">
+    </div>
+    <div class="chip-wrap">
+      <button type="button" class="chip ${activeCat() ? '' : 'on'}"
+              data-action="lib-cat" data-cat="">All</button>
+      ${CATEGORIES.filter((c) => counts[c.key]).map((c) => `<button type="button"
+        class="chip ${activeCat() === c.key ? 'on' : ''}" data-action="lib-cat" data-cat="${c.key}"
+        title="${esc(c.hint)}">${esc(c.label)} ${counts[c.key]}</button>`).join('')}
+    </div>
+    <p class="hint">Every exercise is marked with its <b>kind</b> (strength, isometric, running,
+      mobility&hellip;), where the <b>load</b> comes from, and whether it is <b>per side</b>. Tap one
+      to add it to your library; a <span class="ok">&#10003;</span> means you already have it.</p>
+    <div id="libList">${listHtml()}</div>`;
+}
+
+export function render() {
+  if (mode() === 'browse') return browse();
+
+  const all = state.exercises;
   const missing = untagged();
   const noGroup = ungrouped();
+  const ownCount = all.filter((x) => !catalogFor(x.key)).length;
 
   return `
-    <button type="button" class="btn sm ghost" data-action="lib-back">← Routines</button>
+    ${tabs()}
 
-    <div class="card" style="margin-top:12px">
-      <h2 style="margin-top:0">Exercise library</h2>
-      <p class="hint" style="margin-top:0">Describe an exercise once here and every routine, every
+    <div class="card">
+      <p class="hint" style="margin-top:0">Describe an exercise once and every routine, every
         session and every trend that uses the name picks it up &mdash; including sessions you logged
         before. Targets and rest stay on the routine, because the same exercise is three sets of
         eight in one and five of five in another.</p>
-      <div class="kv"><span>Described</span><span class="strong">${all.length}</span></div>
+      <div class="kv"><span>In your library</span><span class="strong">${all.length}</span></div>
+      <div class="kv"><span>Your own, not in the catalogue</span><span>${ownCount}</span></div>
       <div class="kv"><span>Seen but not described</span><span>${missing.length}</span></div>
       <div class="kv"><span>Without a volume group</span><span>${noGroup.length}</span></div>
       <div class="btn-row" style="margin-top:10px">
         <button type="button" class="btn primary" data-action="lib-new">+ New exercise</button>
+        <button type="button" class="btn" data-action="lib-mode" data-mode="browse">Browse catalogue</button>
         ${missing.length ? `<button type="button" class="btn" data-action="lib-seed">Add the ${missing.length} missing</button>` : ''}
       </div>
     </div>
@@ -90,13 +207,10 @@ export function render() {
 
     <div class="card flat">
       <input id="libSearch" data-lib-search inputmode="search" placeholder="Search name or muscle"
-             value="${esc(search())}" aria-label="Search the exercise library">
+             value="${esc(search())}" aria-label="Search your exercise library">
     </div>
 
-    ${shown.length ? shown.map(row).join('')
-    : `<div class="empty">${all.length
-      ? 'Nothing matches that search.'
-      : 'The library is empty. <b>+ New exercise</b> to describe one, or import a file below.'}</div>`}
+    <div id="libList">${listHtml()}</div>
 
     <div class="card" style="margin-top:12px">
       <h2 style="margin-top:0">Import / export</h2>
@@ -196,8 +310,29 @@ function readForm(v) {
 }
 
 export const libraryActions = {
-  'library-go': () => { state.nav = { libQuery: '' }; state.lastTab = state.tab; state.tab = 'library'; },
-  'lib-back': () => { state.tab = state.lastTab === 'library' ? 'routines' : (state.lastTab || 'routines'); },
+  'library-go': () => { state.nav = { libQuery: '', libMode: 'mine' }; state.tab = 'library'; },
+  'lib-mode': ({ mode: m }) => {
+    state.nav.libMode = m === 'browse' ? 'browse' : 'mine';
+    state.nav.libQuery = '';
+    state.nav.libCat = null;
+  },
+  'lib-cat': ({ cat }) => { state.nav.libCat = cat || null; },
+
+  /**
+   * Adopt a catalogue exercise into your library.
+   *
+   * A copy, not a reference. From here on it is yours to edit, and the
+   * catalogue is only where it came from -- which is why nothing stores a
+   * "source" flag: provenance is re-derived by name, so the marks stay right
+   * even if the catalogue changes in a later release.
+   */
+  'lib-add': async ({ key }) => {
+    const hit = catalogFor(key);
+    if (!hit) return;
+    if (exerciseFor(key)) { toast(`${hit.name} is already in your library`); return; }
+    await saveExercise(asLibraryRecord(hit));
+    toast(`${hit.name} added — ${kindLabel(hit)}${hit.primary ? `, ${hit.primary}` : ''}`, 3800);
+  },
 
   'lib-new': ({ name }) => {
     openModal({
@@ -323,7 +458,13 @@ export const libraryActions = {
   },
 };
 
-/** Live search, wired from app.js like the other field handlers. */
+/**
+ * Live search. Repaints only the list, so the input keeps focus and the
+ * on-screen keyboard stays up -- a full re-render would replace the very
+ * element being typed into.
+ */
 export function handleLibrarySearch(el) {
   state.nav.libQuery = el.value;
+  const list = document.getElementById('libList');
+  if (list) list.innerHTML = listHtml();
 }

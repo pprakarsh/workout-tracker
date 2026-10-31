@@ -9,6 +9,9 @@ import { state, parseSetTargets, getRoutine, saveRoutine, normalizeEntry, addSes
 import { saveExercise } from '../exercisestore.js';
 import { exerciseLibrary, findInLibrary } from '../queries.js';
 import { exerciseFor } from '../store.js';
+import {
+  CATALOG, catalogFor, searchCatalog, categoryLabel, asLibraryRecord,
+} from '../catalog.js';
 import { esc, fmtNum, fmtClock, num, parseDur, relDay, normName } from '../util.js';
 import { parsePace, patternText, parseIntervals, isIntervals } from '../cardio.js';
 import { builderHtml, wireBuilder, DEFAULT_LEGS } from './cardio.js';
@@ -432,12 +435,38 @@ function libraryRows(lib, dest) {
 }
 
 /**
- * Pick from every exercise already used anywhere, or define a new one.
- * With an empty library there is nothing to choose, so go straight to the form.
+ * One row for a catalogue exercise, in the picker.
+ *
+ * Visually separated from your own: a catalogue entry carries its category and
+ * load marks and no history, because it has none -- you have never done it.
+ */
+function catalogRows(hits, dest) {
+  if (!hits.length) return '';
+  return hits.slice(0, 60).map((x) => `
+    <div class="sess-item cat" data-action="ex-catalog" data-dest="${esc(dest)}"
+         data-key="${esc(x.key)}" role="button" tabindex="0">
+      <div class="body">
+        <div class="nm">${esc(x.name)}
+          <span class="pill cat">${esc(categoryLabel(x.category))}</span></div>
+        <div class="sub">${esc([
+    x.primary, x.bodyweight ? 'bodyweight' : x.type === 'cardio' ? 'cardio' : 'external weight',
+    x.unilateral ? 'per side' : null, x.equipment !== 'none' ? x.equipment : null,
+  ].filter(Boolean).join(' · '))}</div>
+      </div>
+      <div class="dim">+</div>
+    </div>`).join('');
+}
+
+/**
+ * Pick from every exercise already used anywhere, from the built-in catalogue,
+ * or define a new one.
+ *
+ * Your own exercises come first and the catalogue second, because an exercise
+ * you have done before carries targets and history worth reusing and a
+ * catalogue entry carries neither. Both are searched by the same box.
  */
 export function openExercisePicker(dest, { title = 'Add exercise' } = {}) {
   const lib = exerciseLibrary();
-  if (!lib.length) { openExerciseForm(dest, {}, { title }); return; }
 
   const modal = openModal({
     title,
@@ -445,22 +474,32 @@ export function openExercisePicker(dest, { title = 'Add exercise' } = {}) {
       <button type="button" class="btn block primary" data-action="ex-new" data-dest="${esc(dest)}">
         + Create a new exercise</button>
       <div class="divider"></div>
-      <label class="field"><span>Or reuse one of your ${lib.length} exercises</span>
-        <input id="exSearch" placeholder="Search by name…" autocomplete="off" spellcheck="false"
-               data-nofocus></label>
-      <div id="exLib">${libraryRows(lib, dest)}</div>
-      <p class="hint">Picking one copies its targets, rest and notes into the form so you can adjust
-        them. The superset letter is not copied — that belongs to the routine it came from.</p>`,
+      <label class="field"><span>Or search ${lib.length ? `your ${lib.length} exercises and ` : ''}the ${CATALOG.length}-exercise catalogue</span>
+        <input id="exSearch" placeholder="Name, muscle or equipment…" autocomplete="off"
+               spellcheck="false" data-nofocus></label>
+      <div id="exLib">${lib.length ? `<div class="tiny pickhdr">YOURS</div>${libraryRows(lib, dest)}` : ''}</div>
+      <div id="exCat"></div>
+      <p class="hint">Picking one of <b>yours</b> copies its targets, rest and notes into the form.
+        A <b>catalogue</b> entry has no history to copy &mdash; it brings how it is measured, where
+        the load comes from, whether it is per side, and which muscles it trains.</p>`,
     cancelText: 'Cancel',
   });
 
   const search = modal.querySelector('#exSearch');
   const list = modal.querySelector('#exLib');
-  search.addEventListener('input', () => {
+  const cat = modal.querySelector('#exCat');
+  const paint = () => {
     const q = normName(search.value);
-    list.innerHTML = libraryRows(
-      q ? lib.filter((x) => x.key.includes(q)) : lib,
-      dest,
-    );
-  });
+    const mine = q ? lib.filter((x) => x.key.includes(q)) : lib;
+    list.innerHTML = mine.length ? `<div class="tiny pickhdr">YOURS</div>${libraryRows(mine, dest)}` : '';
+    // the catalogue is only listed once there is something to narrow it with,
+    // or the picker opens as a 500-row wall
+    const hits = q ? searchCatalog(search.value).filter((x) => !mine.some((m) => m.key === x.key)) : [];
+    cat.innerHTML = hits.length
+      ? `<div class="tiny pickhdr">FROM THE CATALOGUE</div>${catalogRows(hits, dest)}`
+      : q && !mine.length
+        ? '<div class="empty">Nothing matches, in yours or the catalogue. <b>Create a new exercise</b> above.</div>'
+        : '';
+  };
+  search.addEventListener('input', paint);
 }

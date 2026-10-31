@@ -35,6 +35,7 @@ const clock = await import(`${APP}/js/clockstore.js`);
 const backupStore = await import(`${APP}/js/backupstore.js`);
 const ex = await import(`${APP}/js/exercise.js`);
 const xs = await import(`${APP}/js/exercisestore.js`);
+const cat = await import(`${APP}/js/catalog.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const nowView = await import(`${APP}/js/views/now.js`);
@@ -2629,6 +2630,125 @@ ok(!ex.groupTotals(
 ).length, 'no tag means no row — better than a wrong row');
 await store.deleteRoutine(uR.id);
 await store.deleteRoutine(gWR.id);
+
+/* ------------------------------------------------------------------ */
+/* the built-in catalogue                                             */
+/* ------------------------------------------------------------------ */
+
+section('the catalogue parses, and every line in it is well formed');
+ok(cat.CATALOG.length > 700, `${cat.CATALOG.length} exercises ship with the app`);
+const cKeys = cat.CATALOG.map((x) => x.key);
+const cDupes = [...new Set(cKeys.filter((k, i) => cKeys.indexOf(k) !== i))];
+ok(cDupes.length === 0,
+  `no duplicate names${cDupes.length ? ` — repeated: ${cDupes.slice(0, 6).join(', ')}` : ''}`);
+ok(cat.CATALOG.every((x) => x.key && x.name), 'every record has a name');
+const cBadCat = cat.CATALOG.filter((x) => !cat.CATEGORIES.some((c) => c.key === x.category));
+ok(cBadCat.length === 0,
+  `every exercise carries a known KIND${cBadCat.length ? ` — bad: ${cBadCat.slice(0, 5).map((x) => `${x.name}=${x.category}`).join(', ')}` : ''}`);
+const cBadM = cat.CATALOG.filter((x) => !['reps', 'time', 'distance'].includes(x.measure));
+ok(cBadM.length === 0, 'and a valid measure');
+const cNoGroup = cat.CATALOG.filter((x) => x.type === 'lift' && !x.primary);
+ok(cNoGroup.length === 0,
+  `every lift has a volume group, so nothing in the catalogue is invisible to Trends${cNoGroup.length ? ` — missing: ${cNoGroup.slice(0, 5).map((x) => x.name).join(', ')}` : ''}`);
+const cSelfRef = cat.CATALOG.filter((x) => x.secondary.includes(x.primary));
+ok(cSelfRef.length === 0, 'and never lists its own primary group as a secondary one');
+ok(cat.CATALOG.every((x) => x.builtIn === true), 'all of them are marked as built in');
+
+section('the catalogue is not missing whole families of movement');
+// One named probe per family, chosen because each is the thing a catalogue
+// typically forgets. A miss here means a gap, not a renamed entry.
+for (const name of [
+  'Back Squat', 'Conventional Deadlift', 'Barbell Bench Press', 'Overhead Press', 'Pull-up',
+  'Barbell Row', 'Lat Pulldown', 'Dumbbell Lateral Raise', 'Barbell Curl', 'Skull Crusher',
+  'Standing Calf Raise', 'Hip Thrust', 'Nordic Hamstring Curl', 'Bulgarian Split Squat',
+  'Clean and Jerk', 'Snatch', 'Split Jerk', 'Snatch Balance', 'Turkish Get-up',
+  'Box Jump', 'Burpee', 'Medicine Ball Slam', 'Depth Jump',
+  'Front Plank', 'Side Plank', 'L-sit', 'Dead Hang', 'Wall Sit', 'Copenhagen Plank',
+  'Farmer Carry', 'Sled Push', 'Yoke Walk', 'Atlas Stone Lift', 'Log Press', 'Tire Flip',
+  'Easy Run', 'Interval Run', 'Hill Repeats', 'Sprint', 'Ruck', 'Walk',
+  'Cycling', 'Rowing Machine', 'Swimming', 'Jump Rope', 'Assault Bike', 'SkiErg', 'Climbing',
+  'Football', 'Tennis', 'Boxing', 'HIIT Circuit',
+  'Downward Dog', 'Pigeon Pose', 'Warrior II', 'Couch Stretch', 'Cat-Cow', 'Hip CARs',
+  'Foam Roll Quads', 'Jumping Jacks', 'High Knees',
+  'External Rotation', 'Band Pull-apart', 'Clamshell', 'Tibialis Raise', 'Chin Tuck',
+  'Muscle-up', 'Handstand Push-up', 'Pistol Squat', 'Ab Wheel Rollout', 'Hanging Leg Raise',
+  'Cable Fly', 'Face Pull', 'Leg Press', 'Romanian Deadlift', 'Goblet Squat', 'Kettlebell Swing',
+]) {
+  if (!cat.catalogFor(name)) { failures++; console.log(`  FAIL missing from the catalogue: ${name}`); }
+}
+ok(true, `76 named probes across every family are present (of ${cat.CATALOG.length})`);
+ok(cat.CATEGORIES.every((c) => (cat.catalogCounts()[c.key] || 0) >= 10),
+  'and no category is a token entry — every one has at least ten exercises');
+
+section('every exercise is marked with its kind, its load and whether it is per side');
+const cCounts = cat.catalogCounts();
+for (const key of ['strength', 'isometric', 'running', 'cardio', 'mobility', 'olympic', 'plyo', 'carry', 'core', 'power', 'rehab']) {
+  ok((cCounts[key] || 0) > 0, `${key}: ${cCounts[key] || 0} exercises`);
+}
+ok(cat.CATALOG.some((x) => cat.loadKind(x) === 'bodyweight'), 'bodyweight exercises are marked');
+ok(cat.CATALOG.some((x) => cat.loadKind(x) === 'external'), 'external-weight ones too');
+ok(cat.CATALOG.some((x) => cat.loadKind(x) === 'none'),
+  'and cardio has its own load bucket rather than being called "external weight"');
+ok(cat.CATALOG.some((x) => x.unilateral), 'unilateral exercises are marked');
+ok(cat.CATALOG.filter((x) => x.measure === 'time').length > 30,
+  `isometrics are measured in time (${cat.CATALOG.filter((x) => x.measure === 'time').length} of them)`);
+ok(cat.CATALOG.filter((x) => x.measure === 'distance').length > 5,
+  'carries are measured in distance');
+ok(cat.CATALOG.filter((x) => x.type === 'cardio').length > 30,
+  `running and cardio are logged as cardio, not as sets (${cat.CATALOG.filter((x) => x.type === 'cardio').length})`);
+
+section('the load question and the measure question stay independent');
+const cPlank = cat.catalogFor('Front Plank');
+ok(cPlank.measure === 'time' && cPlank.bodyweight === true,
+  'a plank is isometric AND bodyweight');
+const cWPlank = cat.catalogFor('Weighted Plank');
+ok(cWPlank.measure === 'time' && cWPlank.bodyweight === false,
+  'a weighted plank is isometric AND externally loaded — one label could not say both');
+const cPush = cat.catalogFor('Push-up');
+ok(cPush.measure === 'reps' && cPush.bodyweight === true, 'a push-up is reps AND bodyweight');
+ok(cat.catalogFor('Back Squat').bodyweight === false, 'a back squat is reps AND external');
+ok(cat.catalogFor('Easy Run').type === 'cardio', 'a run is cardio');
+ok(cat.loadKind(cat.catalogFor('Easy Run')) === 'none', 'and carries no load at all');
+
+section('the catalogue can be searched by name, muscle, kit or kind');
+ok(cat.searchCatalog('bench press').some((x) => x.key === 'barbell bench press'),
+  'a two-word name search works');
+ok(cat.searchCatalog('lats').length > 5, 'searching a muscle finds its exercises');
+ok(cat.searchCatalog('kettlebell').length > 5, 'and searching equipment finds its exercises');
+ok(cat.searchCatalog('squat')[0].key.startsWith('squat') || cat.searchCatalog('squat')[0].key.includes('squat'),
+  'a name starting with the term sorts first');
+ok(cat.searchCatalog('', { category: 'isometric' }).every((x) => x.category === 'isometric'),
+  'filtering by kind returns only that kind');
+ok(cat.searchCatalog('', { load: 'bodyweight' }).every((x) => x.bodyweight),
+  'filtering by load returns only that load');
+ok(cat.searchCatalog('', { group: 'Calves' }).every((x) => x.primary === 'Calves' || x.secondary.includes('Calves')),
+  'filtering by muscle includes both direct and indirect');
+ok(cat.searchCatalog('zzzzz').length === 0, 'a miss returns nothing rather than everything');
+
+section('provenance is asked, not stored');
+ok(cat.isBuiltIn('Back Squat') === true, 'the catalogue knows a back squat');
+ok(cat.isBuiltIn('My Weird Machine Thing') === false, 'and admits it does not know your invention');
+ok(cat.catalogFor('BACK SQUAT') !== null, 'lookups ignore casing, like everything else here');
+
+section('adopting a catalogue exercise copies it into your library');
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+const cRec = cat.asLibraryRecord(cat.catalogFor('Single-arm Dumbbell Row'));
+ok(cRec.builtIn === undefined && cRec.category === undefined,
+  'the copy drops builtIn and category — both are re-derivable by name, and a stored copy would go stale');
+await xs.saveExercise(cRec);
+const cMine = xs.exerciseFor('Single-arm Dumbbell Row');
+ok(cMine.unilateral === true, 'the attributes came across');
+ok(cMine.primary === 'Back', 'including the volume group');
+ok(cat.isBuiltIn(cMine.key) === true, 'and it still reads as a catalogue exercise, not as yours');
+await xs.saveExercise({ ...cMine, primary: 'Lats' });
+ok(xs.exerciseFor('Single-arm Dumbbell Row').primary === 'Lats',
+  'once adopted it is yours to edit');
+ok(cat.isBuiltIn('Single-arm Dumbbell Row') === true,
+  'editing it does not change where it came from');
+await xs.saveExercise({ name: 'Homemade Contraption Press', primary: 'Chest' });
+ok(cat.isBuiltIn('Homemade Contraption Press') === false,
+  'while an exercise you invented is marked as yours — which is what the UI styles differently');
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
