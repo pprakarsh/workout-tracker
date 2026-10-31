@@ -1,0 +1,456 @@
+{
+  "schema": "workout-tracker/exercise-library@1",
+  "note": "Tagged from the exercises used in this app's own routines and sessions.",
+  "exercises": [
+    {
+      "name": "90/90 Hip Lift with Breathing",
+      "primary": [
+        "Core"
+      ],
+      "secondary": [
+        "Hamstrings",
+        "Glutes"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "90/90 Hip Switch",
+      "primary": [
+        "Glutes"
+      ],
+      "secondary": [
+        "Core"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Ankle Knee-to-Wall Rock",
+      "primary": [
+        "Calves"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Band External Rotation",
+      "primary": [
+        "Shoulders"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": true
+    },
+    {
+      "name": "Barbell Bicep Curls",
+      "primary": [
+        "Biceps"
+      ],
+      "secondary": [
+        "Forearms"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Bent-Knee Soleus Stretch",
+      "primary": [
+        "Calves"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Bird Dog",
+      "primary": [
+        "Core"
+      ],
+      "secondary": [
+        "Lower Back",
+        "Glutes"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Cable Face Pulls External Rotation",
+      "primary": [
+        "Rear Delts"
+      ],
+      "secondary": [
+        "Traps",
+        "Shoulders"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Calf Raise knees bent",
+      "primary": [
+        "Calves"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Child's Pose",
+      "primary": [
+        "Lats"
+      ],
+      "secondary": [
+        "Lower Back"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Cooldown Jog",
+      "primary": [
+        "Full Body"
+      ],
+      "type": "cardio"
+    },
+    {
+      "name": "DB Bench Press",
+      "primary": [
+        "Chest",
+        "Triceps"
+      ],
+      "secondary": [
+        "Shoulders"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "DB Row",
+      "primary": [
+        "Back",
+        "Lats"
+      ],
+      "secondary": [
+        "Biceps",
+        "Forearms"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": true
+    },
+    {
+      "name": "Dead Bug",
+      "primary": [
+        "Core"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Dip",
+      "primary": [
+        "Chest",
+        "Triceps"
+      ],
+      "secondary": [
+        "Shoulders"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Doorway Pec Stretch",
+      "primary": [
+        "Chest"
+      ],
+      "secondary": [
+        "Shoulders"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Easy Run",
+      "primary": [
+        "Full Body"
+      ],
+      "type": "cardio"
+    },
+    {
+      "name": "Face Pulls",
+      "primary": [
+        "Rear Delts"
+      ],
+      "secondary": [
+        "Traps"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Face Pulls External Rotation",
+      "primary": [
+        "Rear Delts"
+      ],
+      "secondary": [
+        "Traps",
+        "Shoulders"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Farmer Carry",
+      "primary": [
+        "Forearms"
+      ],
+      "secondary": [
+        "Traps",
+        "Core"
+      ],
+      "measure": "time",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Figure-4 Glute Stretch",
+      "primary": [
+        "Glutes"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Glute Bridge",
+      "primary": [
+        "Glutes"
+      ],
+      "secondary": [
+        "Hamstrings"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Goblet Squat",
+      "primary": [
+        "Quads"
+      ],
+      "secondary": [
+        "Glutes",
+        "Core"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Half-Kneeling Hip Flexor Stretch",
+      "primary": [
+        "Quads"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Incline DB Bench Press",
+      "primary": [
+        "Chest"
+      ],
+      "secondary": [
+        "Shoulders",
+        "Triceps"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Intervals",
+      "primary": [
+        "Full Body"
+      ],
+      "type": "cardio"
+    },
+    {
+      "name": "Lat Prayer",
+      "primary": [
+        "Lats"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Lateral Raise",
+      "primary": [
+        "Shoulders"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Pull-up",
+      "primary": [
+        "Lats"
+      ],
+      "secondary": [
+        "Biceps",
+        "Forearms"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Row",
+      "primary": [
+        "Back",
+        "Lats"
+      ],
+      "secondary": [
+        "Biceps"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Run Intervals",
+      "primary": [
+        "Full Body"
+      ],
+      "type": "cardio"
+    },
+    {
+      "name": "Seated DB Shoulder Press",
+      "primary": [
+        "Shoulders"
+      ],
+      "secondary": [
+        "Triceps"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Shoulder external rotation DB kn Knee",
+      "primary": [
+        "Shoulders"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": true
+    },
+    {
+      "name": "Side Plank",
+      "primary": [
+        "Obliques"
+      ],
+      "secondary": [
+        "Core"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Straight-Knee Calf Stretch",
+      "primary": [
+        "Calves"
+      ],
+      "measure": "time",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Stride",
+      "primary": [
+        "Full Body"
+      ],
+      "type": "cardio"
+    },
+    {
+      "name": "Supine Pelvic Tilt",
+      "primary": [
+        "Core"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Thoracic Open Book",
+      "primary": [
+        "Back"
+      ],
+      "secondary": [
+        "Obliques"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": true
+    },
+    {
+      "name": "Tib Raise",
+      "primary": [
+        "Calves"
+      ],
+      "measure": "reps",
+      "bodyweight": true,
+      "unilateral": false
+    },
+    {
+      "name": "Two-DB Romanian Deadlift",
+      "primary": [
+        "Hamstrings"
+      ],
+      "secondary": [
+        "Glutes",
+        "Lower Back"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    },
+    {
+      "name": "Warmup Jog",
+      "primary": [
+        "Full Body"
+      ],
+      "type": "cardio"
+    },
+    {
+      "name": "Y Raise",
+      "primary": [
+        "Shoulders"
+      ],
+      "secondary": [
+        "Traps",
+        "Rear Delts"
+      ],
+      "measure": "reps",
+      "bodyweight": false,
+      "unilateral": false
+    }
+  ]
+}

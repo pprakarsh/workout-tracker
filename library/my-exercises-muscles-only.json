@@ -1,0 +1,342 @@
+{
+  "schema": "workout-tracker/exercise-library@1",
+  "note": "Tagged from the exercises used in this app's own routines and sessions.",
+  "exercises": [
+    {
+      "name": "90/90 Hip Lift with Breathing",
+      "primary": [
+        "Core"
+      ],
+      "secondary": [
+        "Hamstrings",
+        "Glutes"
+      ]
+    },
+    {
+      "name": "90/90 Hip Switch",
+      "primary": [
+        "Glutes"
+      ],
+      "secondary": [
+        "Core"
+      ]
+    },
+    {
+      "name": "Ankle Knee-to-Wall Rock",
+      "primary": [
+        "Calves"
+      ]
+    },
+    {
+      "name": "Band External Rotation",
+      "primary": [
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "Barbell Bicep Curls",
+      "primary": [
+        "Biceps"
+      ],
+      "secondary": [
+        "Forearms"
+      ]
+    },
+    {
+      "name": "Bent-Knee Soleus Stretch",
+      "primary": [
+        "Calves"
+      ]
+    },
+    {
+      "name": "Bird Dog",
+      "primary": [
+        "Core"
+      ],
+      "secondary": [
+        "Lower Back",
+        "Glutes"
+      ]
+    },
+    {
+      "name": "Cable Face Pulls External Rotation",
+      "primary": [
+        "Rear Delts"
+      ],
+      "secondary": [
+        "Traps",
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "Calf Raise knees bent",
+      "primary": [
+        "Calves"
+      ]
+    },
+    {
+      "name": "Child's Pose",
+      "primary": [
+        "Lats"
+      ],
+      "secondary": [
+        "Lower Back"
+      ]
+    },
+    {
+      "name": "Cooldown Jog",
+      "primary": [
+        "Full Body"
+      ]
+    },
+    {
+      "name": "DB Bench Press",
+      "primary": [
+        "Chest",
+        "Triceps"
+      ],
+      "secondary": [
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "DB Row",
+      "primary": [
+        "Back",
+        "Lats"
+      ],
+      "secondary": [
+        "Biceps",
+        "Forearms"
+      ]
+    },
+    {
+      "name": "Dead Bug",
+      "primary": [
+        "Core"
+      ]
+    },
+    {
+      "name": "Dip",
+      "primary": [
+        "Chest",
+        "Triceps"
+      ],
+      "secondary": [
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "Doorway Pec Stretch",
+      "primary": [
+        "Chest"
+      ],
+      "secondary": [
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "Easy Run",
+      "primary": [
+        "Full Body"
+      ]
+    },
+    {
+      "name": "Face Pulls",
+      "primary": [
+        "Rear Delts"
+      ],
+      "secondary": [
+        "Traps"
+      ]
+    },
+    {
+      "name": "Face Pulls External Rotation",
+      "primary": [
+        "Rear Delts"
+      ],
+      "secondary": [
+        "Traps",
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "Farmer Carry",
+      "primary": [
+        "Forearms"
+      ],
+      "secondary": [
+        "Traps",
+        "Core"
+      ]
+    },
+    {
+      "name": "Figure-4 Glute Stretch",
+      "primary": [
+        "Glutes"
+      ]
+    },
+    {
+      "name": "Glute Bridge",
+      "primary": [
+        "Glutes"
+      ],
+      "secondary": [
+        "Hamstrings"
+      ]
+    },
+    {
+      "name": "Goblet Squat",
+      "primary": [
+        "Quads"
+      ],
+      "secondary": [
+        "Glutes",
+        "Core"
+      ]
+    },
+    {
+      "name": "Half-Kneeling Hip Flexor Stretch",
+      "primary": [
+        "Quads"
+      ]
+    },
+    {
+      "name": "Incline DB Bench Press",
+      "primary": [
+        "Chest"
+      ],
+      "secondary": [
+        "Shoulders",
+        "Triceps"
+      ]
+    },
+    {
+      "name": "Intervals",
+      "primary": [
+        "Full Body"
+      ]
+    },
+    {
+      "name": "Lat Prayer",
+      "primary": [
+        "Lats"
+      ]
+    },
+    {
+      "name": "Lateral Raise",
+      "primary": [
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "Pull-up",
+      "primary": [
+        "Lats"
+      ],
+      "secondary": [
+        "Biceps",
+        "Forearms"
+      ]
+    },
+    {
+      "name": "Row",
+      "primary": [
+        "Back",
+        "Lats"
+      ],
+      "secondary": [
+        "Biceps"
+      ]
+    },
+    {
+      "name": "Run Intervals",
+      "primary": [
+        "Full Body"
+      ]
+    },
+    {
+      "name": "Seated DB Shoulder Press",
+      "primary": [
+        "Shoulders"
+      ],
+      "secondary": [
+        "Triceps"
+      ]
+    },
+    {
+      "name": "Shoulder external rotation DB kn Knee",
+      "primary": [
+        "Shoulders"
+      ]
+    },
+    {
+      "name": "Side Plank",
+      "primary": [
+        "Obliques"
+      ],
+      "secondary": [
+        "Core"
+      ]
+    },
+    {
+      "name": "Straight-Knee Calf Stretch",
+      "primary": [
+        "Calves"
+      ]
+    },
+    {
+      "name": "Stride",
+      "primary": [
+        "Full Body"
+      ]
+    },
+    {
+      "name": "Supine Pelvic Tilt",
+      "primary": [
+        "Core"
+      ]
+    },
+    {
+      "name": "Thoracic Open Book",
+      "primary": [
+        "Back"
+      ],
+      "secondary": [
+        "Obliques"
+      ]
+    },
+    {
+      "name": "Tib Raise",
+      "primary": [
+        "Calves"
+      ]
+    },
+    {
+      "name": "Two-DB Romanian Deadlift",
+      "primary": [
+        "Hamstrings"
+      ],
+      "secondary": [
+        "Glutes",
+        "Lower Back"
+      ]
+    },
+    {
+      "name": "Warmup Jog",
+      "primary": [
+        "Full Body"
+      ]
+    },
+    {
+      "name": "Y Raise",
+      "primary": [
+        "Shoulders"
+      ],
+      "secondary": [
+        "Traps",
+        "Rear Delts"
+      ]
+    }
+  ]
+}
