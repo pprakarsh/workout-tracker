@@ -11,7 +11,7 @@
 // unless it is stored once, by name, and read by everything that shares the name.
 import { state, emit, exerciseFor } from './store.js';
 import { dbPut, dbDel, dbClear } from './db.js';
-import { normalizeExercise, exerciseDefaults, parseGroups, parseGroup } from './exercise.js';
+import { normalizeExercise, exerciseDefaults, parseGroups } from './exercise.js';
 import { normName } from './util.js';
 
 const sortLibrary = () => state.exercises.sort((a, b) => a.name.localeCompare(b.name));
@@ -134,7 +134,7 @@ export function libraryObject(list = state.exercises) {
       if (ex.measure !== 'reps') o.measure = ex.measure;
       if (ex.bodyweight) o.bodyweight = true;
       if (ex.unilateral) o.unilateral = true;
-      if (ex.primary) o.primary = ex.primary;
+      if (ex.primary.length) o.primary = ex.primary;
       if (ex.secondary.length) o.secondary = ex.secondary;
       if (ex.notes) o.notes = ex.notes;
       return o;
@@ -210,7 +210,7 @@ export async function importLibrary(text, { mode = 'add' } = {}) {
       const ex = await saveExercise(raw);
       if (ex) {
         out.added++;
-        if (ex.primary) out.groups.add(ex.primary);
+        ex.primary.forEach((g) => out.groups.add(g));
         ex.secondary.forEach((g) => out.groups.add(g));
       }
       continue;
@@ -226,7 +226,7 @@ export async function importLibrary(text, { mode = 'add' } = {}) {
     if (says.unilateral) {
       merged.unilateral = !!(raw.unilateral ?? raw.perSide ?? raw.singleArm ?? raw.singleLeg);
     }
-    if (says.primary) merged.primary = parseGroup(raw.primary ?? raw.group ?? raw.muscle ?? raw.volumeGroup);
+    if (says.primary) merged.primary = parseGroups(raw.primary ?? raw.group ?? raw.muscle ?? raw.volumeGroup);
     if (says.secondary) {
       merged.secondary = parseGroups(
         raw.secondary ?? raw.others ?? raw.otherMuscles ?? raw.assisting, merged.primary,
@@ -238,7 +238,7 @@ export async function importLibrary(text, { mode = 'add' } = {}) {
     if (saved && JSON.stringify({ ...saved, updatedAt: 0 }) !== before) out.updated++;
     else out.unchanged++;
     if (saved) {
-      if (saved.primary) out.groups.add(saved.primary);
+      saved.primary.forEach((g) => out.groups.add(g));
       saved.secondary.forEach((g) => out.groups.add(g));
     }
   }

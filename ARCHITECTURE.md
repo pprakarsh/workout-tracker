@@ -700,6 +700,59 @@ The live search repaints **only** the list container (`#libList`), not the view:
 replaces the input being typed into and takes the keyboard with it. The exercise picker already
 worked this way; the Library tab now does too.
 
+### One exercise, several target muscles
+
+`primary` is a **list**, not a single group. A deadlift's prime movers really are hamstrings, glutes
+and erectors; a bench press really is chest, triceps and front delts. Forcing one would mean picking
+arbitrarily, and the arbitrary pick would then decide every per-muscle number downstream.
+
+**A set counts once per group it is tagged with.** Three sets of a bench press tagged Chest +
+Triceps is three direct chest sets *and* three direct triceps sets. That is how per-muscle volume is
+counted, and it means the direct column sums to more than your total set count — correct, not a bug,
+and the Trends copy says so.
+
+`secondary` is still separate and still counted as indirect, so the distinction survives: *target*
+muscles versus *also worked*.
+
+**Every reader runs tags through `parseGroups` rather than reading the field.** An entry stored
+before these became lists has `primary: 'Chest'` as a bare string sitting in IndexedDB. There is no
+migration framework, so the readers tolerate both shapes — the same contract `normalizeEntry` keeps
+for every other field.
+
+### Filling in tags in bulk
+
+The Library tab's **Fix N** queue exists because a library seeded from history has names but no
+attributes, and tagging a few hundred exercises one modal at a time is not a thing anyone will do.
+It splits them three ways, and the split *is* the design:
+
+| | what it does |
+|---|---|
+| **Exact matches** | applied in one tap, all at once |
+| **Best guesses** | up to three candidates, you pick |
+| **Not recognised** | listed for you to fill in by hand |
+
+`certainMatch(name)` is deliberately strict: the name has to reduce to **exactly** the same words as
+a catalogue entry once shorthand and plurals are expanded, and exactly one entry may match. That
+catches "RDL" → Romanian Deadlift, "Pull Ups" → Pull-up, "Hammer Curls" → Hammer Curl, "OHP" →
+Overhead Press, and refuses "Leg Curl", because lying, seated and standing leg curls are different
+exercises and picking one would be a coin toss.
+
+`suggestFor(name)` ranks candidates by token overlap in **both** directions — how much of what you
+typed the candidate covers, and how much the candidate adds that you never said. Without the second
+half, "Row" scores perfectly against every row in the catalogue and the winner is whichever sorted
+first.
+
+**Nothing is treated as noise.** An earlier version of the matcher dropped equipment words, which
+made "DB Row" an *exact* match for "Barbell Row" — the two words that distinguish them were the two
+it threw away — and "Leg Curl" a confident match for a bicep curl, because it treated "leg" as
+filler. A matcher that is confidently wrong is worse than one that admits it does not know: a wrong
+tag pollutes every per-muscle number and nothing ever flags it. There are tests pinning both of
+those specific wrong answers as wrong.
+
+**Applying never renames.** Identity in this app is the name, so the attributes are copied onto your
+record and your name stays. You keep calling it "DB Row"; it now knows it trains your back, and
+every set ever logged under that name still belongs to it.
+
 ### Editing a finished session
 
 ```

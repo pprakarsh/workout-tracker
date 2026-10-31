@@ -140,7 +140,7 @@ function overview() {
  * getting worked anyway" -- so they stay apart.
  */
 function groupSection() {
-  const tagged = state.exercises.filter((x) => x.primary || x.secondary.length);
+  const tagged = state.exercises.filter((x) => x.primary.length || x.secondary.length);
   // same cutoff convention as inRange, so the range chips mean one thing
   const r = RANGES.find((x) => x.key === state.trendRange) || RANGES[2];
   const rows = groupTotals(state.sessions, exerciseFor,
@@ -180,7 +180,7 @@ function groupSection() {
   const hi = Math.max(...rows.map((r) => r.direct + r.indirect), 1);
   // groups in the library that this range never saw: the useful negative result
   const trained = new Set(rows.map((r) => r.group));
-  const idle = [...new Set(tagged.flatMap((x) => [x.primary, ...x.secondary].filter(Boolean)))]
+  const idle = [...new Set(tagged.flatMap((x) => [...x.primary, ...x.secondary]))]
     .filter((g) => !trained.has(g)).sort();
 
   return `

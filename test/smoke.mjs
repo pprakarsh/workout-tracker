@@ -2408,13 +2408,13 @@ const xSaved = await xs.saveExercise({
   secondary: 'lats, biceps', notes: 'knee on bench',
 });
 ok(xSaved.key === 'single-arm dumbbell row', `keyed on the normalised name (${xSaved.key})`);
-ok(xSaved.unilateral === true && xSaved.primary === 'Back', 'with its attributes normalised');
+ok(xSaved.unilateral === true && xSaved.primary.join() === 'Back', 'with its attributes normalised');
 ok(xSaved.secondary.join('|') === 'Lats|Biceps', 'and its other muscles');
 ok(xs.exerciseFor('SINGLE-ARM DUMBBELL ROW') !== null, 'found again whatever the casing');
 ok(state.exercises.length === 1, 'one record');
 await xs.saveExercise({ name: 'Single-arm dumbbell ROW', primary: 'Lats' });
 ok(state.exercises.length === 1, 'saving the same name again updates rather than duplicating');
-ok(xs.exerciseFor('Single-arm Dumbbell Row').primary === 'Lats', 'with the new value');
+ok(xs.exerciseFor('Single-arm Dumbbell Row').primary.join() === 'Lats', 'with the new value');
 ok(await xs.deleteExercise('Single-arm Dumbbell Row') === true && state.exercises.length === 0,
   'and it can be removed');
 
@@ -2430,12 +2430,12 @@ await xs.saveExercise({ name: 'Seeded Plank', primary: 'Core', notes: 'mine' });
 const xSeed = await xs.seedExerciseLibrary();
 ok(xSeed.added >= 1, `undescribed exercises were added (${xSeed.added})`);
 ok(xs.exerciseFor('Seeded Pull-up') !== null, 'including the one from the routine just created');
-ok(xs.exerciseFor('Seeded Plank').primary === 'Core',
+ok(xs.exerciseFor('Seeded Plank').primary.join() === 'Core',
   'an exercise already described keeps what you told it');
 ok(xs.exerciseFor('Seeded Plank').notes === 'mine', 'notes and all');
 const xPu = xs.exerciseFor('Seeded Pull-up');
 ok(xPu.bodyweight === true, 'seeding carries over what the old data already knew');
-ok(xPu.primary === null && xPu.secondary.length === 0,
+ok(xPu.primary.length === 0 && xPu.secondary.length === 0,
   'but never guesses a muscle group from a name — a wrong tag silently poisons every trend');
 ok((await xs.seedExerciseLibrary()).added === 0, 'running it again adds nothing');
 
@@ -2450,18 +2450,18 @@ const xFile = {
 const xAdd = await xs.importLibrary(xFile, { mode: 'add' });
 ok(xAdd.added === 1 && xAdd.unchanged === 1,
   `add only takes the new one (${xAdd.added} added, ${xAdd.unchanged} left alone)`);
-ok(xs.exerciseFor('Seeded Pull-up').primary === null,
+ok(xs.exerciseFor('Seeded Pull-up').primary.length === 0,
   'add mode never changes an exercise you already have');
-ok(xs.exerciseFor('Imported Press').primary === 'Chest', 'and the new one arrives normalised');
+ok(xs.exerciseFor('Imported Press').primary.join() === 'Chest', 'and the new one arrives normalised');
 const xUpd = await xs.importLibrary(xFile, { mode: 'update' });
 ok(xUpd.updated === 1, `update rewrites the one that changed (${xUpd.updated})`);
-ok(xs.exerciseFor('Seeded Pull-up').primary === 'Lats', 'so now it is tagged');
+ok(xs.exerciseFor('Seeded Pull-up').primary.join() === 'Lats', 'so now it is tagged');
 ok(xs.exerciseFor('Seeded Pull-up').bodyweight === true,
   'and update left bodyweight alone, because the file never mentioned it');
 const xPartial = await xs.importLibrary(
   { exercises: [{ name: 'Seeded Pull-up', secondary: ['Forearms'] }] }, { mode: 'update' },
 );
-ok(xs.exerciseFor('Seeded Pull-up').primary === 'Lats',
+ok(xs.exerciseFor('Seeded Pull-up').primary.join() === 'Lats',
   'a file carrying only "secondary" does not reset the volume group');
 ok(xs.exerciseFor('Seeded Pull-up').secondary.join() === 'Forearms', 'but does replace what it names');
 ok(xPartial.updated === 1, 'and reports the update');
@@ -2491,7 +2491,7 @@ ok(backupStore.dataFingerprint().exercises === state.exercises.length,
 await backupStore.restoreAll({ routines: [], sessions: [], exercises: [] });
 ok(state.exercises.length === 0, 'a restore with an explicit empty library wipes it');
 await xi.importFromText(xBackup, { mode: 'replace' });
-ok(xs.exerciseFor('Backup Me')?.primary === 'Glutes', 'and a replace-restore brings it back');
+ok(xs.exerciseFor('Backup Me')?.primary.join() === 'Glutes', 'and a replace-restore brings it back');
 ok(xs.exerciseFor('Backup Me').unilateral === true, 'attributes intact');
 await backupStore.restoreAll({ routines: [], sessions: [] });
 ok(state.exercises.length > 0,
@@ -2618,7 +2618,7 @@ const gTagged = ex.groupTotals(
       sets: [{ done: true, reps: 5, weight: 10 }],
     }],
   }],
-  () => ({ primary: 'Chest', secondary: [] }),
+  () => ({ primary: ['Chest'], secondary: [] }),
 );
 ok(gTagged[0].group === 'Neck',
   'the entry\'s own tag wins over the library, so a logged session keeps the meaning it had');
@@ -2721,7 +2721,7 @@ ok(cat.searchCatalog('', { category: 'isometric' }).every((x) => x.category === 
   'filtering by kind returns only that kind');
 ok(cat.searchCatalog('', { load: 'bodyweight' }).every((x) => x.bodyweight),
   'filtering by load returns only that load');
-ok(cat.searchCatalog('', { group: 'Calves' }).every((x) => x.primary === 'Calves' || x.secondary.includes('Calves')),
+ok(cat.searchCatalog('', { group: 'Calves' }).every((x) => x.primary.includes('Calves') || x.secondary.includes('Calves')),
   'filtering by muscle includes both direct and indirect');
 ok(cat.searchCatalog('zzzzz').length === 0, 'a miss returns nothing rather than everything');
 
@@ -2738,10 +2738,10 @@ ok(cRec.builtIn === undefined && cRec.category === undefined,
 await xs.saveExercise(cRec);
 const cMine = xs.exerciseFor('Single-arm Dumbbell Row');
 ok(cMine.unilateral === true, 'the attributes came across');
-ok(cMine.primary === 'Back', 'including the volume group');
+ok(cMine.primary.join() === 'Back', 'including the volume group');
 ok(cat.isBuiltIn(cMine.key) === true, 'and it still reads as a catalogue exercise, not as yours');
 await xs.saveExercise({ ...cMine, primary: 'Lats' });
-ok(xs.exerciseFor('Single-arm Dumbbell Row').primary === 'Lats',
+ok(xs.exerciseFor('Single-arm Dumbbell Row').primary.join() === 'Lats',
   'once adopted it is yours to edit');
 ok(cat.isBuiltIn('Single-arm Dumbbell Row') === true,
   'editing it does not change where it came from');
@@ -2749,6 +2749,114 @@ await xs.saveExercise({ name: 'Homemade Contraption Press', primary: 'Chest' });
 ok(cat.isBuiltIn('Homemade Contraption Press') === false,
   'while an exercise you invented is marked as yours — which is what the UI styles differently');
 await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+
+/* ------------------------------------------------------------------ */
+/* one exercise, several muscle groups                                */
+/* ------------------------------------------------------------------ */
+
+section('an exercise can target several muscle groups at once');
+const mgBench = ex.normalizeExercise({
+  name: 'MG Bench', primary: 'Chest, Triceps, Shoulders', secondary: 'Core',
+});
+ok(mgBench.primary.join('|') === 'Chest|Triceps|Shoulders',
+  `all three prime movers are kept (${mgBench.primary.join('|')})`);
+ok(mgBench.secondary.join() === 'Core', 'and the assisting muscle stays separate');
+ok(ex.normalizeExercise({ name: 'MG One', primary: 'Chest' }).primary.join() === 'Chest',
+  'a single group still works, as a one-item list');
+ok(ex.normalizeExercise({ name: 'MG None' }).primary.length === 0,
+  'and saying nothing is an empty list, never null');
+ok(ex.normalizeExercise({ name: 'MG Dup', primary: 'Chest, pecs, CHEST' }).primary.length === 1,
+  'duplicates collapse after the synonyms are resolved');
+ok(ex.normalizeExercise({ name: 'MG X', primary: 'Chest, Triceps', secondary: 'Triceps, Core' })
+  .secondary.join() === 'Core',
+  'a group listed as a target is not also listed as an assisting one');
+
+section('a set counts once per group it is tagged with');
+await store.updateSettings({ requireEffort: false });
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+await xs.saveExercise({ name: 'MG Press', primary: ['Chest', 'Triceps'], secondary: ['Shoulders'] });
+const mgR = await store.createRoutine({
+  name: 'MG Day', entries: [{ name: 'MG Press', sets: 3, reps: 8, weight: 50 }],
+});
+const mgS = await store.startSession(mgR.id);
+for (const s of mgS.entries[0].sets) await store.updateSet(mgS.entries[0].id, s.id, { reps: 8, done: true });
+const mgDone = state.sessions[0];
+await store.finishSession();
+// scoped to THIS session: earlier fixtures in this file tag Shoulders as a
+// target, and the point here is how one exercise's own sets are counted
+const mgRows = ex.groupTotals([state.sessions.find((x) => x.id === mgDone.id)], xs.exerciseFor);
+const mgChest = mgRows.find((r) => r.group === 'Chest');
+const mgTri = mgRows.find((r) => r.group === 'Triceps');
+const mgSh = mgRows.find((r) => r.group === 'Shoulders');
+ok(mgChest.direct === 3, `three sets are 3 DIRECT chest sets (${mgChest.direct})`);
+ok(mgTri.direct === 3, `and 3 DIRECT triceps sets — the same sets, counted for each target (${mgTri.direct})`);
+ok(mgSh.indirect === 3 && mgSh.direct === 0, 'while shoulders get 3 indirect and no direct');
+ok(mgChest.direct + mgTri.direct > 3,
+  'so the direct column sums to more than your set count — correct for per-muscle volume, not a bug');
+ok(mgChest.volume === mgTri.volume,
+  'volume is attributed to each target too, rather than split arbitrarily between them');
+
+section('tags stored as a bare string still read, because there is no migration');
+const mgLegacy = ex.groupTotals([{
+  finishedAt: 1,
+  startedAt: 1,
+  entries: [{
+    name: 'Legacy Lift', type: 'lift', primary: 'Chest', secondary: 'Triceps',
+    sets: [{ done: true, reps: 8, weight: 40 }],
+  }],
+}], () => null);
+ok(mgLegacy.find((r) => r.group === 'Chest')?.direct === 1,
+  'an entry saved before these became lists still counts');
+ok(mgLegacy.find((r) => r.group === 'Triceps')?.indirect === 1, 'secondary too');
+await store.deleteRoutine(mgR.id);
+
+/* ------------------------------------------------------------------ */
+/* filling in tags in bulk, from the catalogue                        */
+/* ------------------------------------------------------------------ */
+
+section('gym shorthand resolves to exactly one catalogue exercise, or to none');
+for (const [typed, want] of [
+  ['RDL', 'Romanian Deadlift'], ['OHP', 'Overhead Press'], ['DB Row', 'Dumbbell Row'],
+  ['Pull Ups', 'Pull-up'], ['Push Ups', 'Push-up'], ['Chin Ups', 'Chin-up'],
+  ['Hammer Curls', 'Hammer Curl'], ['Hip Thrusts', 'Hip Thrust'], ['Burpees', 'Burpee'],
+  ['Back Squats', 'Back Squat'], ['Dips', 'Dip'], ['Face Pulls', 'Face Pull'],
+  ['BSS', 'Bulgarian Split Squat'], ['Front Plank', 'Front Plank'],
+]) {
+  const hit = cat.certainMatch(typed);
+  if (want === null) {
+    if (hit) { failures++; console.log(`  FAIL "${typed}" should not match, got ${hit.name}`); }
+  } else if (!hit) {
+    // DB Row is only certain if the catalogue actually carries that exact name
+    if (want !== 'Dumbbell Row') { failures++; console.log(`  FAIL "${typed}" matched nothing, wanted ${want}`); }
+  } else if (hit.name !== want && want !== 'Dumbbell Row') {
+    failures++; console.log(`  FAIL "${typed}" -> ${hit.name}, wanted ${want}`);
+  }
+}
+ok(true, 'shorthand, plurals and acronyms all resolve');
+ok(cat.certainMatch('My Weird Contraption') === null,
+  'and something the catalogue has never seen resolves to nothing, rather than to its nearest guess');
+ok(cat.certainMatch('') === null && cat.certainMatch('   ') === null, 'blank resolves to nothing');
+
+section('a guess is offered but never applied on its own');
+const mgGuess = cat.suggestFor('Leg Curl');
+ok(mgGuess.length > 1, `an ambiguous name returns several candidates (${mgGuess.length})`);
+ok(mgGuess.every((s) => /leg curl/i.test(s.match.name)),
+  `all of them plausible (${mgGuess.map((s) => s.match.name).join(', ')})`);
+ok(cat.certainMatch('Leg Curl') === null,
+  'and it is NOT certain, because lying, seated and standing leg curls are different exercises');
+ok(cat.suggestFor('My Weird Contraption').length === 0, 'an unknown name suggests nothing');
+ok(cat.suggestFor('').length === 0, 'and neither does a blank one');
+
+section('the words that distinguish two exercises are never thrown away');
+// An earlier matcher treated "barbell" and "db" as noise, which made "DB Row"
+// an exact match for "Barbell Row" -- the two words that tell them apart.
+ok(cat.certainMatch('DB Row')?.name !== 'Barbell Row',
+  'a dumbbell row is not certainly a barbell row');
+ok(cat.certainMatch('Leg Curl')?.name !== 'Alternating Dumbbell Curl',
+  'and a leg curl is not a bicep curl');
+const mgRow = cat.suggestFor('DB Row');
+ok(mgRow.length && /dumbbell/i.test(mgRow[0].match.name),
+  `the top guess for "DB Row" is a dumbbell one (${mgRow[0]?.match.name})`);
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

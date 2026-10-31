@@ -9,7 +9,7 @@
 import { uid, num, parseReps, parseDur, normName } from './util.js';
 import { parsePace, intervalSpec, isIntervals, plannedLegs, resolveRun, storedSeconds } from './cardio.js';
 import { parseMeasure, parseAmountRange } from './measure.js';
-import { otherSide, parseSide, parseGroup, parseGroups } from './exercise.js';
+import { otherSide, parseSide, parseGroups } from './exercise.js';
 
 /**
  * Per-set targets: a plan with a different load/reps for each set.
@@ -149,8 +149,9 @@ export function normalizeEntry(raw = {}) {
     // shape of a workout already logged.
     unilateral: !!(raw.unilateral ?? raw.perSide),
     // muscle groups, for per-group trends. Copied from the library when the
-    // entry is created; the entry's own value wins thereafter.
-    primary: parseGroup(raw.primary ?? raw.muscle) || null,
+    // entry is created; the entry's own value wins thereafter. Both are LISTS:
+    // one exercise genuinely has several prime movers.
+    primary: parseGroups(raw.primary ?? raw.muscle),
     secondary: parseGroups(raw.secondary ?? raw.otherMuscles, raw.primary ?? raw.muscle),
     // cardio targets
     targetDistance: num(raw.distance ?? raw.targetDistance),

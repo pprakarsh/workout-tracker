@@ -57,6 +57,7 @@ async function type(sel, value) {
 
 const store = await import(`${APP}/js/store.js`);
 const clock = await import(`${APP}/js/clockstore.js`);
+const xs2 = await import(`${APP}/js/exercisestore.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const cardio = await import(`${APP}/js/cardio.js`);
 const planLib = await import(`${APP}/js/plan.js`);
@@ -1985,9 +1986,9 @@ ok(!/NOT IN THE LIBRARY YET/.test(view()), 'and the warning is gone');
 const lbPlank = store.state.exercises.find((x) => x.key === 'plank' || x.key === 'front plank');
 ok(!lbPlank || lbPlank.measure === 'time',
   'a plank came through as timed, because the old data already knew that');
-ok(store.state.exercises.every((x) => x.primary === null),
+ok(store.state.exercises.every((x) => x.primary.length === 0),
   'but nothing was given a muscle group — guessing one from a name would poison every trend');
-ok(/no volume group/.test(view()), 'and each row says so, so it is obvious what is missing');
+ok(/no target muscle/.test(view()), 'and each row says so, so it is obvious what is missing');
 
 section('describing an exercise is a form, and it reaches Trends');
 await click('[data-action="lib-new"]', '+ New exercise');
@@ -2006,7 +2007,7 @@ $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, ca
 await sleep(110);
 const lbFly = store.state.exercises.find((x) => x.key === 'cable fly');
 ok(!!lbFly, 'the exercise was added');
-ok(lbFly.primary === 'Chest', `"pecs" was understood as Chest (${lbFly?.primary})`);
+ok(lbFly.primary.join() === 'Chest', `"pecs" was understood as Chest (${lbFly?.primary.join()})`);
 ok(lbFly.secondary.join() === 'Shoulders', 'and the other muscle normalised too');
 
 section('the library exports and imports as JSON');
@@ -2021,11 +2022,11 @@ await type('#modalRoot textarea[name="json"]',
 $('#modalRoot select[name="mode"]').value = 'update';
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(140);
-ok(store.state.exercises.find((x) => x.key === 'zercher squat')?.primary === 'Quads',
+ok(store.state.exercises.find((x) => x.key === 'zercher squat')?.primary.join() === 'Quads',
   'the new exercise arrived');
 const lbFly2 = store.state.exercises.find((x) => x.key === 'cable fly');
 ok(lbFly2.secondary.join() === 'Biceps', 'the mentioned field was updated');
-ok(lbFly2.primary === 'Chest',
+ok(lbFly2.primary.join() === 'Chest',
   'and the volume group the file never mentioned was left alone');
 
 section('unilateral exercises log left and right separately');
@@ -2137,7 +2138,7 @@ await sleep(100);
 ok(store.state.exercises.length === lcBefore + 1, 'tapping it added one exercise');
 const lcTgu = store.state.exercises.find((x) => x.key === 'turkish get-up');
 ok(!!lcTgu, 'the right one');
-ok(lcTgu.unilateral === true && lcTgu.primary === 'Core',
+ok(lcTgu.unilateral === true && lcTgu.primary.join() === 'Core',
   'with its attributes, so nothing had to be typed');
 await sleep(40);
 ok($('[data-action="lib-add"][data-key="turkish get-up"]') === null
@@ -2192,6 +2193,67 @@ ok($('#modalRoot select[name="measure"]')?.value === 'reps', 'and how it is meas
 await click('#modalRoot [data-mclose]', 'Cancel');
 await sleep(60);
 store.state.nav = {};
+
+section('untagged exercises can be fixed in bulk from the catalogue');
+await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await sleep(60);
+// three names that stand for the three cases: exact-after-shorthand, ambiguous,
+// and something the catalogue has never heard of
+await xs2.saveExercise({ name: 'RDL' });
+await xs2.saveExercise({ name: 'Leg Curl' });
+await xs2.saveExercise({ name: 'Prakarsh Contraption Pull' });
+await sleep(60);
+await click('[data-action="lib-mode"][data-mode="tag"]', 'Fix N');
+await sleep(80);
+ok(/Fill in what is missing/.test(view()), 'the fix-up queue opened');
+ok(/Exact matches/.test(view()), 'exact matches are listed');
+ok(/RDL/.test(view()) && /Romanian Deadlift/.test(view()),
+  'with the shorthand and what it resolved to, side by side');
+ok(/Best guesses/.test(view()), 'ambiguous names get a pick-one list');
+ok(/never applied automatically|wrong tag/.test(view()),
+  'and it says why they are not applied for you');
+ok(/does not know these/.test(view()), 'and your own movements are listed separately');
+ok(/Prakarsh Contraption Pull/.test(view()), 'with the invented one in that group');
+
+const btApply = $('[data-action="lib-apply-certain"]');
+ok(!!btApply, 'one button applies every exact match');
+btApply.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(600);
+const btRdl = store.state.exercises.find((x) => x.key === 'rdl');
+ok(btRdl.primary.length > 0, `RDL now has target muscles (${btRdl.primary.join(', ')})`);
+ok(btRdl.primary.includes('Hamstrings'), 'the right ones, taken from the Romanian Deadlift');
+ok(btRdl.name === 'RDL',
+  'and it is still called RDL — renaming it would orphan every set logged under that name');
+ok(store.state.exercises.find((x) => x.key === 'leg curl').primary.length === 0,
+  'the ambiguous one was left alone, not guessed at');
+
+section('an ambiguous name is resolved by picking from the offered options');
+await sleep(40);
+const btPick = $$('[data-action="lib-apply-one"]').find((b) => b.dataset.key === 'leg curl');
+ok(!!btPick, 'the options are tappable');
+btPick.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(120);
+const btLeg = store.state.exercises.find((x) => x.key === 'leg curl');
+ok(btLeg.primary.includes('Hamstrings'), `picking one applied it (${btLeg.primary.join(', ')})`);
+ok(btLeg.name === 'Leg Curl', 'again keeping your name');
+
+section('an exercise can be given several target muscles by hand');
+await click('[data-action="lib-mode"][data-mode="mine"]', 'Mine');
+await sleep(60);
+await click('[data-action="lib-edit"][data-key="prakarsh contraption pull"]', 'the invented one');
+await sleep(70);
+ok(/Target muscle groups/.test($('#modalRoot').textContent),
+  'the field is plural — one exercise can target several');
+await type('#modalRoot input[name="primary"]', 'Lats, Biceps, Rear Delts');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(130);
+const btOwn = store.state.exercises.find((x) => x.key === 'prakarsh contraption pull');
+ok(btOwn.primary.length === 3, `all three were stored (${btOwn.primary.join(' | ')})`);
+ok(btOwn.primary.join('|') === 'Lats|Biceps|Rear Delts', 'in the order given, normalised');
+await sleep(40);
+const btRow = $$('.exrow').find((r) => /Prakarsh Contraption Pull/.test(r.textContent));
+ok(!!btRow && /Lats, Biceps, Rear Delts/.test(btRow.textContent),
+  'and the row lists them all rather than just the first');
 
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

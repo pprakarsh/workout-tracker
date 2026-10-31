@@ -100,7 +100,7 @@ export function render() {
     const gdl = document.getElementById('muscleGroups');
     const groups = [...new Set([
       ...MUSCLE_GROUPS,
-      ...state.exercises.flatMap((x) => [x.primary, ...x.secondary].filter(Boolean)),
+      ...state.exercises.flatMap((x) => [...x.primary, ...x.secondary]),
     ])].sort();
     if (gdl.dataset.count !== String(groups.length)) {
       gdl.innerHTML = groups.map((n) => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');

@@ -100,9 +100,10 @@ export function exerciseFormHtml(e = {}) {
       <p class="hint" style="margin-top:-4px">A unilateral exercise logs each planned set
         <b>twice</b>, once per side, so "3 sets" means three per side and six rows. Which side comes
         first is in Settings.</p>
-      <label class="field"><span>Volume group (for Trends)</span>
-        <input name="primary" list="muscleGroups" autocapitalize="words" placeholder="e.g. Biceps"
-               value="${esc(e.primary || '')}"></label>
+      <label class="field"><span>Target muscle groups (for Trends)</span>
+        <input name="primary" list="muscleGroups" autocapitalize="words"
+               placeholder="e.g. Chest, Triceps"
+               value="${esc((e.primary || []).join(', '))}"></label>
       <label class="field"><span>Other muscles worked</span>
         <input name="secondary" list="muscleGroups" autocapitalize="words"
                placeholder="e.g. Forearms, Core"
@@ -290,7 +291,7 @@ export function readExerciseForm(v, modal = null) {
     rest: parseDur(v.rest),
     bodyweight: v.bodyweight === '1',
     unilateral: v.unilateral === '1',
-    primary: v.primary || null,
+    primary: v.primary || '',
     secondary: v.secondary || '',
     measure: parseMeasure(v.measure),
     group: (v.group || '').trim() || null,
@@ -449,7 +450,7 @@ function catalogRows(hits, dest) {
         <div class="nm">${esc(x.name)}
           <span class="pill cat">${esc(categoryLabel(x.category))}</span></div>
         <div class="sub">${esc([
-    x.primary, x.bodyweight ? 'bodyweight' : x.type === 'cardio' ? 'cardio' : 'external weight',
+    x.primary.join(' + '), x.bodyweight ? 'bodyweight' : x.type === 'cardio' ? 'cardio' : 'external weight',
     x.unilateral ? 'per side' : null, x.equipment !== 'none' ? x.equipment : null,
   ].filter(Boolean).join(' · '))}</div>
       </div>

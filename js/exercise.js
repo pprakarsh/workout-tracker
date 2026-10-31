@@ -84,12 +84,14 @@ export function parseGroups(v, exclude = null) {
   const list = Array.isArray(v) ? v
     : v === null || v === undefined || v === '' ? []
       : String(v).split(/[,;/\n]/);
-  const skip = exclude ? parseGroup(exclude) : null;
+  // `exclude` may be one group or a list of them
+  const skip = (Array.isArray(exclude) ? exclude : [exclude])
+    .map((g) => parseGroup(g)).filter(Boolean);
   const out = [];
   for (const item of list) {
     const g = parseGroup(item);
     // a group already named as primary is not also "another muscle worked"
-    if (!g || g === skip || out.includes(g)) continue;
+    if (!g || skip.includes(g) || out.includes(g)) continue;
     out.push(g);
   }
   return out;
@@ -115,7 +117,11 @@ export const sideLabel = (side) => (side === 'L' ? 'left' : side === 'R' ? 'righ
 export function normalizeExercise(raw = {}) {
   const name = String(raw.name || raw.exercise || '').trim();
   const measure = parseMeasure(raw.measure ?? raw.measures ?? raw.kind);
-  const primary = parseGroup(raw.primary ?? raw.group ?? raw.muscle ?? raw.volumeGroup);
+  // PRIMARY IS A LIST. A deadlift's prime movers really are hamstrings, glutes
+  // and erectors; a bench press really is chest, triceps and front delts.
+  // Forcing one would make you pick arbitrarily, and the arbitrary pick then
+  // decides every per-muscle number downstream.
+  const primary = parseGroups(raw.primary ?? raw.group ?? raw.muscle ?? raw.volumeGroup);
   return {
     key: normName(name),
     name,
@@ -209,13 +215,19 @@ export function groupTotals(sessions = [], lookup = () => null, { from = null, t
       // the library was tagged still counts once the library is filled in, and
       // an entry tagged differently on purpose is respected.
       //
-      // An EMPTY secondary list counts as "not set", not as "deliberately
-      // none": normalizeEntry gives every entry `secondary: []`, so treating
-      // the empty array as an answer would mean the library's other-muscles
-      // list could never apply to anything.
-      const primary = e.primary || ex?.primary || null;
-      const secondary = (e.secondary && e.secondary.length) ? e.secondary : (ex?.secondary || []);
-      if (!primary && !secondary.length) return;
+      // Both are run through parseGroups rather than read directly, because an
+      // entry stored before these became LISTS has `primary: 'Chest'` as a bare
+      // string sitting in IndexedDB. There is no migration framework, so every
+      // reader tolerates both shapes -- the same contract normalizeEntry keeps.
+      //
+      // An EMPTY list counts as "not set", not as "deliberately none":
+      // normalizeEntry gives every entry `primary: []`, so treating the empty
+      // array as an answer would mean the library's lists could never apply.
+      const own = parseGroups(e.primary);
+      const primary = own.length ? own : parseGroups(ex?.primary);
+      const ownSec = parseGroups(e.secondary, primary);
+      const secondary = ownSec.length ? ownSec : parseGroups(ex?.secondary, primary);
+      if (!primary.length && !secondary.length) return;
       // the same filter the rest of Trends uses: confirmed working sets only
       const sets = (e.sets || []).filter((x) => x.done && !x.warmup);
       if (!sets.length) return;
@@ -226,13 +238,17 @@ export function groupTotals(sessions = [], lookup = () => null, { from = null, t
           return x.weight !== null ? n + x.weight * x.reps : n;
         }, 0)
         : 0;
-      if (primary) {
-        const rec = touch(primary);
+      // A set counts ONCE PER GROUP it is tagged with, so a bench press tagged
+      // chest + triceps is three chest sets AND three triceps sets. That is how
+      // per-muscle volume is counted, and it means the direct column sums to
+      // more than your total set count -- which is correct, not a bug.
+      primary.forEach((g) => {
+        const rec = touch(g);
         rec.direct += sets.length;
         rec.volume += vol;
         rec.exercises.add(e.name);
         if (!rec.lastAt || s.startedAt > rec.lastAt) rec.lastAt = s.startedAt;
-      }
+      });
       secondary.forEach((g) => {
         const rec = touch(g);
         rec.indirect += sets.length;

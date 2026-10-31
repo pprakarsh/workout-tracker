@@ -21,7 +21,7 @@
 import { normName } from './util.js';
 import { CATALOG_LINES } from './catalogdata.js';
 import { CONDITIONING_LINES } from './catalogconditioning.js';
-import { parseGroup, parseGroups } from './exercise.js';
+import { parseGroups } from './exercise.js';
 
 /**
  * The kinds of training the catalogue distinguishes, in the order they are
@@ -75,7 +75,7 @@ function parseLine(line) {
   const [name, category, equipment, measureSpec, primary, secondary] = line.split('|');
   const [measure, ...flags] = String(measureSpec || 'reps').split(':');
   const isCardio = measure === 'cardio';
-  const p = parseGroup(primary);
+  const p = parseGroups(primary);
   return {
     key: normName(name),
     name: String(name).trim(),
@@ -110,11 +110,104 @@ export const CATALOG = `${CATALOG_LINES}\n${CONDITIONING_LINES}`
 
 const BY_KEY = new Map(CATALOG.map((x) => [x.key, x]));
 
-/** The catalogue record for a name, or null. Provenance is asked, not stored. */
+/**
+ * The catalogue record for a name, or null. Provenance is asked, not stored.
+ */
 export const catalogFor = (name) => {
   const k = normName(name);
   return k ? BY_KEY.get(k) || null : null;
 };
+
+/**
+ * Shorthand people actually type, mapped to catalogue words.
+ *
+ * Only unambiguous expansions belong here. "db" is always a dumbbell; "pull"
+ * could be a pull-up or a clean pull, so it is absent.
+ */
+const ALIASES = {
+  db: 'dumbbell', bb: 'barbell', kb: 'kettlebell', ez: 'ez',
+  rdl: 'romanian deadlift', sldl: 'stiff-leg deadlift', ohp: 'overhead press',
+  bp: 'bench press', gm: 'good morning', bss: 'bulgarian split squat',
+  tri: 'triceps', tris: 'triceps', bi: 'biceps', bis: 'biceps',
+  pec: 'chest', pecs: 'chest', lat: 'lats', quad: 'quads', ham: 'hamstrings',
+  hams: 'hamstrings', glute: 'glutes', calf: 'calves', abs: 'core', ab: 'core',
+  pullup: 'pull-up', pullups: 'pull-up', chinup: 'chin-up', chinups: 'chin-up',
+  pushup: 'push-up', pushups: 'push-up', situp: 'sit-up', situps: 'sit-up',
+  ohe: 'overhead extension', skullcrusher: 'skull crusher',
+  ghr: 'glute-ham raise', ghd: 'glute-ham raise', hspu: 'handstand push-up',
+  t2b: 'toes-to-bar', c2b: 'chest-to-bar pull-up', du: 'double-unders',
+};
+
+/** Only true noise: words that never distinguish one exercise from another. */
+const STOP = new Set(['the', 'a', 'an', 'and', 'with', 'on', 'in', 'of', 'to', 'for', 'variation', 'var']);
+
+/** Crude singular: "curls" -> "curl" and "ups" -> "up", but never "press" -> "pres". */
+const singular = (w) => (w.length >= 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w);
+
+function words(s) {
+  return normName(s)
+    .replace(/[^a-z0-9- ]/g, ' ')
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .flatMap((w) => (ALIASES[w] ? ALIASES[w].split(/[\s-]+/) : [w]))
+    .map(singular)
+    .filter((w) => !STOP.has(w));
+}
+
+/**
+ * Rank catalogue entries against a name the catalogue does not know exactly.
+ *
+ * For filling in attributes on exercises already in a library, where the names
+ * are whatever got typed at the gym: "DB Row", "Lat Pulldown Machine", "RDL".
+ *
+ * Scoring is token overlap in BOTH directions -- how much of what you typed the
+ * candidate covers, and how much the candidate adds that you never said. The
+ * second half matters: without it "Row" scores perfectly against every row in
+ * the catalogue and the winner is whichever sorted first.
+ *
+ * Nothing here drops equipment words. An earlier version treated "barbell" and
+ * "db" as noise, which made "DB Row" an exact match for "Barbell Row" -- the
+ * two words that distinguish them were the two it threw away. A matcher that is
+ * confidently wrong is worse than one that admits it does not know, because a
+ * wrong tag pollutes every per-muscle number and nothing ever flags it.
+ *
+ * Returns up to `limit` candidates, best first.
+ */
+export function suggestFor(name, { limit = 3, min = 0.25 } = {}) {
+  const want = words(name);
+  if (!want.length) return [];
+  const scored = [];
+  for (const x of CATALOG) {
+    const have = words(x.name);
+    const hits = want.filter((w) => have.includes(w)).length;
+    if (!hits) continue;
+    const covered = hits / want.length;        // of what you typed
+    const extra = hits / have.length;          // of what it is
+    const score = (covered * 2 + extra) / 3;   // what you said matters more
+    if (score >= min) scored.push({ match: x, score });
+  }
+  scored.sort((a, b) => b.score - a.score || a.match.name.localeCompare(b.match.name));
+  return scored.slice(0, limit);
+}
+
+/**
+ * The single match safe to apply WITHOUT asking.
+ *
+ * Deliberately strict: the name has to reduce to exactly the same words as the
+ * catalogue entry, after expanding shorthand and singulars. That catches "DB
+ * Row" -> "Dumbbell Row", "Pull Ups" -> "Pull-up" and "RDL" -> "Romanian
+ * Deadlift", and refuses everything else to a human. Anything less strict and a
+ * bulk apply would quietly mis-tag a library.
+ */
+export function certainMatch(name) {
+  const exact = catalogFor(name);
+  if (exact) return exact;
+  const want = words(name).slice().sort().join(' ');
+  if (!want) return null;
+  const hits = CATALOG.filter((x) => words(x.name).slice().sort().join(' ') === want);
+  // two catalogue entries reducing to the same words is an ambiguity, not a match
+  return hits.length === 1 ? hits[0] : null;
+}
 
 /** Is this name one the app ships, as opposed to one the user invented? */
 export const isBuiltIn = (name) => catalogFor(name) !== null;
@@ -130,7 +223,7 @@ export function catalogCounts() {
 export function catalogGroups() {
   const set = new Set();
   CATALOG.forEach((x) => {
-    if (x.primary) set.add(x.primary);
+    x.primary.forEach((g) => set.add(g));
     x.secondary.forEach((g) => set.add(g));
   });
   return [...set].sort();
@@ -150,9 +243,9 @@ export function searchCatalog(query = '', { category = null, group = null, load 
   const hits = CATALOG.filter((x) => {
     if (category && x.category !== category) return false;
     if (load && loadKind(x) !== load) return false;
-    if (group && x.primary !== group && !x.secondary.includes(group)) return false;
+    if (group && !x.primary.includes(group) && !x.secondary.includes(group)) return false;
     if (!terms.length) return true;
-    const hay = `${x.key} ${(x.primary || '').toLowerCase()} `
+    const hay = `${x.key} ${x.primary.join(' ').toLowerCase()} `
       + `${x.secondary.join(' ').toLowerCase()} ${x.equipment} ${x.category}`;
     return terms.every((t) => hay.includes(t));
   });
