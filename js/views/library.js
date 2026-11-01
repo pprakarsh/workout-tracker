@@ -22,6 +22,7 @@ import {
 } from '../catalog.js';
 import { MEASURES } from '../measure.js';
 import { groupPickerHtml, wireGroupPicker } from './exform.js';
+import { findDuplicates, mergePreview, mergeExercises, undoLastMerge } from '../exercisemerge.js';
 import { esc, normName, relDay, download } from '../util.js';
 import { openModal, closeModal, confirmDialog, toast } from '../ui.js';
 
@@ -273,6 +274,51 @@ function browse() {
     <div id="libList">${listHtml()}</div>`;
 }
 
+/**
+ * Names that are probably one exercise, offered for merging.
+ *
+ * Only shown when there are some: a permanent empty section teaching you about
+ * a problem you do not have is noise.
+ */
+function duplicateCard() {
+  const groups = findDuplicates();
+  const undo = state.nav.lastMerge;
+  return `
+    ${undo ? `
+      <div class="card" style="border-color:var(--ok)">
+        <div class="row">
+          <div style="flex:1;min-width:0">
+            <div class="strong">Merged "${esc(undo.fromName)}" into "${esc(undo.intoName)}"</div>
+            <div class="sub dim">Renamed in your routines and your logged history.</div>
+          </div>
+          <button type="button" class="btn sm" data-action="lib-unmerge">Undo</button>
+        </div>
+      </div>` : ''}
+    ${groups.length ? `
+      <div class="card" style="border-color:var(--warn)">
+        <div class="tiny" style="color:var(--warn);font-weight:700">SAME EXERCISE, DIFFERENT NAMES</div>
+        <p class="hint" style="margin-top:4px">These spellings reduce to the same movement, so each
+          one keeps its own history, its own prefill and its own trend line. Merging rewrites the
+          name everywhere &mdash; routines <b>and</b> logged sessions &mdash; so the history becomes
+          one.</p>
+        ${groups.map((g) => `
+          <div class="dupgroup">
+            ${g.map((x, i) => `<div class="duprow">
+              <div class="body">
+                <div class="nm">${esc(x.name)}${i === 0 ? ' <span class="pill ok">keep</span>' : ''}</div>
+                <div class="sub dim">${x.routines} routine${x.routines === 1 ? '' : 's'} ·
+                  ${x.sets} logged set${x.sets === 1 ? '' : 's'}</div>
+              </div>
+              ${i === 0 ? '<div class="dim small">most history</div>'
+    : `<button type="button" class="btn sm" data-action="lib-merge"
+                     data-from="${esc(x.key)}" data-into="${esc(g[0].key)}">&rarr; merge in</button>`}
+            </div>`).join('')}
+          </div>`).join('')}
+        <p class="hint">The one with the most logged history is kept by default. To go the other
+          way, or to merge names this did not spot, open an exercise and use <b>Merge into…</b>.</p>
+      </div>` : ''}`;
+}
+
 export function render() {
   if (mode() === 'browse') return browse();
   if (mode() === 'tag') return tagQueue();
@@ -313,6 +359,8 @@ export function render() {
         <div class="chip-wrap">${missing.slice(0, 40).map((x) => `<button type="button" class="chip"
           data-action="lib-new" data-name="${esc(x.name)}">${esc(x.name)}</button>`).join('')}</div>
       </div>` : ''}
+
+    ${duplicateCard()}
 
     <div class="card flat">
       <input id="libSearch" data-lib-search inputmode="search" placeholder="Search name or muscle"
@@ -493,6 +541,8 @@ export const libraryActions = {
       bodyHtml: `
         ${exerciseForm(ex)}
         <p class="hint">${esc(kindLabel(ex))}.</p>
+        <button type="button" class="btn block" data-action="lib-merge-pick"
+                data-key="${esc(ex.key)}">&#8644; Merge into another exercise…</button>
         <button type="button" class="btn block danger" data-action="lib-del"
                 data-key="${esc(ex.key)}">Remove from the library</button>`,
       okText: 'Save',
@@ -514,6 +564,78 @@ export const libraryActions = {
       },
     });
     wireGroupPicker(modal);
+  },
+
+  /**
+   * Merge one name into another, after showing the real scope.
+   *
+   * Confirmation is mandatory and spells out that logged history is rewritten,
+   * because it is: this is the one action in the app that edits sessions you
+   * already finished.
+   */
+  'lib-merge': async ({ from, into }) => {
+    const plan = mergePreview(from, into);
+    if (plan.blockers.length) { toast(plan.blockers[0], 6000); return; }
+    const scope = [
+      plan.routines.length ? `${plan.routines.length} routine${plan.routines.length === 1 ? '' : 's'}` : null,
+      plan.sessions ? `${plan.sessions} logged session${plan.sessions === 1 ? '' : 's'}` : null,
+      plan.sets ? `${plan.sets} logged set${plan.sets === 1 ? '' : 's'}` : null,
+      plan.alternatives ? `${plan.alternatives} Either/Or option${plan.alternatives === 1 ? '' : 's'}` : null,
+      plan.swaps ? `${plan.swaps} recorded swap${plan.swaps === 1 ? '' : 's'}` : null,
+    ].filter(Boolean);
+    openModal({
+      title: `Merge into "${plan.intoName}"?`,
+      bodyHtml: `
+        <p class="hint" style="margin-top:0">Every mention of <b>${esc(plan.fromName)}</b> becomes
+          <b>${esc(plan.intoName)}</b>, so the two histories become one.</p>
+        <div class="kv"><span>Will be renamed in</span><span class="strong">${scope.length ? esc(scope.join(' · ')) : 'nothing yet'}</span></div>
+        ${plan.liveSession ? '<div class="kv"><span>Workout in progress</span><span class="warnmsg">will be renamed too</span></div>' : ''}
+        ${plan.routines.length ? `<p class="hint">Routines: ${esc(plan.routines.map((r) => r.name).join(', '))}</p>` : ''}
+        ${plan.warnings.map((w) => `<p class="hint warnmsg">${esc(w)}</p>`).join('')}
+        <p class="hint">This edits workouts you have already finished. It can be undone once, right
+          after &mdash; and your next sync pushes a new gist revision either way, so the previous
+          state stays recoverable.</p>`,
+      okText: 'Merge',
+      danger: true,
+      onSubmit: async () => {
+        const res = await mergeExercises(from, into, { force: true });
+        if (!res.ok) { toast(res.plan.blockers[0] || 'Could not merge', 6000); return false; }
+        state.nav.lastMerge = { fromName: res.plan.fromName, intoName: res.plan.intoName };
+        toast(`Merged into ${res.plan.intoName}. Histories are now one.`, 5000);
+        return true;
+      },
+    });
+  },
+
+  'lib-unmerge': async () => {
+    const res = await undoLastMerge();
+    state.nav.lastMerge = null;
+    if (!res) { toast('Nothing to undo'); return; }
+    toast(res.missing
+      ? `Put back ${res.restored}. ${res.missing} entr${res.missing === 1 ? 'y was' : 'ies were'} deleted since the merge and could not be restored.`
+      : `Undone — "${res.fromName}" is back.`, 6000);
+  },
+
+  /** Merge this exercise into another, chosen by name. The manual route. */
+  'lib-merge-pick': ({ key }) => {
+    const ex = exerciseFor(key);
+    if (!ex) return;
+    const others = state.exercises.filter((x) => x.key !== ex.key);
+    if (!others.length) { toast('There is nothing else in your library to merge into'); return; }
+    closeModal();
+    openModal({
+      title: `Merge "${ex.name}" into…`,
+      bodyHtml: `
+        <p class="hint" style="margin-top:0">Every mention of <b>${esc(ex.name)}</b> &mdash; in your
+          routines and in your logged sessions &mdash; is renamed to whichever you pick, so the two
+          histories become one. <b>${esc(ex.name)}</b> then stops existing.</p>
+        <div class="btn-row" style="flex-direction:column;gap:6px">
+          ${others.slice(0, 60).map((x) => `<button type="button" class="btn block"
+            data-action="lib-merge" data-from="${esc(ex.key)}" data-into="${esc(x.key)}">${esc(x.name)}
+            ${x.primary.length ? `<span class="dim small">${esc(x.primary.join(' + '))}</span>` : ''}</button>`).join('')}
+        </div>`,
+      cancelText: 'Cancel',
+    });
   },
 
   'lib-del': async ({ key }) => {

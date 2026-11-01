@@ -2351,5 +2351,89 @@ await click('#modalRoot [data-mclose]', 'Cancel');
 await sleep(50);
 store.state.nav = {};
 
+section('duplicate names are surfaced and merged from the Library tab');
+await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await sleep(60);
+await click('[data-action="lib-mode"][data-mode="mine"]', 'Mine');
+await sleep(60);
+// two spellings of one movement, each used by its own routine
+await xi.importFromText(JSON.stringify({
+  name: 'Dupe Day A', entries: [{ name: 'Cable Fly', sets: 2, reps: 12, weight: 15 }],
+}));
+await sleep(70);
+await xi.importFromText(JSON.stringify({
+  name: 'Dupe Day B', entries: [{ name: 'Cable Flys', sets: 2, reps: 12, weight: 15 }],
+}));
+await sleep(70);
+await xs2.saveExercise({ name: 'Cable Fly', primary: ['Chest'] });
+await xs2.saveExercise({ name: 'Cable Flys' });
+await click('[data-action="lib-mode"][data-mode="mine"]', 'refresh');
+await sleep(80);
+ok(/SAME EXERCISE, DIFFERENT NAMES/.test(view()),
+  'the two spellings are surfaced as one movement');
+ok(/Cable Fly/.test(view()) && /Cable Flys/.test(view()), 'both named');
+ok(/logged set/.test(view()), 'with how much history each carries, so the choice is informed');
+ok(/keep/.test(view()), 'and one is marked as the one to keep');
+const dmBtn = $('[data-action="lib-merge"]');
+ok(!!dmBtn, 'and a merge button on the other');
+const dmFrom = dmBtn.dataset.from;
+const dmInto = dmBtn.dataset.into;
+ok(dmFrom !== dmInto, `it merges one into the other (${dmFrom} -> ${dmInto})`);
+const dmKeptName = store.state.exercises.find((x) => x.key === dmInto).name;
+
+section('the merge confirmation states the real scope before anything changes');
+dmBtn.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(90);
+ok(!$('#modalRoot').hidden, 'a confirmation opened rather than merging on the tap');
+ok(/Will be renamed in/.test($('#modalRoot').textContent), 'it states the scope');
+ok(/routine/.test($('#modalRoot').textContent), 'naming the routines affected');
+ok(/already finished|logged/.test($('#modalRoot').textContent),
+  'and warns that finished workouts get edited, which is the honest part');
+ok(/undone once/.test($('#modalRoot').textContent), 'and that it is undoable once');
+const dmBefore = store.state.exercises.length;
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(200);
+ok(store.state.exercises.length === dmBefore - 1, 'one of the two records is gone');
+const dmNames = store.state.routines
+  .filter((r) => r.name.startsWith('Dupe Day'))
+  .flatMap((r) => r.entries.map((e) => e.name));
+ok(dmNames.length === 2 && dmNames.every((n) => n === dmKeptName),
+  `both routines now ask for the one surviving name (${dmNames.join(', ')})`);
+// scoped to THIS group: other legitimate duplicate spellings may exist in the
+// accumulated state of this file, and the card is right to keep showing them
+const dmGroupGone = !$$('[data-action="lib-merge"]')
+  .some((b) => b.dataset.from === dmFrom || b.dataset.into === dmFrom);
+ok(dmGroupGone, 'and these two are no longer offered as duplicates');
+
+section('the merge can be undone from the same screen');
+ok(/Merged "Cable Flys" into "Cable Fly"|Merged/.test(view()),
+  'the merge is reported with an undo offered');
+ok($('[data-action="lib-unmerge"]') !== null, 'an undo button');
+await click('[data-action="lib-unmerge"]', 'Undo');
+await sleep(200);
+const dmBack = store.state.routines
+  .filter((r) => r.name.startsWith('Dupe Day'))
+  .flatMap((r) => r.entries.map((e) => e.name));
+ok(new Set(dmBack).size === 2,
+  `both spellings are back in their own routines (${dmBack.join(', ')})`);
+ok(store.state.exercises.some((x) => x.key === dmFrom), 'and the merged-away record is restored');
+
+section('any two exercises can be merged by hand, not just detected ones');
+await sleep(40);
+await click(`[data-action="lib-edit"][data-key="${dmInto}"]`, 'open an exercise');
+await sleep(80);
+ok($('#modalRoot [data-action="lib-merge-pick"]') !== null,
+  'every exercise offers Merge into…, for names the detector did not spot');
+await click('#modalRoot [data-action="lib-merge-pick"]', 'Merge into…');
+await sleep(90);
+ok(/Merge ".+" into/.test($('#modalRoot').textContent), 'a target picker opened');
+ok($$('#modalRoot [data-action="lib-merge"]').length > 1,
+  `listing the other exercises to merge into (${$$('#modalRoot [data-action="lib-merge"]').length})`);
+ok(/stops existing/.test($('#modalRoot').textContent),
+  'and is explicit that the exercise being merged disappears');
+await click('#modalRoot [data-mclose]', 'Cancel');
+await sleep(50);
+store.state.nav = {};
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

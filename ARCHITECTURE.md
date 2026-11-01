@@ -29,6 +29,7 @@ js/backupstore.js   whole-database replace (restore, device copy) + the confirma
 js/clockstore.js    the workout clock: rest, holds, the drop-set prompt (ticking is in timer.js)
 js/exercise.js      exercise library SHAPE: muscle-group vocabulary, normaliser, per-group totals
 js/exercisestore.js exercise library writes: CRUD, seed-from-history, JSON import
+js/exercisemerge.js merging two names that are one exercise, across routines and history
 js/catalog.js       the built-in catalogue: parse, classify, search (read-only, shipped)
 js/catalogdata.js   the catalogue's gym half: strength, power, Olympic, plyo, isometric, carry, core
 js/catalogconditioning.js the catalogue's conditioning half: running, cardio, mobility, prehab
@@ -778,6 +779,54 @@ Wiring is **imperative**, via `wireGroupPicker(modal)`, not `data-action`. An ac
 re-renders the whole view, which would destroy the modal mid-edit — the same reason the set grid and
 the interval builder are wired by hand. It lives in `views/exform.js` (an exercise being *defined*)
 and `views/library.js` imports it, keeping the existing one-way seam.
+
+### Merging two names that are one exercise
+
+The thing that makes tagging retroactive — **identity is the name** — is also what makes "DB Row"
+and "Dumbbell Row" two exercises with two separate histories, two prefills and two trend lines.
+
+So a merge is not a library edit. It is a **bulk rewrite of stored names across routines and logged
+sessions**, and the only reason it is tractable is that all nineteen name-keyed lookups in the
+codebase derive from `entry.name`. Rewrite the stored names and every lookup unifies by itself.
+
+**Five fields reference an exercise by name, and all five are rewritten:**
+
+| field | why it matters |
+|---|---|
+| `routine.entries[].name` | the slot |
+| `routine.entries[].alternatives[]` | Either/Or options |
+| `session.entries[].name` | logged work, **including the live session** |
+| `session.entries[].alternatives[]` | the options as they were that day |
+| `session.entries[].swappedFrom` | which slot a mid-workout swap came from |
+
+**Detection finds spellings, not lookalikes.** `findDuplicates` groups by `reduceName` — shorthand
+expanded, plurals stripped, order discarded — the *same* reduction `certainMatch` uses, so the two
+can never disagree about what counts as the same movement. "DB Row" and "Dumbbell Row" group;
+"Incline DB Press" and "DB Press" do not, and neither do "Front Plank" and "Side Plank". Anything
+subtler than a spelling difference is a judgement call, and guessing at it would offer to destroy
+history on a hunch.
+
+**The default keeper is the name with the most logged history**, because that is the one whose
+history you lose least by keeping.
+
+**Blockers, and what is merely a warning:**
+
+- a lift into a cardio entry is a **hard refusal** — one logs `sets`, the other logs a single `log`,
+  so one name cannot mean both
+- a **measure** difference is forceable but loud, because 45 *seconds* silently starts reading as 45
+  *reps*. Forceable because the usual reason to merge is that one of them was set wrong
+- **both names in one routine or session** keeps both entries under the surviving name rather than
+  combining them — two blocks of work really happened
+- an `alternatives` entry that would now point at its own exercise is **dropped**, not left offering
+  the exercise as its own substitute
+
+**The survivor keeps the richer tagging**, so merging a tagged name into an untagged one carries the
+muscle groups across instead of discarding them.
+
+**One level of undo**, snapshotted to `meta.lastMerge` before the rewrite and keyed by entry id. It
+is best-effort and says so: an entry deleted since the merge is reported as `missing` rather than
+recreated, because restoring a name onto something that no longer exists is not possible and
+inventing one would be worse than reporting the gap.
 
 ### Editing a finished session
 

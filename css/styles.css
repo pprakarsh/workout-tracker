@@ -275,6 +275,13 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 .gchip{min-height:34px}
 .gchip span{opacity:.7;font-weight:400;margin-left:1px}
 .field.gpick select{width:100%}
+/* duplicate names offered for merging */
+.dupgroup{border:1px solid var(--line);border-radius:10px;padding:4px 8px;margin-top:8px}
+.duprow{display:flex;align-items:center;gap:8px;min-height:44px}
+.duprow+.duprow{border-top:1px solid var(--line)}
+.duprow .body{flex:1;min-width:0}
+.duprow .nm{font-size:14px;font-weight:600;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.pill.ok{background:var(--ok);border-color:var(--ok);color:#04210f;font-weight:700}
 /* per-muscle readout: two counts that are never added together */
 .grp-hdr,.grp-row{display:grid;grid-template-columns:1fr 48px 56px;gap:6px;align-items:center}
 .grp-hdr{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg3);font-weight:700;padding:6px 2px 4px}

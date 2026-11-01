@@ -155,6 +155,16 @@ function words(s) {
 }
 
 /**
+ * A name reduced to its meaningful word SET: shorthand expanded, plurals
+ * stripped, order discarded.
+ *
+ * The shared basis for "are these the same exercise?" -- `certainMatch` uses it
+ * against the catalogue, and duplicate detection uses it against your own
+ * names, so the two can never disagree about what counts as the same movement.
+ */
+export const reduceName = (name) => words(name).slice().sort().join(' ');
+
+/**
  * Rank catalogue entries against a name the catalogue does not know exactly.
  *
  * For filling in attributes on exercises already in a library, where the names
@@ -202,9 +212,9 @@ export function suggestFor(name, { limit = 3, min = 0.25 } = {}) {
 export function certainMatch(name) {
   const exact = catalogFor(name);
   if (exact) return exact;
-  const want = words(name).slice().sort().join(' ');
+  const want = reduceName(name);
   if (!want) return null;
-  const hits = CATALOG.filter((x) => words(x.name).slice().sort().join(' ') === want);
+  const hits = CATALOG.filter((x) => reduceName(x.name) === want);
   // two catalogue entries reducing to the same words is an ambiguity, not a match
   return hits.length === 1 ? hits[0] : null;
 }

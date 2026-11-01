@@ -36,6 +36,7 @@ const backupStore = await import(`${APP}/js/backupstore.js`);
 const ex = await import(`${APP}/js/exercise.js`);
 const xs = await import(`${APP}/js/exercisestore.js`);
 const cat = await import(`${APP}/js/catalog.js`);
+const mg = await import(`${APP}/js/exercisemerge.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const nowView = await import(`${APP}/js/views/now.js`);
@@ -2857,6 +2858,181 @@ ok(cat.certainMatch('Leg Curl')?.name !== 'Alternating Dumbbell Curl',
 const mgRow = cat.suggestFor('DB Row');
 ok(mgRow.length && /dumbbell/i.test(mgRow[0].match.name),
   `the top guess for "DB Row" is a dumbbell one (${mgRow[0]?.match.name})`);
+
+/* ------------------------------------------------------------------ */
+/* merging two names that are the same exercise                       */
+/* ------------------------------------------------------------------ */
+
+section('spelling variants of one movement are found; different movements are not');
+ok(cat.reduceName('DB Row') === cat.reduceName('Dumbbell Row'),
+  'shorthand reduces to the same words as the long form');
+ok(cat.reduceName('Face Pulls') === cat.reduceName('Face Pull'), 'and so do plurals');
+ok(cat.reduceName('RDL') === cat.reduceName('Romanian Deadlift'), 'and acronyms');
+ok(cat.reduceName('Incline DB Press') !== cat.reduceName('DB Press'),
+  'an incline press is NOT the same movement as a flat one');
+ok(cat.reduceName('Front Plank') !== cat.reduceName('Side Plank'),
+  'nor a front plank the same as a side plank');
+ok(cat.reduceName('') === '' && cat.reduceName('   ') === '', 'a blank name reduces to nothing');
+
+section('a merge is refused when the two cannot be one exercise');
+await store.updateSettings({ requireEffort: false });
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+ok(mg.mergePreview('X', 'X').blockers.length > 0, 'merging a name into itself is refused');
+ok(mg.mergePreview('', 'Thing').blockers.length > 0, 'a blank name is refused');
+ok(mg.mergePreview('Never Heard Of This', 'Back Squat').blockers.length > 0,
+  'a name nothing uses is refused, rather than silently doing nothing');
+
+const mzR = await store.createRoutine({
+  name: 'Merge Day',
+  entries: [
+    { name: 'MZ Row', sets: 3, reps: 10, weight: 40 },
+    { name: 'MZ Hold', measure: 'time', sets: 2, reps: '45' },
+    { name: 'MZ Jog', type: 'cardio', duration: '20:00' },
+  ],
+});
+ok(mg.mergePreview('MZ Row', 'MZ Jog').blockers.length > 0,
+  'a lift cannot be merged into a cardio entry — they are logged differently');
+const mzMeasure = mg.mergePreview('MZ Hold', 'MZ Row');
+ok(mzMeasure.blockers.length === 0, 'a measure difference is not a hard blocker');
+ok(mzMeasure.warnings.some((w) => /seconds|time|reps/.test(w)),
+  `but it is warned about, because 45 seconds would start reading as 45 reps (${mzMeasure.warnings[0]?.slice(0, 60)}…)`);
+ok((await mg.mergeExercises('MZ Hold', 'MZ Row')).needsForce === true,
+  'and it will not proceed without an explicit force');
+ok(store.findEntry === store.findEntry && store.getRoutine(mzR.id).entries.length === 3,
+  'nothing was changed by the refusal');
+
+section('a merge rewrites the name in routines AND in logged history');
+const mzS = await store.startSession(mzR.id);
+const mzRow = mzS.entries[0];
+await store.updateSet(mzRow.id, mzRow.sets[0].id, { weight: 42.5, reps: 9, done: true });
+await store.updateSet(mzRow.id, mzRow.sets[1].id, { weight: 42.5, reps: 9, done: true });
+await store.finishSession();
+const mzOther = await store.createRoutine({
+  name: 'Merge Day B', entries: [{ name: 'MZ Dumbbell Row', sets: 3, reps: 8, weight: 35 }],
+});
+await xs.saveExercise({ name: 'MZ Row', primary: ['Back'], secondary: ['Biceps'] });
+await xs.saveExercise({ name: 'MZ Dumbbell Row' });
+
+const mzPrev = mg.mergePreview('MZ Dumbbell Row', 'MZ Row');
+ok(mzPrev.routines.length === 1 && mzPrev.routines[0].name === 'Merge Day B',
+  `the preview names the routines it would touch (${mzPrev.routines.map((r) => r.name).join(', ')})`);
+ok(mzPrev.blockers.length === 0, 'and has nothing against it');
+const mzRes = await mg.mergeExercises('MZ Dumbbell Row', 'MZ Row');
+ok(mzRes.ok === true, 'the merge ran');
+ok(store.getRoutine(mzOther.id).entries[0].name === 'MZ Row',
+  `the routine now asks for the surviving name (${store.getRoutine(mzOther.id).entries[0].name})`);
+ok(xs.exerciseFor('MZ Dumbbell Row') === null, 'the duplicate library record is gone');
+ok(xs.exerciseFor('MZ Row') !== null, 'and the survivor remains');
+ok(xs.exerciseFor('MZ Row').primary.join() === 'Back', 'keeping its tags');
+
+section('history unifies, which is the whole point of merging');
+ok(store.lastWorkingSets(state.sessions, 'MZ Row', 'reps')[0].weight === 42.5,
+  'the surviving name finds the sets logged under it');
+const mzS2 = await store.startSession(mzOther.id);
+ok(mzS2.entries[0].sets[0].weight === 42.5,
+  `and the OTHER routine now prefills from that history (${mzS2.entries[0].sets[0].weight}) — it could not before`);
+await store.discardSession();
+
+section('the merged name keeps the richer tagging, not whichever was the target');
+await xs.saveExercise({ name: 'MZ Tagged', primary: ['Chest'], secondary: ['Triceps'] });
+await xs.saveExercise({ name: 'MZ Untagged' });
+await store.createRoutine({ name: 'MZ T', entries: [{ name: 'MZ Tagged', sets: 1, reps: 5, weight: 10 }] });
+await store.createRoutine({ name: 'MZ U', entries: [{ name: 'MZ Untagged', sets: 1, reps: 5, weight: 10 }] });
+await mg.mergeExercises('MZ Tagged', 'MZ Untagged');
+ok(xs.exerciseFor('MZ Untagged').primary.join() === 'Chest',
+  'merging a tagged name into an untagged one carries the tags across rather than losing them');
+ok(xs.exerciseFor('MZ Untagged').secondary.join() === 'Triceps', 'secondary too');
+
+section('Either/Or options and mid-workout swaps are rewritten too');
+const mzAltR = await store.createRoutine({
+  name: 'MZ Alt',
+  entries: [
+    { name: 'MZ Press', alternatives: 'MZ Machine Press', sets: 2, reps: 8, weight: 30 },
+    { name: 'MZ Machine Press', sets: 2, reps: 8, weight: 30 },
+  ],
+});
+const mzAltPrev = mg.mergePreview('MZ Machine Press', 'MZ Press');
+ok(mzAltPrev.alternatives === 1, `the preview counts the Either/Or reference (${mzAltPrev.alternatives})`);
+ok(mzAltPrev.collisions.length === 1,
+  'and notices both names are in the same routine');
+ok(mzAltPrev.warnings.some((w) => /separate entries/.test(w)),
+  'saying those stay as separate entries, because two blocks of work really happened');
+await mg.mergeExercises('MZ Machine Press', 'MZ Press', { force: true });
+const mzAltAfter = store.getRoutine(mzAltR.id);
+ok(mzAltAfter.entries.every((e) => e.name === 'MZ Press'), 'both entries carry the surviving name');
+ok(mzAltAfter.entries.length === 2, 'and both are kept — neither block was silently dropped');
+ok(mzAltAfter.entries[0].alternatives.length === 0,
+  'the Either/Or option pointing at the old name is dropped, not left offering the exercise to itself');
+
+section('a swap recorded mid-workout is rewritten as well');
+const mzSwR = await store.createRoutine({
+  name: 'MZ Swap',
+  entries: [{ name: 'MZ Leg Press', alternatives: 'MZ Hack', sets: 2, reps: 10, weight: 80 }],
+});
+const mzSwS = await store.startSession(mzSwR.id);
+await store.swapEntryExercise(mzSwS.entries[0].id, 'MZ Hack');
+ok(store.findEntry(mzSwS.entries[0].id).swappedFrom === 'MZ Leg Press', 'the swap was recorded');
+const mzSwPrev = mg.mergePreview('MZ Leg Press', 'MZ Hack');
+ok(mzSwPrev.swaps === 1, `the preview counts it (${mzSwPrev.swaps})`);
+ok(mzSwPrev.liveSession === true, 'and flags that the workout in progress is affected');
+await mg.mergeExercises('MZ Leg Press', 'MZ Hack', { force: true });
+ok(store.findEntry(mzSwS.entries[0].id).swappedFrom === 'MZ Hack',
+  'the live session is rewritten too, not just the finished ones');
+await store.discardSession();
+
+section('a merge can be undone');
+const mzUndoR = await store.createRoutine({
+  name: 'MZ Undo', entries: [{ name: 'MZ Original', sets: 2, reps: 8, weight: 20 }],
+});
+await xs.saveExercise({ name: 'MZ Original', primary: ['Quads'] });
+await xs.saveExercise({ name: 'MZ Survivor', primary: ['Glutes'] });
+await store.createRoutine({ name: 'MZ Undo B', entries: [{ name: 'MZ Survivor', sets: 1, reps: 5, weight: 5 }] });
+await mg.mergeExercises('MZ Original', 'MZ Survivor');
+ok(store.getRoutine(mzUndoR.id).entries[0].name === 'MZ Survivor', 'merged');
+ok(xs.exerciseFor('MZ Original') === null, 'and the old record removed');
+const mzUndone = await mg.undoLastMerge();
+ok(mzUndone.restored >= 1, `undo put ${mzUndone.restored} entr${mzUndone.restored === 1 ? 'y' : 'ies'} back`);
+ok(store.getRoutine(mzUndoR.id).entries[0].name === 'MZ Original',
+  'the routine asks for the original name again');
+ok(xs.exerciseFor('MZ Original') !== null, 'and the library record is restored');
+ok(xs.exerciseFor('MZ Original').primary.join() === 'Quads', 'with its tags');
+ok(xs.exerciseFor('MZ Survivor') !== null, 'the target survives the undo');
+ok(await mg.undoLastMerge() === null, 'and there is only one level of undo — the second is a no-op');
+
+section('undo is best-effort, and says so, when something was deleted since');
+const mzGoneR = await store.createRoutine({
+  name: 'MZ Gone', entries: [{ name: 'MZ Vanisher', sets: 1, reps: 5, weight: 5 }],
+});
+await store.createRoutine({ name: 'MZ Keeper', entries: [{ name: 'MZ Kept', sets: 1, reps: 5, weight: 5 }] });
+await mg.mergeExercises('MZ Vanisher', 'MZ Kept');
+await store.deleteRoutine(mzGoneR.id);
+const mzPartial = await mg.undoLastMerge();
+ok(mzPartial.missing >= 1,
+  `an entry deleted since the merge is reported as missing (${mzPartial.missing}) rather than invented`);
+
+section('duplicate detection finds spellings, not lookalikes');
+await store.createRoutine({ name: 'MZ Dup', entries: [{ name: 'MZ Cable Fly', sets: 1, reps: 5, weight: 5 }] });
+await store.createRoutine({ name: 'MZ Dup2', entries: [{ name: 'MZ Cable Flys', sets: 1, reps: 5, weight: 5 }] });
+const mzDupes = mg.findDuplicates();
+const mzFlyGroup = mzDupes.find((g) => g.some((x) => x.key === 'mz cable fly'));
+ok(!!mzFlyGroup && mzFlyGroup.length === 2,
+  'a plural spelling is grouped with its singular');
+ok(!mzDupes.some((g) => g.some((x) => x.key === 'mz hold') && g.some((x) => x.key === 'mz row')),
+  'while two genuinely different exercises are never grouped');
+ok(mzDupes.every((g) => g.length > 1), 'every group really has more than one spelling in it');
+
+section('merging a name nothing uses just removes the stray record');
+await xs.saveExercise({ name: 'MZ Stray', primary: ['Neck'] });
+await store.createRoutine({ name: 'MZ Host', entries: [{ name: 'MZ Real', sets: 1, reps: 5, weight: 5 }] });
+await xs.saveExercise({ name: 'MZ Real' });
+const mzStray = await mg.mergeExercises('MZ Stray', 'MZ Real');
+ok(mzStray.ok === true, 'it merges');
+ok(xs.exerciseFor('MZ Stray') === null, 'the stray record is gone');
+ok(xs.exerciseFor('MZ Real').primary.join() === 'Neck', 'and its tags were not wasted');
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+for (const r of [...state.routines].filter((r) => r.name.startsWith('MZ ') || r.name.startsWith('Merge Day'))) {
+  await store.deleteRoutine(r.id);
+}
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
