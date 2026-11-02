@@ -57,9 +57,10 @@ body{
 .tab{
   flex:1;min-width:0;background:none;border:0;color:var(--fg3);
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-  font-size:10px;font-weight:600;font-family:inherit;cursor:pointer;
+  font-size:11px;font-weight:600;font-family:inherit;cursor:pointer;
   touch-action:manipulation;
 }
+.tab[hidden]{display:none}
 .tab>span:last-child{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tab-ico{font-size:17px;line-height:1}
 .tab.active{color:var(--accent)}
@@ -282,6 +283,17 @@ label.field>span{display:block;font-size:12px;color:var(--fg2);margin-bottom:4px
 .duprow .body{flex:1;min-width:0}
 .duprow .nm{font-size:14px;font-weight:600;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 .pill.ok{background:var(--ok);border-color:var(--ok);color:#04210f;font-weight:700}
+/* the Set up hub: three big rows rather than three more tabs */
+.setup-row{
+  display:flex;align-items:center;gap:12px;min-height:64px;
+  background:var(--bg2);border:1px solid var(--line);border-radius:14px;
+  padding:12px;margin-bottom:10px;cursor:pointer;
+}
+.setup-row:active{opacity:.6}
+.setup-row .setup-ico{font-size:22px;width:28px;text-align:center}
+.setup-row .body{flex:1;min-width:0}
+.setup-row .nm{font-size:16px;font-weight:650;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.setup-row .sub{font-size:13px;margin-top:2px}
 /* per-muscle readout: two counts that are never added together */
 .grp-hdr,.grp-row{display:grid;grid-template-columns:1fr 48px 56px;gap:6px;align-items:center}
 .grp-hdr{font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--fg3);font-weight:700;padding:6px 2px 4px}

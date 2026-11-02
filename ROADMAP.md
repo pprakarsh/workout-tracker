@@ -39,6 +39,7 @@ plate calculator is offered, and whether your history becomes more than a list.
 | Bulk-fill missing tags from the catalogue | A "Fix N" queue: exact-after-shorthand matches apply in one tap ("RDL", "Pull Ups", "DB Row"), ambiguous names offer a pick-one, unknown ones are listed for you. Your names are never changed |
 | Muscle groups picked from a dropdown | A native `select` grouped Push / Pull / Core / Legs / Other that *adds* to a chip list, so several targets are expressible and nothing has to be typed |
 | Merge duplicate names into one | Detects spelling variants, rewrites the name across routines **and** logged history so the two become one, keeps the richer tags, and undoes once |
+| Tab bar down to 5–6, with a Set up hub | Routines, Library and Settings grouped behind one tab; Session appears only while a workout is running |
 | Session progress bar | Entry completion, in the Now header |
 | Plan tab: 10 days ahead, 7 behind | Assign a routine per day, rest days, push/pull a day; done is derived from history, and the week behind shows adherence |
 | History filters | All / week / month / a date or date range, steppable, with a per-window summary |

@@ -19,6 +19,7 @@ import * as planView from './views/plan.js';
 import * as trendsView from './views/trends.js';
 import * as settingsView from './views/settings.js';
 import * as libraryView from './views/library.js';
+import * as setupView from './views/setup.js';
 
 const VIEWS = {
   now: nowView,
@@ -29,6 +30,7 @@ const VIEWS = {
   routines: routinesView,
   settings: settingsView,
   library: libraryView,
+  setup: setupView,
 };
 
 const TITLES = {
@@ -40,6 +42,7 @@ const TITLES = {
   routines: 'Routines',
   settings: 'Settings',
   library: 'Library',
+  setup: 'Set up',
 };
 
 const ACTIONS = {
@@ -51,6 +54,7 @@ const ACTIONS = {
   ...trendsView.trendsActions,
   ...settingsView.settingsActions,
   ...libraryView.libraryActions,
+  ...setupView.setupActions,
   ...historyView.historyActions,
   ...routinesView.routineActions,
   ...timerActions,
@@ -83,6 +87,11 @@ export function render() {
         ? state.active.routineName
         : TITLES[state.tab];
 
+    // The Session tab is a view of the workout in progress, so it appears only
+    // while there is one. A tab you cannot use is a tab in the way, and this is
+    // what buys the bar back down to five on a rest day.
+    const sessTab = document.getElementById('tabSession');
+    if (sessTab) sessTab.hidden = !state.active && state.tab !== 'session';
     document.querySelectorAll('#tabBar .tab').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === state.tab);
     });

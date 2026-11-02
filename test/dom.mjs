@@ -46,6 +46,32 @@ async function openBlankExerciseForm(trigger, label) {
   await click(trigger, label);
   if ($('[data-action="ex-new"]')) await click('[data-action="ex-new"]', 'Create a new exercise');
 }
+/**
+ * Go to a view by name, whether or not it still has its own tab button.
+ *
+ * Routines and the Library moved behind the Set up hub when the bar came down
+ * from seven tabs to six, and the Session tab only exists while a workout is
+ * running. This keeps the tests reading as navigation rather than as knowledge
+ * of which tabs happen to be on the bar.
+ *
+ * Clicks the button directly rather than through the click() helper, so the
+ * selector lives in exactly one place and cannot be rewritten into a recursive
+ * call to this function.
+ */
+async function gotoTab(name) {
+  const tabBtn = (t) => document.querySelector(`#tabBar .tab[data-tab="${t}"]`);
+  const tap = async (el, label) => {
+    if (!el) { failures++; console.log(`  FAIL cannot navigate to ${label}`); return false; }
+    el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await sleep(45);
+    return true;
+  };
+  const direct = tabBtn(name);
+  if (direct && !direct.hidden) return tap(direct, name);
+  if (!(await tap(tabBtn('setup'), 'Set up'))) return false;
+  return tap(document.querySelector(`[data-action="${name}-go"]`), `${name} from Set up`);
+}
+
 async function type(sel, value) {
   const el = $(sel);
   if (!el) { failures++; console.log(`  FAIL no input: ${sel}`); return; }
@@ -74,12 +100,14 @@ await store.updateSettings({ requireEffort: false });
 section('boot');
 ok(store.state.ready, 'store initialised');
 ok(view().length > 0, 'something rendered');
-ok($$('#tabBar .tab').length === 7, `seven tabs present (${[...$$('#tabBar .tab')].map((b) => b.dataset.tab).join(',')})`);
+ok($$('#tabBar .tab').length === 6, `six tabs on the bar (${[...$$('#tabBar .tab')].map((b) => b.dataset.tab).join(',')})`);
+ok($('#tabBar .tab[data-tab="session"]').hidden === true,
+  'and the Session tab is hidden with no workout running — a tab you cannot use is a tab in the way');
 
 section('seed a routine, then start it from the Now tab');
 await xi.importFromText(routinesView.SAMPLE);
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]', 'Now tab');
+await gotoTab('now');
 ok(/No workout in progress/.test(view()), 'Now shows the start screen when idle');
 ok(/Squat day with Push Movements/.test(view()), 'routine is offered');
 await click('[data-action="routine-start"]', 'Start');
@@ -144,7 +172,7 @@ ok($('#restBar [data-action="set-undo"]') !== null, 'undo is reachable while res
 ok($('#restBar [data-action="set-rest-edit"]') !== null, 'and so is editing the rest');
 
 section('the app stays usable while resting');
-await click('#tabBar .tab[data-tab="session"]', 'Session tab');
+await gotoTab('session');
 ok(!$('#restBar').hidden, 'rest bar survives a tab change');
 ok($$('.sess-item').length === 5, `all 5 exercises listed (${$$('.sess-item').length})`);
 ok(/102.5kg×5/.test(view()), 'the session list shows what was logged');
@@ -163,7 +191,7 @@ ok(store.state.timer === null, 'timer cleared');
 let restChip2;
 const restedSet = store.state.active.entries.find((e) => e.name === firstName).sets[0];
 ok(restedSet.rest === 95, `actual rest recorded: ${restedSet.rest}s`);
-await click('#tabBar .tab[data-tab="now"]', 'Now tab');
+await gotoTab('now');
 ok(/1\) 1:35/.test(view()), 'the card reports the rest that was timed');
 ok(!/2:00/.test($('.restedit')?.textContent || ''),
   'the routine target is not passed off as logged rest');
@@ -190,7 +218,7 @@ await sleep(60);
 ok(store.state.active.entries.find((e) => e.name === firstName).sets[0].rest === null,
   'clearing records no rest rather than a zero');
 ok(/not logged/.test(view()), 'and it reads as not logged');
-await click('#tabBar .tab[data-tab="session"]', 'back to Session');
+await gotoTab('session');
 
 section('nudging the target');
 await click('.sess-item [data-action="sess-jump"]', 'jump to an exercise');
@@ -217,15 +245,19 @@ ok(store.state.active.entries.at(-1).targetSets === 3, 'picked up the 3 grid row
 ok(store.getRoutine(store.state.active.routineId).entries.length === 5, 'routine untouched');
 ok($('#modalRoot').hidden === true, 'modal closed');
 
-section('tabs render without throwing');
-for (const tab of ['history', 'routines', 'session', 'now']) {
-  await click(`#tabBar .tab[data-tab="${tab}"]`, `${tab} tab`);
+section('every view renders without throwing, and the bar marks where you are');
+for (const tab of ['history', 'routines', 'session', 'now', 'setup', 'library', 'trends', 'plan']) {
+  await gotoTab(tab);
   ok(view().length > 20, `${tab} rendered ${view().length} chars`);
-  ok($(`#tabBar .tab[data-tab="${tab}"]`).classList.contains('active'), `${tab} tab marked active`);
+  ok(store.state.tab === tab, `${tab} is the current view`);
+  // Routines and the Library live behind Set up, so they have no button of
+  // their own to light up -- the invariant that always holds is state.tab
+  const btn = $(`#tabBar .tab[data-tab="${tab}"]`);
+  if (btn) ok(btn.classList.contains('active'), `${tab} tab marked active`);
 }
 
 section('finish the workout from the UI');
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-finish"]', 'Finish workout');
 ok($('#modalRoot').hidden === false, 'finish confirmation opened');
 $('[name="rpe"]').value = '8';
@@ -248,7 +280,7 @@ await click('[data-action="hist-back"]', 'back');
 ok(!/All sessions/.test(view()), 'returned to the list');
 
 section('routine editor');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 await click('[data-action="routine-open"]', 'open routine');
 ok($('[data-rf="name"]') !== null, 'editor opened');
 await type('[data-rf="description"]', 'edited description');
@@ -269,7 +301,7 @@ ok($('#modalRoot').hidden === true, 'dialog closed');
 ok(/Run with Upper Body/.test(view()), 'new routine appears in the list');
 
 section('per-set targets in the routine editor');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 await click('[data-action="routine-open"]', 'open routine');
 const rid = store.state.nav.routineId;
 const entriesBefore = store.getRoutine(rid).entries.length;
@@ -373,7 +405,7 @@ await xi.importFromText(JSON.stringify({
   }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const planRoutine = store.state.routines.find((r) => r.name === 'Plan Test');
 await click(`[data-action="routine-start"][data-id="${planRoutine.id}"]`, 'Start Plan Test');
 ok(store.state.active?.routineName === 'Plan Test', 'plan-test workout started');
@@ -395,14 +427,14 @@ ok($$('.set-row').length === 2, 'a row can still be removed');
 ok($('[data-action="set-fill"]') !== null, 'and the missing planned row can be restored');
 await click('[data-action="set-fill"]', '+ 1 planned');
 ok($$('.set-row').length === 3, `back to 3 rows (${$$('.set-row').length})`);
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard this workout');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 ok(store.state.active === null, 'test workout discarded');
 
 section('editing a finished session from History');
-await click('#tabBar .tab[data-tab="history"]');
+await gotoTab('history');
 await click('.sess-item[data-action="hist-open"]', 'open the newest session');
 const editId = store.state.nav.sessionId;
 ok($('[data-action="hist-edit"]') !== null, 'detail view offers Edit');
@@ -440,11 +472,11 @@ ok(/123.5/.test(view()), 'the correction shows in the read-only log');
 section('leaving the editor via a tab clears edit mode');
 await click('[data-action="hist-edit"]', 'Edit again');
 ok(store.state.editSessionId === editId, 'editing again');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 ok(store.state.editSessionId === null, 'switching tabs exits edit mode');
 
 section('choose an exercise from the global library');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 await click('[data-action="routine-open"]', 'open routine');
 const pickRid = store.state.nav.routineId;
 const countBefore = store.getRoutine(pickRid).entries.length;
@@ -486,7 +518,7 @@ ok(store.state.routines.find((r) => r.name === 'Plan Test').entries[0].setTarget
   'the routine it was copied from is unchanged');
 
 section('the picker is also available mid-workout');
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 await click(`[data-action="routine-start"][data-id="${pickRid}"]`, 'Start');
 await click('[data-action="entry-add"]', '+ Add exercise');
 ok($('#exSearch') !== null, 'same picker when adding to a live session');
@@ -497,13 +529,13 @@ $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, ca
 await sleep(90);
 ok(store.state.active.entries.length === liveBefore + 1, 'added to the session');
 ok(store.getRoutine(pickRid).entries.length === countBefore + 1, 'the routine was not touched');
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
 section('the copy button copies the whole prompt');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 const copyBtn = $('[data-action="sample-copy"][data-which="prompt"]');
 ok(copyBtn !== null, 'the prompt copy button is on the Routines tab');
 ok(/Copy the full prompt/.test(copyBtn.textContent), `button says what it does: "${copyBtn.textContent.trim()}"`);
@@ -551,13 +583,13 @@ Object.defineProperty(dom.window.navigator, 'clipboard', { value: realClipboard,
 delete document.execCommand;
 
 section('warmup toggle, RIR column and the +/- stepper');
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const stepR = await xi.importFromText(JSON.stringify({
   name: 'Stepper Check', entries: [{ name: 'Row', sets: 2, reps: 10, weight: 50, rest: '1:00' }],
 }));
 ok(stepR.routines === 1, 'fixture routine imported');
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const stepRoutine = store.state.routines.find((r) => r.name === 'Stepper Check');
 await click(`[data-action="routine-start"][data-id="${stepRoutine.id}"]`, 'Start');
 
@@ -619,7 +651,7 @@ ok($('.set-row input[data-f="rpe"]') === null && $('.set-row input[data-f="rir"]
 ok($('.set-row').classList.contains('cols-1eff'), 'back to one effort column');
 await store.updateSettings({ effortScale: 'rpe' });
 
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
@@ -633,7 +665,7 @@ await xi.importFromText(JSON.stringify({
   }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const ivR = store.state.routines.find((r) => r.name === 'Interval Check');
 await click(`[data-action="routine-start"][data-id="${ivR.id}"]`, 'Start');
 ok(store.state.active.entries.length === 1, `one card, not six (${store.state.active.entries.length})`);
@@ -741,7 +773,7 @@ ok(document.activeElement === tInput, 'and the keyboard stayed in the field');
 await click(`.legrow[data-entry-leg="${target.id}"] [data-action="cardio-leg"]`);
 ok(target.done === false, 'its tick can be cleared on its own');
 
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 ok($$('.sess-item').length === 1, 'one row in the session list, not six');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
@@ -753,7 +785,7 @@ await xi.importFromText(JSON.stringify({
   entries: [{ type: 'cardio', name: 'Evening Run', duration: '28:30', pace: '6:00' }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const prR = store.state.routines.find((r) => r.name === 'Plain Run Check');
 await click(`[data-action="routine-start"][data-id="${prR.id}"]`, 'Start');
 const runE = store.state.active.entries[0];
@@ -809,13 +841,13 @@ await sleep(40);
 ok(runE.log.duration === 1890, `30 minutes and 90 seconds is 31:30 (${runE.log.duration}s)`);
 ok($('[data-tf-echo="duration"]').textContent === '31:30',
   `echoed as a real clock value (${$('[data-tf-echo="duration"]').textContent})`);
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
 section('the routine editor teaches the pattern format too');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 await click(`[data-action="routine-open"][data-id="${prR.id}"]`);
 await openBlankExerciseForm('[data-action="rentry-add"]', '+ Add exercise');
 const form = $('#modalForm');
@@ -868,7 +900,7 @@ await xi.importFromText(JSON.stringify({
   ],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const pgR = store.state.routines.find((r) => r.name === 'Progress Check');
 await click(`[data-action="routine-start"][data-id="${pgR.id}"]`, 'Start');
 const bar = $('.progress .bar');
@@ -915,7 +947,7 @@ section('"do this next" is one tap from the session list');
 // forward is reached from the Session tab -- which is where its menu lives
 const pgCarry = store.state.active.entries[1];
 await store.setCurrent(0);
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 ok($(`[data-action="entry-menu"][data-entry="${pgCarry.id}"]`) !== null,
   'every exercise in the list has its menu');
 await click(`[data-action="entry-menu"][data-entry="${pgCarry.id}"]`);
@@ -943,13 +975,13 @@ ok($('#exRows [data-stf="r"]').placeholder === '45',
   `the grid placeholder asks for plain seconds, not a colon the keypad lacks (${$('#exRows [data-stf="r"]').placeholder})`);
 await click('[data-mclose]');
 
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
 section('History spells the date out on every row');
-await click('#tabBar .tab[data-tab="history"]');
+await gotoTab('history');
 const histRows = $$('.sess-item');
 ok(histRows.length > 0, `there are sessions to look at (${histRows.length})`);
 const firstSub = histRows[0].querySelector('.sub').textContent;
@@ -998,8 +1030,8 @@ await sleep(40);
 ok(view().includes('Nothing logged'), 'a day with no workout says so rather than showing everything');
 
 section('the filter survives a trip to another tab');
-await click('#tabBar .tab[data-tab="now"]');
-await click('#tabBar .tab[data-tab="history"]');
+await gotoTab('now');
+await gotoTab('history');
 ok(store.state.histFilter.mode === 'range' && store.state.histFilter.from === emptyDay,
   'the lens is still where you left it');
 await click('[data-action="hist-filter"][data-mode="all"]');
@@ -1010,7 +1042,7 @@ section('an unfinished session can be marked done from History');
 // a routine with at least one lift entry, so there is a set to log
 const openR = store.state.routines.find((r) => r.entries.some((e) => e.type !== 'cardio'));
 ok(openR !== undefined, 'found a routine to strand');
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 await click(`[data-action="routine-start"][data-id="${openR.id}"]`, 'Start');
 ok(store.state.active !== null, 'the session started');
 const openId = store.state.active.id;
@@ -1019,7 +1051,7 @@ ok(oe !== undefined, 'with a materialised set to tick');
 await store.toggleSetDone(oe.id, oe.sets[0].id);
 const loggedAt = oe.sets[0].completedAt;
 store.state.active = null;                       // as if the app had been closed
-await click('#tabBar .tab[data-tab="history"]');
+await gotoTab('history');
 const openRow = [...$$('.sess-item')].find((r) => r.dataset.id === openId);
 ok(openRow !== undefined, 'the stranded session is listed');
 ok(openRow.textContent.includes('unfinished'), 'flagged as unfinished');
@@ -1034,9 +1066,9 @@ ok(!closedRow.textContent.includes('unfinished'), 'and the row stops saying unfi
 await store.deleteSession(openId);
 
 section('Settings is a screen reached from the header, not a seventh tab');
-ok($$('#tabBar .tab').length === 7, 'the tab bar stays at seven');
+ok($$('#tabBar .tab').length === 6, 'the tab bar stays at six');
 ok($('#appHeader [data-action="settings-go"]') !== null, 'the gear is in the header, visible everywhere');
-await click('#tabBar .tab[data-tab="history"]');
+await gotoTab('history');
 await click('[data-action="settings-go"]');
 ok(store.state.tab === 'settings', 'it opens as its own screen');
 ok($('#appTitle').textContent === 'Settings', `with its own title (${$('#appTitle').textContent})`);
@@ -1094,7 +1126,7 @@ ok(store.state.settings.prefillFrom === 'last', 'and back to last time');
 await click('[data-action="settings-close"]');
 
 section('the Trends tab opens on an overview of everything logged');
-await click('#tabBar .tab[data-tab="trends"]');
+await gotoTab('trends');
 ok(view().includes('Logged'), 'it shows how much has been logged');
 ok($$('.chart').length >= 1, `with at least one chart (${$$('.chart').length})`);
 ok(view().includes('Sets per week'), 'sets per week is always there');
@@ -1148,7 +1180,7 @@ await xi.importFromText(JSON.stringify({
   entries: [{ name: 'EU Press', sets: 2, reps: 5, weight: 60 }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const euR = store.state.routines.find((r) => r.name === 'Effort UI Check');
 await click(`[data-action="routine-start"][data-id="${euR.id}"]`, 'Start');
 const euE = store.state.active.entries[0];
@@ -1226,7 +1258,7 @@ await sleep(60);
 ok(euE.sets[1].done === true, 'one tap logs it');
 ok($('.unticked') === null, 'and the hint goes away');
 
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
@@ -1238,7 +1270,7 @@ await xi.importFromText(JSON.stringify({
   entries: [{ type: 'cardio', name: 'CR Run', duration: '30:00', pace: '6:00' }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const crR = store.state.routines.find((r) => r.name === 'Confirm Run Check');
 await click(`[data-action="routine-start"][data-id="${crR.id}"]`, 'Start');
 const crE = store.state.active.entries[0];
@@ -1251,7 +1283,7 @@ ok(/nothing is recorded until/i.test(crBar.textContent),
 ok(crE.log.done === false, 'it starts unconfirmed');
 
 section('finishing warns about work that was never confirmed');
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-finish"]');
 ok(/Filled in but not logged/i.test($('#modalForm').textContent),
   'the finish prompt flags it');
@@ -1271,7 +1303,7 @@ await sleep(140);
 ok(store.state.active === null, 'the workout finished');
 
 section('and now it reaches Trends');
-await click('#tabBar .tab[data-tab="trends"]');
+await gotoTab('trends');
 ok(view().includes('Running per week'), 'the running chart appears');
 ok([...$$('[data-action="trend-open"]')].some((b) => b.dataset.name === 'CR Run'),
   'and the run is listed as something you train');
@@ -1285,17 +1317,17 @@ await xi.importFromText(JSON.stringify({
   }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const tiR = store.state.routines.find((r) => r.name === 'Trend Intervals');
 await click(`[data-action="routine-start"][data-id="${tiR.id}"]`, 'Start');
 await click('[data-action="cardio-log-all"]');
 await sleep(40);
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-finish"]', 'Finish');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(140);
 
-await click('#tabBar .tab[data-tab="trends"]');
+await gotoTab('trends');
 ok(view().includes('Running per week'), 'the overview now has a running chart');
 const ivListRow = [...$$('[data-action="trend-open"]')].find((b) => b.dataset.name === 'Trend 400s');
 ok(ivListRow !== undefined, 'the interval block is listed as something you train');
@@ -1324,16 +1356,16 @@ await xi.importFromText(JSON.stringify({
   name: 'Trend Hold', entries: [{ name: 'Trend Plank', measure: 'time', sets: 2, reps: '45' }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const thR = store.state.routines.find((r) => r.name === 'Trend Hold');
 await click(`[data-action="routine-start"][data-id="${thR.id}"]`, 'Start');
 const thE = store.state.active.entries[0];
 for (const st of thE.sets) await store.toggleSetDone(thE.id, st.id);
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-finish"]', 'Finish');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(120);
-await click('#tabBar .tab[data-tab="trends"]');
+await gotoTab('trends');
 await click('[data-action="trend-open"][data-name="Trend Plank"]');
 ok(view().includes('Longest hold'), 'the headline is the longest hold');
 ok(!view().includes('Estimated 1RM'), 'and no estimated 1RM is offered');
@@ -1346,7 +1378,7 @@ await xi.importFromText(JSON.stringify({
   name: 'Plan Day A', entries: [{ name: 'Bench', sets: 3, reps: 5, weight: 60 }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="plan"]');
+await gotoTab('plan');
 ok($$('.pd-row').length === 17, `ten days ahead plus seven behind (${$$('.pd-row').length})`);
 ok($$('.pd-row:not(.is-past)').length === 10, 'ten of them are the plan');
 ok($$('.pd-row.is-past').length === 7, 'and seven are the week behind');
@@ -1515,7 +1547,7 @@ const madeE = store.getSession(madeId).entries.find((e) => e.sets && e.sets.leng
 for (const st of madeE.sets) await store.toggleSetDone(madeE.id, st.id);
 await sleep(60);
 await click('[data-action="hist-edit-done"]');
-await click('#tabBar .tab[data-tab="plan"]');
+await gotoTab('plan');
 const fixedRow = [...$$('.pd-row.is-past')].find((r) => r.dataset.planRow === lateKey);
 ok(fixedRow.classList.contains('done'),
   `the missed day now reads done, straight from the session (${fixedRow.className})`);
@@ -1525,14 +1557,14 @@ await store.deleteSession(madeId);
 await planStore.clearPlanDay(lateKey);
 
 section('a past workout can also be logged from History, routine chosen there');
-await click('#tabBar .tab[data-tab="history"]');
+await gotoTab('history');
 ok($('[data-action="past-log"]') !== null, 'the list offers it too');
 await click('[data-action="past-log"]');
 ok($$('#modalRoot [data-action="past-log"]').length >= 2,
   'which asks which routine, plus an empty-workout option');
 await click('[data-mclose]');
 // hand the following section the tab it expects to be on
-await click('#tabBar .tab[data-tab="plan"]');
+await gotoTab('plan');
 
 section('starting from the plan begins the workout and lands on Now');
 await click('[data-action="plan-start"]');
@@ -1544,11 +1576,11 @@ ok(store.state.active.routineName === 'Plan Day A', 'running the planned routine
 section('finishing it ticks the plan with no second action');
 const pSets = store.state.active.entries[0].sets;
 for (const st of pSets) await store.toggleSetDone(store.state.active.entries[0].id, st.id);
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-finish"]', 'Finish');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(120);
-await click('#tabBar .tab[data-tab="plan"]');
+await gotoTab('plan');
 ok($$('.pd-row')[0].classList.contains('done'),
   `today reads done straight from history (${$$('.pd-row')[0].className})`);
 ok($$('.pd-row')[0].textContent.includes('done'), 'with a done pill');
@@ -1572,7 +1604,7 @@ await xi.importFromText(JSON.stringify({
   ],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const nwR = store.state.routines.find((r) => r.name === 'No Weight Check');
 await click(`[data-action="routine-start"][data-id="${nwR.id}"]`, 'Start');
 
@@ -1605,7 +1637,7 @@ ok(caught.rest === 70, `with the measured rest kept (${caught.rest}s)`);
 
 section('a bodyweight exercise needs no weight at all');
 await store.setCurrent(1);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 ok(/Pull-up/.test(view()), 'on the bodyweight exercise');
 ok(/bodyweight/.test(view()), 'the target line says so');
 ok($('.set-hdr').textContent.includes('+kg'),
@@ -1644,7 +1676,7 @@ await sleep(60);
 ok(store.state.active.entries[1].sets[1].bodyweight === false,
   'tapping it switches that one set to a weighted set');
 
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
@@ -1655,7 +1687,7 @@ await xi.importFromText(JSON.stringify({
   entries: [{ name: 'Row Machine', sets: 3, reps: 10, weight: 50, rest: '1:30' }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const psR = store.state.routines.find((r) => r.name === 'Per-Set Clock');
 await click(`[data-action="routine-start"][data-id="${psR.id}"]`, 'Start');
 const clockEntry = () => store.state.active.entries[0];
@@ -1708,7 +1740,7 @@ $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, ca
 await sleep(80);
 ok(store.state.timer.target === 195, `target set precisely to 3:15 (${store.state.timer.target}s)`);
 await click('#restBar [data-action="rest-stop"]', 'Stop');
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
@@ -1722,7 +1754,7 @@ await xi.importFromText(JSON.stringify({
   ],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const hbR = store.state.routines.find((r) => r.name === 'Hold Day');
 await click(`[data-action="routine-start"][data-id="${hbR.id}"]`, 'Start');
 const hbPlank = () => store.state.active.entries[0];
@@ -1805,7 +1837,7 @@ ok($('.set-row .rest-btn.hold') === null, 'and none on its rows either');
 ok($('.set-row .rest-btn') !== null, 'but the ordinary rest timer is still there');
 
 await store.updateSettings({ requireEffort: false });
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
@@ -1818,7 +1850,7 @@ await xi.importFromText(JSON.stringify({
   ],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const eoR = store.state.routines.find((r) => r.name === 'Machine Roulette');
 await click(`[data-action="routine-start"][data-id="${eoR.id}"]`, 'Start');
 const eoE = () => store.state.active.entries[0];
@@ -1852,7 +1884,7 @@ ok($('#modalRoot [data-action="entry-swap"]') === null,
 await click('#modalRoot [data-mclose]', 'Close');
 await sleep(50);
 
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
@@ -1863,7 +1895,7 @@ await xi.importFromText(JSON.stringify({
   entries: [{ name: 'Lat Pulldown', sets: '60x10, 60x10 > 45x8', rest: '1:30' }],
 }));
 await sleep(60);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const drR = store.state.routines.find((r) => r.name === 'Drop Day');
 await click(`[data-action="routine-start"][data-id="${drR.id}"]`, 'Start');
 const drE = () => store.state.active.entries[0];
@@ -1946,7 +1978,7 @@ ok(drNew.weight === 35,
 
 section('and the drop can be declined, which puts the rest back');
 await type('.set-row.drop:last-of-type input[data-f="reps"]', '5');
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 await sleep(40);
 await store.updateSet(drE().id, drE().sets[2].id, { done: false });
 await sleep(40);
@@ -1961,15 +1993,15 @@ ok(store.state.timer && store.state.timer.kind === 'rest',
   `and the rest that was skipped for it starts instead (${store.state.timer?.kind})`);
 await click('#restBar [data-action="rest-stop"]', 'Stop');
 
-await click('#tabBar .tab[data-tab="session"]');
+await gotoTab('session');
 await click('[data-action="sess-discard"]', 'Discard');
 $('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
 await sleep(90);
 
 section('the exercise library: described once, used everywhere');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 ok(/Exercise library/.test(view()), 'the Routines tab offers the library');
-await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await gotoTab('library');
 await sleep(60);
 ok(store.state.tab === 'library', 'the library is its own tab');
 ok(/Browse all/.test(view()), 'the library screen opened, offering the catalogue');
@@ -2041,7 +2073,7 @@ await xi.importFromText(JSON.stringify({
   name: 'Uni Day', entries: [{ name: 'Split Squat', sets: 2, reps: 10, weight: 20 }],
 }));
 await sleep(80);
-await click('#tabBar .tab[data-tab="now"]');
+await gotoTab('now');
 const uR = store.state.routines.find((r) => r.name === 'Uni Day');
 await click(`[data-action="routine-start"][data-id="${uR.id}"]`, 'Start');
 await sleep(60);
@@ -2077,7 +2109,7 @@ section('per-muscle trends appear once exercises are tagged');
 for (const s of uE().sets) await store.updateSet(uE().id, s.id, { weight: 20, reps: 10, done: true });
 await store.finishSession();
 await sleep(80);
-await click('#tabBar .tab[data-tab="trends"]');
+await gotoTab('trends');
 await sleep(80);
 ok(/Muscle groups/.test(view()), 'Trends has a muscle-group section');
 ok(/Quads/.test(view()), 'the tagged group shows up');
@@ -2097,7 +2129,7 @@ await click('#modalRoot [data-mclose]', 'Close');
 await sleep(50);
 
 section('the catalogue is browsable from its own tab, without typing');
-await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await gotoTab('library');
 await sleep(60);
 await click('[data-action="lib-mode"][data-mode="browse"]', 'Browse all');
 await sleep(80);
@@ -2167,7 +2199,7 @@ ok(/Power/.test(lcBuiltRow.textContent),
   `but does carry the kind the catalogue gave it (${lcBuiltRow.querySelector('.nm').textContent.trim()})`);
 
 section('adding an exercise to a routine can pick from the catalogue');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 await sleep(60);
 const lcR = store.state.routines[0];
 await click(`[data-action="routine-open"][data-id="${lcR.id}"]`, 'open a routine');
@@ -2195,7 +2227,7 @@ await sleep(60);
 store.state.nav = {};
 
 section('untagged exercises can be fixed in bulk from the catalogue');
-await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await gotoTab('library');
 await sleep(60);
 // three names that stand for the three cases: exact-after-shorthand, ambiguous,
 // and something the catalogue has never heard of
@@ -2256,7 +2288,7 @@ ok(!!btRow && /Lats, Biceps, Rear Delts/.test(btRow.textContent),
   'and the row lists them all rather than just the first');
 
 section('target muscles are chosen from a dropdown, not typed');
-await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await gotoTab('library');
 await sleep(60);
 await click('[data-action="lib-mode"][data-mode="mine"]', 'Mine');
 await sleep(60);
@@ -2336,7 +2368,7 @@ await click('#modalRoot [data-mclose]', 'Cancel');
 await sleep(50);
 
 section('the same picker is on the routine exercise form');
-await click('#tabBar .tab[data-tab="routines"]');
+await gotoTab('routines');
 await sleep(60);
 await click(`[data-action="routine-open"][data-id="${store.state.routines[0].id}"]`, 'open a routine');
 await sleep(60);
@@ -2352,7 +2384,7 @@ await sleep(50);
 store.state.nav = {};
 
 section('duplicate names are surfaced and merged from the Library tab');
-await click('#tabBar .tab[data-tab="library"]', 'Library tab');
+await gotoTab('library');
 await sleep(60);
 await click('[data-action="lib-mode"][data-mode="mine"]', 'Mine');
 await sleep(60);
@@ -2434,6 +2466,33 @@ ok(/stops existing/.test($('#modalRoot').textContent),
 await click('#modalRoot [data-mclose]', 'Cancel');
 await sleep(50);
 store.state.nav = {};
+
+section('the Set up hub replaces three tabs with one');
+await gotoTab('setup');
+await sleep(60);
+ok($('[data-action="routines-go"]') !== null, 'Routines is reachable from it');
+ok($('[data-action="library-go"]') !== null, 'so is the exercise library');
+ok($('[data-action="settings-go"]') !== null, 'and settings');
+ok($$('.setup-row').length === 3, `three rows, not three more tabs (${$$('.setup-row').length})`);
+ok(/routine/.test($('[data-action="routines-go"]').textContent),
+  'each row carries live counts, so the hub answers "is there anything to do in there?" unopened');
+ok(/build /.test(view()), 'and the build number is here rather than hidden in Settings');
+
+section('the Session tab appears only while a workout is running');
+ok($('#tabBar .tab[data-tab="session"]').hidden === true, 'hidden on a rest day');
+const stR = store.state.routines[0];
+await gotoTab('now');
+await click(`[data-action="routine-start"][data-id="${stR.id}"]`, 'Start');
+await sleep(70);
+ok($('#tabBar .tab[data-tab="session"]').hidden === false,
+  'and back the moment a workout starts, which is the only time it is usable');
+ok($$('#tabBar .tab:not([hidden])').length === 6, 'six usable tabs mid-workout');
+await gotoTab('session');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(120);
+ok($$('#tabBar .tab:not([hidden])').length === 5,
+  `and five once the workout is over (${[...$$('#tabBar .tab:not([hidden])')].map((b) => b.dataset.tab).join(',')})`);
 
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

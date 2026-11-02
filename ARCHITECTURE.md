@@ -49,7 +49,8 @@ js/views/cardio.js  the cardio card: a straight run, or an interval block and it
 js/views/plan.js    "Plan" tab: ten day rows, assign a routine, mark done
 js/views/trends.js  "Trends" tab: weekly totals, and progress for one exercise
 js/views/settings.js "Settings" screen, reached from the header gear -- not a tab
-js/views/library.js "Library" tab: your exercises, and browsing the built-in catalogue
+js/views/library.js "Library" screen: your exercises, and browsing the built-in catalogue
+js/views/setup.js   "Set up" tab: the hub for Routines, Library and Settings
 js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
@@ -827,6 +828,37 @@ muscle groups across instead of discarding them.
 is best-effort and says so: an entry deleted since the merge is reported as `missing` rather than
 recreated, because restoring a name onto something that no longer exists is not possible and
 inventing one would be worse than reporting the gap.
+
+### Navigation: what earns a tab
+
+The bar had grown to seven tabs, which at 375px is about 53px each — enough to force 10px labels and
+an ellipsis on the most-tapped control in the app. The fix is not smaller text. It is fewer tabs.
+
+The split is by **how often and when**, not by subject:
+
+| | |
+|---|---|
+| **on the bar** | Now, Session, Plan, History, Trends — touched during or around training, often several times a session |
+| **behind Set up** | Routines, Exercise library, Settings — configured once, revisited occasionally and deliberately |
+
+**Session is contextual.** It is a view of the workout in progress, so it is only shown while there
+is one: five tabs on a rest day, six mid-workout. A tab you cannot use is a tab in the way, and this
+is what buys the bar back down to five without hiding anything you actually need. It sits second so
+the tabs that move when it appears are the ones you are least likely to be aiming at.
+
+**Routines and the Library are still real views with their own `state.tab` value** — they lost their
+button, not their route — so `library-go` and `routines-go` land on them from anywhere, including
+the Trends empty state that offers to go and tag something.
+
+The Set up hub carries **live counts on each row** (how many routines, how many exercises still
+need tags, how many duplicate names), so it answers "is there anything to do in there?" without
+being opened. The header gear still goes straight to Settings; two routes to a screen you reach
+rarely is not a problem worth solving.
+
+The `data-action` names on those rows are written out **literally** rather than interpolated through
+the row helper. `test/style.mjs` reads markup as text to check every handler is reachable, so an
+interpolated name reads as a dead handler — this is the third time that has caught something, and
+the rule is now: a template that emits `data-action` takes the literal name at the call site.
 
 ### Editing a finished session
 
