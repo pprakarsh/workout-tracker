@@ -22,7 +22,7 @@ import {
 } from '../catalog.js';
 import { MEASURES } from '../measure.js';
 import { groupPickerHtml, wireGroupPicker } from './exform.js';
-import { findDuplicates, mergePreview, mergeExercises, undoLastMerge } from '../exercisemerge.js';
+import { findDuplicates, mergePreview, mergeExercises, undoLastMerge, namesInUse } from '../exercisemerge.js';
 import { esc, normName, relDay, download } from '../util.js';
 import { openModal, closeModal, confirmDialog, toast } from '../ui.js';
 
@@ -122,13 +122,16 @@ function tagQueue() {
 
     ${unknown.length ? `
       <h2>The catalogue does not know these</h2>
-      <p class="hint">Your own movements. Tap one to set its target muscles by hand.</p>
+      <p class="hint">Your own movements. <b>Set</b> its target muscles by hand, or <b>merge</b> it
+        into something you already have if it is the same movement renamed.</p>
       ${unknown.map((r) => `
-        <div class="sess-item exrow mine" data-action="lib-edit" data-key="${esc(r.ex.key)}"
-             role="button" tabindex="0">
+        <div class="sess-item exrow mine">
           <div class="body"><div class="nm">${esc(r.ex.name)}
             <span class="pill mine">yours</span></div></div>
-          <div class="dim">›</div>
+          <button type="button" class="btn sm" data-action="lib-edit"
+                  data-key="${esc(r.ex.key)}">Set</button>
+          <button type="button" class="btn sm ghost" data-action="lib-merge-pick"
+                  data-key="${esc(r.ex.key)}">Merge…</button>
         </div>`).join('')}` : ''}`;
 }
 
@@ -352,12 +355,26 @@ export function render() {
       <div class="card" style="border-color:var(--warn)">
         <div class="tiny" style="color:var(--warn);font-weight:700">NOT IN THE LIBRARY YET</div>
         <p class="hint" style="margin-top:4px">These are in a routine or a logged session but have
-          no record here, so Trends cannot group them. <b>Add the ${missing.length} missing</b> creates
-          a record for each, carrying over what the old data already knew &mdash; timed or not,
-          bodyweight or not. Muscle groups are left blank on purpose: guessing them from a name
-          would quietly poison every trend built on top.</p>
-        <div class="chip-wrap">${missing.slice(0, 40).map((x) => `<button type="button" class="chip"
-          data-action="lib-new" data-name="${esc(x.name)}">${esc(x.name)}</button>`).join('')}</div>
+          no record here, so Trends cannot group them. <b>Describe</b> one to say what it is, or
+          <b>merge</b> it into an exercise you already have &mdash; or into a catalogue entry &mdash;
+          if it is the same movement under another name.</p>
+        ${missing.slice(0, 40).map((x) => `
+          <div class="sess-item exrow">
+            <div class="body">
+              <div class="nm">${esc(x.name)}</div>
+              <div class="sub dim">${x.routines ? `in ${x.routines} routine${x.routines === 1 ? '' : 's'}` : ''}${
+  x.routines && x.performed ? ' · ' : ''}${x.performed ? `done ${x.performed}×` : ''}</div>
+            </div>
+            <button type="button" class="btn sm" data-action="lib-new"
+                    data-name="${esc(x.name)}">Describe</button>
+            <button type="button" class="btn sm ghost" data-action="lib-merge-pick"
+                    data-key="${esc(x.key)}">Merge…</button>
+          </div>`).join('')}
+        ${missing.length > 40 ? `<div class="small dim center">and ${missing.length - 40} more</div>` : ''}
+        <button type="button" class="btn block" style="margin-top:8px" data-action="lib-seed">
+          Add all ${missing.length} with what the old data knows</button>
+        <p class="hint">Muscle groups are left blank on purpose: guessing them from a name would
+          quietly poison every trend built on top.</p>
       </div>` : ''}
 
     ${duplicateCard()}
@@ -459,6 +476,91 @@ function readForm(v) {
     secondary: v.secondary || '',
     notes: v.notes || '',
   };
+}
+
+/**
+ * Candidate merge targets: your own names first, then the whole catalogue.
+ *
+ * "Yours" is every name in USE plus every library record, not just the library,
+ * because a name sitting in a routine with no record is exactly the thing most
+ * likely to need merging. The catalogue is offered too -- the most common real
+ * merge is "my DB Row is really the catalogue's Single-arm Dumbbell Row", and
+ * before this the picker could not express it at all.
+ */
+function mergeTargets(fromKey, query) {
+  const seen = new Map();
+  namesInUse().forEach((r) => { if (r.key !== fromKey) seen.set(r.key, r); });
+  state.exercises.forEach((x) => {
+    if (x.key !== fromKey && !seen.has(x.key)) {
+      seen.set(x.key, { key: x.key, name: x.name, routines: 0, sessions: 0, sets: 0 });
+    }
+  });
+  const q = normName(query || '');
+  const mine = [...seen.values()]
+    .filter((r) => !q || r.key.includes(q))
+    .sort((a, b) => b.sets - a.sets || a.name.localeCompare(b.name));
+  const cat = (q ? searchCatalog(query) : [])
+    .filter((x) => x.key !== fromKey && !seen.has(x.key));
+  return { mine, cat };
+}
+
+function mergeTargetRows(fromKey, query) {
+  const { mine, cat } = mergeTargets(fromKey, query);
+  const mineRows = mine.slice(0, 40).map((r) => {
+    const lib = exerciseFor(r.key);
+    const bits = [
+      lib && lib.primary.length ? lib.primary.join(' + ') : null,
+      r.sets ? `${r.sets} logged set${r.sets === 1 ? '' : 's'}` : null,
+      r.routines ? `in ${r.routines} routine${r.routines === 1 ? '' : 's'}` : null,
+      lib ? null : 'not described yet',
+    ].filter(Boolean);
+    return `<button type="button" class="btn block" data-action="lib-merge"
+      data-from="${esc(fromKey)}" data-into="${esc(r.key)}">${esc(r.name)}
+      ${bits.length ? `<span class="dim small">${esc(bits.join(' · '))}</span>` : ''}</button>`;
+  }).join('');
+  const catRows = cat.slice(0, 30).map((x) => `<button type="button" class="btn block"
+    data-action="lib-merge" data-from="${esc(fromKey)}" data-into="${esc(x.key)}">${esc(x.name)}
+    <span class="dim small">${esc(describe(x))}</span></button>`).join('');
+  if (!mineRows && !catRows) {
+    return '<div class="empty">Nothing matches, in yours or the catalogue.</div>';
+  }
+  return `
+    ${mineRows ? `<div class="tiny pickhdr">YOURS</div>
+      <div class="btn-row" style="flex-direction:column;gap:6px">${mineRows}</div>` : ''}
+    ${catRows ? `<div class="tiny pickhdr">FROM THE CATALOGUE</div>
+      <p class="hint" style="margin:0 0 6px">Picking one renames your exercise to the catalogue's
+        spelling and adopts what it knows &mdash; how it is measured, where the load comes from,
+        whether it is per side, and which muscles it trains.</p>
+      <div class="btn-row" style="flex-direction:column;gap:6px">${catRows}</div>` : ''}`;
+}
+
+/**
+ * Pick what to merge an exercise into.
+ *
+ * `key` is any name in use -- it does NOT have to be in the library, because
+ * the "not in the library yet" names are the ones most likely to be duplicates.
+ */
+export function openMergePicker(fromKey) {
+  const lib = exerciseFor(fromKey);
+  const used = namesInUse().find((r) => r.key === fromKey);
+  const fromName = (lib && lib.name) || (used && used.name) || fromKey;
+  if (!fromName) { toast('Could not find that exercise'); return; }
+  const modal = openModal({
+    title: `Merge "${fromName}" into…`,
+    bodyHtml: `
+      <p class="hint" style="margin-top:0">Every mention of <b>${esc(fromName)}</b> &mdash; in your
+        routines and in your logged sessions &mdash; is renamed to whichever you pick, so the two
+        histories become one. <b>${esc(fromName)}</b> then stops existing.</p>
+      <label class="field"><span>Search your exercises and the ${CATALOG.length}-exercise catalogue</span>
+        <input id="mgSearch" placeholder="Name, muscle or equipment…" autocomplete="off"
+               spellcheck="false" data-nofocus></label>
+      <div id="mgList">${mergeTargetRows(fromKey, '')}</div>`,
+    cancelText: 'Cancel',
+  });
+  const search = modal.querySelector('#mgSearch');
+  const list = modal.querySelector('#mgList');
+  // repaint only the list, so the input keeps focus and the keyboard stays up
+  search.addEventListener('input', () => { list.innerHTML = mergeTargetRows(fromKey, search.value); });
 }
 
 export const libraryActions = {
@@ -618,24 +720,8 @@ export const libraryActions = {
 
   /** Merge this exercise into another, chosen by name. The manual route. */
   'lib-merge-pick': ({ key }) => {
-    const ex = exerciseFor(key);
-    if (!ex) return;
-    const others = state.exercises.filter((x) => x.key !== ex.key);
-    if (!others.length) { toast('There is nothing else in your library to merge into'); return; }
     closeModal();
-    openModal({
-      title: `Merge "${ex.name}" into…`,
-      bodyHtml: `
-        <p class="hint" style="margin-top:0">Every mention of <b>${esc(ex.name)}</b> &mdash; in your
-          routines and in your logged sessions &mdash; is renamed to whichever you pick, so the two
-          histories become one. <b>${esc(ex.name)}</b> then stops existing.</p>
-        <div class="btn-row" style="flex-direction:column;gap:6px">
-          ${others.slice(0, 60).map((x) => `<button type="button" class="btn block"
-            data-action="lib-merge" data-from="${esc(ex.key)}" data-into="${esc(x.key)}">${esc(x.name)}
-            ${x.primary.length ? `<span class="dim small">${esc(x.primary.join(' + '))}</span>` : ''}</button>`).join('')}
-        </div>`,
-      cancelText: 'Cancel',
-    });
+    openMergePicker(key);
   },
 
   'lib-del': async ({ key }) => {

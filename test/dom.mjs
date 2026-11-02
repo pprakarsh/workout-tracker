@@ -2494,5 +2494,63 @@ await sleep(120);
 ok($$('#tabBar .tab:not([hidden])').length === 5,
   `and five once the workout is over (${[...$$('#tabBar .tab:not([hidden])')].map((b) => b.dataset.tab).join(',')})`);
 
+section('a name not in the library yet can be merged, not only described');
+await gotoTab('library');
+await sleep(60);
+await click('[data-action="lib-mode"][data-mode="mine"]', 'Mine');
+await sleep(60);
+// a routine name with no library record: the "not in the library yet" case
+await xi.importFromText(JSON.stringify({
+  name: 'Gap Day', entries: [{ name: 'My DB Rowing Thing', sets: 3, reps: 10, weight: 30 }],
+}));
+await sleep(80);
+await click('[data-action="lib-mode"][data-mode="mine"]', 'refresh');
+await sleep(80);
+ok(/NOT IN THE LIBRARY YET/.test(view()), 'it is listed as not described yet');
+const gpDescribe = $('[data-action="lib-new"][data-name="My DB Rowing Thing"]');
+const gpMerge = $('[data-action="lib-merge-pick"][data-key="my db rowing thing"]');
+ok(!!gpDescribe, 'with a Describe button');
+ok(!!gpMerge, 'AND a Merge button — which it did not have before');
+
+section('the merge picker searches your exercises and the whole catalogue');
+gpMerge.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(90);
+ok($('#mgSearch') !== null, 'the picker has a search box');
+ok(/catalogue/.test($('#modalRoot').textContent), 'and says the catalogue is searchable');
+ok($$('#mgList [data-action="lib-merge"]').length > 0, 'your own exercises are listed to start');
+$('#mgSearch').value = 'single-arm dumbbell row';
+$('#mgSearch').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+await sleep(60);
+ok(/FROM THE CATALOGUE/.test($('#modalRoot').textContent),
+  'searching reaches the catalogue, not just your library');
+const gpCatHit = $$('#mgList [data-action="lib-merge"]')
+  .find((b) => b.dataset.into === 'single-arm dumbbell row');
+ok(!!gpCatHit, 'and a catalogue exercise is offered as a merge target');
+ok(/renames your exercise to the catalogue/.test($('#modalRoot').textContent),
+  'with what that means spelled out');
+
+section('merging into a catalogue entry adopts what the catalogue knows');
+gpCatHit.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await sleep(90);
+ok(/Merge into/.test($('#modalRoot').textContent), 'the confirmation opened');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(220);
+const gpRoutine = store.state.routines.find((r) => r.name === 'Gap Day');
+ok(gpRoutine.entries[0].name === 'Single-arm Dumbbell Row',
+  `the routine was renamed to the catalogue spelling (${gpRoutine.entries[0].name})`);
+const gpRec = store.state.exercises.find((x) => x.key === 'single-arm dumbbell row');
+ok(!!gpRec, 'a library record was created — before, the names were rewritten and nothing described');
+ok(gpRec.unilateral === true,
+  'adopting the catalogue brings its shape, so this is now logged per side');
+ok(gpRec.primary.length > 0, `and its target muscles (${gpRec.primary.join(' + ')})`);
+
+section('and that merge can be undone, taking the adopted record with it');
+await click('[data-action="lib-unmerge"]', 'Undo');
+await sleep(220);
+ok(store.state.routines.find((r) => r.name === 'Gap Day').entries[0].name === 'My DB Rowing Thing',
+  'the original name is back');
+ok(!store.state.exercises.some((x) => x.key === 'single-arm dumbbell row'),
+  'and the record the merge created is gone — undo does not leave behind an exercise you never asked for');
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

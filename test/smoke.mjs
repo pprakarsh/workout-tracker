@@ -3034,5 +3034,43 @@ for (const r of [...state.routines].filter((r) => r.name.startsWith('MZ ') || r.
   await store.deleteRoutine(r.id);
 }
 
+section('a name can be merged into a catalogue entry it has never used');
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+const mcR = await store.createRoutine({
+  name: 'MC Day', entries: [{ name: 'MC Rowing Thing', sets: 2, reps: 10, weight: 30 }],
+});
+ok(xs.exerciseFor('Single-arm Dumbbell Row') === null, 'the catalogue entry is not in the library');
+const mcPrev = mg.mergePreview('MC Rowing Thing', 'Single-arm Dumbbell Row');
+ok(mcPrev.blockers.length === 0, 'merging into it is allowed');
+const mcRes = await mg.mergeExercises('MC Rowing Thing', 'Single-arm Dumbbell Row');
+ok(mcRes.ok === true, 'and it runs');
+ok(store.getRoutine(mcR.id).entries[0].name === 'Single-arm Dumbbell Row',
+  'the routine takes the catalogue spelling');
+const mcRec = xs.exerciseFor('Single-arm Dumbbell Row');
+ok(mcRec !== null,
+  'a library record is created by adopting the catalogue entry, rather than the names being rewritten into nothing');
+ok(mcRec.unilateral === true && mcRec.primary.length > 0,
+  `with the catalogue's shape and muscles (per side: ${mcRec.unilateral}, ${mcRec.primary.join('+')})`);
+
+section('undoing that removes the record the merge created');
+const mcUndo = await mg.undoLastMerge();
+ok(mcUndo.restored >= 1, 'the names went back');
+ok(store.getRoutine(mcR.id).entries[0].name === 'MC Rowing Thing', 'to the original spelling');
+ok(xs.exerciseFor('Single-arm Dumbbell Row') === null,
+  'and the adopted record is gone — undo leaves no exercise you never asked for');
+
+section('the measure warning fires against a catalogue target too');
+const mcPlankR = await store.createRoutine({
+  name: 'MC Plank', entries: [{ name: 'MC Plank Thing', sets: 2, reps: 30 }],
+});
+const mcWarn = mg.mergePreview('MC Plank Thing', 'Front Plank');
+ok(mcWarn.warnings.some((w) => /time/.test(w)),
+  'a reps exercise merging into a timed catalogue entry is warned about, not silently reinterpreted');
+ok((await mg.mergeExercises('MC Plank Thing', 'Front Plank')).needsForce === true,
+  'and needs an explicit force');
+await store.deleteRoutine(mcR.id);
+await store.deleteRoutine(mcPlankR.id);
+await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

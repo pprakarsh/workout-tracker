@@ -28,11 +28,11 @@ import {
 import { metaGet, metaSet } from './db.js';
 import { normName } from './util.js';
 import { altNames } from './model.js';
-import { reduceName, catalogFor } from './catalog.js';
+import { reduceName, catalogFor, asLibraryRecord } from './catalog.js';
 import { saveExercise, deleteExercise } from './exercisestore.js';
 
-/** Every name in use anywhere, with where it is used. */
-function allNames() {
+/** Every name in use anywhere, with where it is used. Exported for the pickers. */
+export function namesInUse() {
   const out = new Map();
   const touchName = (name, where) => {
     const key = normName(name);
@@ -68,7 +68,7 @@ function allNames() {
  */
 export function findDuplicates() {
   const byReduced = new Map();
-  allNames().forEach((rec) => {
+  namesInUse().forEach((rec) => {
     const r = reduceName(rec.name);
     if (!r) return;
     if (!byReduced.has(r)) byReduced.set(r, []);
@@ -83,6 +83,14 @@ export function findDuplicates() {
     .sort((a, b) => b.length - a.length || a[0].name.localeCompare(b[0].name));
 }
 
+/**
+ * What an exercise IS, from the best source available.
+ *
+ * The catalogue is consulted last but it matters: merging into a catalogue name
+ * you have never used is the common case, and without this fallback the
+ * measure check below sees nothing to compare and the warning never fires --
+ * which is exactly the silent reinterpretation it exists to prevent.
+ */
 const shapeOf = (name) => {
   const lib = exerciseFor(name);
   if (lib) return { type: lib.type, measure: lib.measure, from: 'library' };
@@ -95,6 +103,8 @@ const shapeOf = (name) => {
     const hit = (s.entries || []).find((e) => normName(e.name) === key);
     if (hit) return { type: hit.type, measure: hit.measure || 'reps', from: 'session' };
   }
+  const cat = catalogFor(name);
+  if (cat) return { type: cat.type, measure: cat.measure, from: 'catalogue' };
   return null;
 };
 
@@ -242,22 +252,33 @@ export async function mergeExercises(fromName, intoName, { force = false } = {})
     if (dirty) await persistSession(s);
   }
 
-  // The library: the survivor keeps the richer tagging rather than whichever
-  // record happened to be the target, so merging a tagged name into an untagged
-  // one does not throw the tags away.
+  // The library. Three cases, and the third was silently doing nothing:
+  //
+  //   both in the library   the survivor keeps the richer tagging, so merging a
+  //                         tagged name into an untagged one keeps the tags
+  //   only `from`           its record moves to the surviving name
+  //   neither, but the      the catalogue entry is ADOPTED. This is the common
+  //   target is a           case -- "my DB Row is really the catalogue's
+  //   catalogue name        Single-arm Dumbbell Row" -- and before this the
+  //                         names were rewritten and nothing was described.
   const fromRec = exerciseFor(fromKey);
   const intoRec = exerciseFor(intoKey);
-  if (fromRec || intoRec) {
-    const base = intoRec || { ...fromRec, name: intoDisplay };
+  const fromCat = catalogFor(intoKey);
+  if (fromRec || intoRec || fromCat) {
+    // the catalogue is authoritative about what an exercise IS, so when the
+    // target comes from there its shape wins over the record being merged away
+    const base = intoRec || (fromCat ? asLibraryRecord(fromCat) : { ...fromRec, name: intoDisplay });
+    const tagSource = intoRec || fromCat || fromRec;
     const merged = {
       ...base,
       name: intoDisplay,
-      primary: (intoRec?.primary?.length ? intoRec.primary : fromRec?.primary) || [],
-      secondary: (intoRec?.secondary?.length ? intoRec.secondary : fromRec?.secondary) || [],
+      primary: (tagSource?.primary?.length ? tagSource.primary : fromRec?.primary) || [],
+      secondary: (tagSource?.secondary?.length ? tagSource.secondary : fromRec?.secondary) || [],
       notes: [intoRec?.notes, fromRec?.notes].filter(Boolean).join('\n').trim(),
     };
     undo.removed = fromRec ? { ...fromRec } : null;
     undo.replaced = intoRec ? { ...intoRec } : null;
+    undo.created = !intoRec;
     await saveExercise(merged);
     if (fromRec) await deleteExercise(fromKey);
   }
@@ -300,7 +321,9 @@ export async function undoLastMerge() {
 
   if (undo.removed) await saveExercise(undo.removed);
   if (undo.replaced) await saveExercise(undo.replaced);
-  else if (!undo.replaced && undo.removed) await deleteExercise(undo.intoKey);
+  // a record the merge CREATED (adopting a catalogue entry) has to go away
+  // again, or undo would leave behind an exercise you never asked for
+  else if (undo.created) await deleteExercise(undo.intoKey);
 
   await metaSet('lastMerge', null);
   await touch({ silent: true });

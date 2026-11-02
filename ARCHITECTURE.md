@@ -860,6 +860,23 @@ the row helper. `test/style.mjs` reads markup as text to check every handler is 
 interpolated name reads as a dead handler — this is the third time that has caught something, and
 the rule is now: a template that emits `data-action` takes the literal name at the call site.
 
+**Merge targets are your names AND the whole catalogue.** The picker searches both, under separate
+headings, with a search box — the most common real merge is "my DB Row is really the catalogue's
+Single-arm Dumbbell Row", and a list of only your own library cannot express it. Picking a catalogue
+target **adopts** that entry: the names are rewritten to its spelling and a library record is created
+from it, so the exercise arrives knowing it is per side and which muscles it trains. The catalogue is
+authoritative about what an exercise *is*, so its shape wins over the record being merged away.
+
+**A name does not have to be in the library to be merged.** The names under *Not in the library yet*
+are the ones most likely to be duplicates, so each carries both **Describe** and **Merge…**.
+`shapeOf` consults the library, then routines, then sessions, then the catalogue — that last
+fallback is what makes the measure warning fire when merging a reps exercise into a timed catalogue
+entry, which is the silent reinterpretation the warning exists to catch.
+
+**Undo removes a record the merge created.** Adopting a catalogue entry creates a library record that
+did not exist before, so `undo.created` tracks it and the undo deletes it again rather than leaving
+behind an exercise you never asked for.
+
 ### Editing a finished session
 
 ```
