@@ -173,6 +173,57 @@ for (const doc of ['README.md', 'ARCHITECTURE.md', 'AGENTS.md', 'ROADMAP.md']) {
   ok(missing.length === 0, `${doc} references only real files${missing.length ? ` — missing: ${missing.join(', ')}` : ''}`);
 }
 
+console.log('\n== documentation matches the code it describes');
+// These three checks exist because all three of these facts drifted silently.
+// A wrong doc is worse than no doc: it is read as current and acted on.
+const archDoc = readFileSync(`${APP}/ARCHITECTURE.md`, 'utf8');
+const agentsDoc = readFileSync(`${APP}/AGENTS.md`, 'utf8');
+const storeSrc = readFileSync(`${APP}/js/store.js`, 'utf8');
+const dbSrc = readFileSync(`${APP}/js/db.js`, 'utf8');
+
+// 1. every top-level key of `state` is documented
+const stateBlock = (storeSrc.match(/export const state = \{([\s\S]*?)\n\};/) || [])[1] || '';
+const stateKeys = [...stateBlock.matchAll(/^ {2}(\w+)[:,]/gm)].map((m) => m[1]);
+const undocKeys = stateKeys.filter((k) => !new RegExp(`\\b${k}\\b`).test(archDoc));
+ok(stateKeys.length > 10 && undocKeys.length === 0,
+  `ARCHITECTURE.md documents all ${stateKeys.length} state keys${undocKeys.length ? ` — missing: ${undocKeys.join(', ')}` : ''}`);
+
+// 2. the persistence table states the real DB version and store count
+const dbVersion = (dbSrc.match(/DB_VERSION = (\d+)/) || [])[1];
+const storeCount = (dbSrc.match(/createObjectStore/g) || []).length;
+ok(new RegExp(`version \\*\\*${dbVersion}\\*\\*|version ${dbVersion}\\b`).test(archDoc),
+  `ARCHITECTURE.md states DB version ${dbVersion}`);
+const countWord = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven'][storeCount];
+ok(new RegExp(`${countWord} stores`, 'i').test(archDoc),
+  `and that there are ${countWord} (${storeCount}) object stores`);
+
+// 3. every module that writes to IndexedDB is named in the AGENTS.md ownership
+//    table. "Only store.js touches IndexedDB" survived six new peer stores.
+const writers = ['js/store.js', 'js/planstore.js', 'js/cardiostore.js', 'js/clockstore.js',
+  'js/backupstore.js', 'js/exercisestore.js', 'js/exercisemerge.js', 'js/sync.js',
+  'js/views/routines.js']
+  .filter((f) => existsSync(`${APP}/${f}`));
+const actualWriters = [...walk(`${APP}/js`).map((f) => `js/${f}`)]
+  .filter((m) => /\b(dbPut|dbDel|dbClear|metaSet)\(/.test(readFileSync(`${APP}/${m}`, 'utf8')))
+  .filter((m) => m !== 'js/db.js');
+const unlisted = actualWriters.filter((m) => !agentsDoc.includes(m));
+ok(unlisted.length === 0,
+  `AGENTS.md lists every direct IndexedDB writer (${actualWriters.length})${unlisted.length ? ` — missing: ${unlisted.join(', ')}` : ''}`);
+// A listed module must still be a store: it either writes the database itself or
+// persists through the store's touch(). Not every peer does its own db calls --
+// cardiostore mutates nested session data and lets touch() write it -- so the
+// looser test is the honest one.
+const stale = [...agentsDoc.matchAll(/`(js\/[\w]+store\.js|js\/exercisemerge\.js)`/g)]
+  .map((m) => m[1])
+  .filter((f, i, a) => a.indexOf(f) === i)
+  .filter((f) => {
+    if (!existsSync(`${APP}/${f}`)) return true;
+    const src = readFileSync(`${APP}/${f}`, 'utf8');
+    return !/\b(dbPut|dbDel|dbClear|metaSet|touch|emit)\(/.test(src);
+  });
+ok(stale.length === 0,
+  `and every store it lists still persists something${stale.length ? ` — stale: ${stale.join(', ')}` : ''}`);
+
 console.log('\n== maintainability invariants');
 const modules = [...walk(`${APP}/js`).map((f) => `js/${f}`)];
 ok(modules.length >= 13, `${modules.length} app modules`);

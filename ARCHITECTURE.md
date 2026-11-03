@@ -3,11 +3,69 @@
 How this app is built and why. Read this before changing anything structural.
 For the rules and checklists you must follow while editing, see [AGENTS.md](AGENTS.md).
 
+## Contents
+
+- [Core invariants](#core-invariants) — **start here**
+- [Shape of the thing](#shape-of-the-thing) — module map and dependency direction
+- [Rendering model](#rendering-model) · [Event routing](#event-routing)
+- [State](#state) · [`working()`](#working--the-single-most-important-function) · [Persistence](#persistence)
+- [Data model](#data-model) · [Normalisation is the import boundary](#normalisation-is-the-import-boundary)
+- [Flows](#flows) — everything below is one flow per heading:
+  - Logging: [starting a workout](#starting-and-logging-a-workout) · [confirming not creating](#logging-is-confirming-not-creating) · the +/- stepper
+  - The clock: [never gated](#the-rest-clock-is-never-gated) · [the rest timer](#the-rest-timer) · [holds](#timing-a-hold-on-the-same-clock)
+  - Set shapes: [drop sets](#drop-sets-one-set-several-loads-no-rest-between) · [unilateral](#unilateral-exercises-left-and-right-kept-apart) · [Either/Or](#either--or-one-slot-several-exercises)
+  - Exercises: [the library](#the-exercise-library) · [the catalogue](#the-built-in-catalogue) · [several target muscles](#one-exercise-several-target-muscles) · [bulk tagging](#filling-in-tags-in-bulk) · [the group picker](#picking-muscle-groups) · [merging names](#merging-two-names-that-are-one-exercise)
+  - [Per-muscle trends](#per-muscle-trends-direct-and-indirect-never-blended)
+  - [Navigation](#navigation-what-earns-a-tab) · [editing a finished session](#editing-a-finished-session) · [sync](#sync-blob-last-write-wins-guarded)
+- [Known gotchas](#known-gotchas) — every one of these was a real bug
+- [What the platform will not allow](#what-the-platform-will-not-allow)
+
+## Core invariants
+
+Four facts explain most of the design. Almost every surprising decision below follows from one of
+them, and breaking one breaks things a long way away.
+
+### 1. Identity is the exercise NAME
+
+There are no exercise ids. Every history lookup, prefill, personal best and per-muscle total keys on
+`normName(entry.name)` — trim, lowercase, collapse whitespace.
+
+**What this buys:** describing an exercise in the library applies *retroactively* to every set ever
+logged under that name, with no migration and no backfill. Tagging "Bench Press" today fixes trends
+computed from a session logged a year ago.
+
+**What this costs:** "DB Row" and "Dumbbell Row" are two exercises with two separate histories until
+something rewrites one of the names. That is why
+[merging](#merging-two-names-that-are-one-exercise) exists and why it has to rewrite logged history
+rather than just edit a library record.
+
+### 2. There is no migration framework
+
+`normalizeEntry` and `normalizeExercise` are the compatibility layer. Every field tolerates its own
+absence, because old IndexedDB rows, old gist backups and hand-written JSON all arrive through them.
+
+A field that changes *kind* is absorbed by **parsing at every read site**, not by a migration:
+`primary` went from a string to a list, so `groupTotals` runs stored tags through `parseGroups`
+rather than trusting their shape. A session written before the change still counts.
+
+### 3. An empty list means "not set", never "deliberately none"
+
+`normalizeEntry` gives every entry `primary: []` and `secondary: []`, so by the time a reader sees
+one it cannot distinguish "the routine said nothing" from "the routine said no". Readers therefore
+treat empty as absent and fall back to the library. The corollary: there is no way to say "this
+exercise definitely trains nothing", and nothing needs to.
+
+### 4. Logging is confirming, not creating
+
+A session opens as a pre-materialised checklist, not an empty form. Everything downstream assumes
+rows exist before they are filled: prefill, the confirm bar, the unticked-set hint, and the rule
+that **the set count always comes from the plan** while only the numbers inside come from last time.
+
 ## Shape of the thing
 
-A single-page PWA. ~3,000 lines of plain ES modules, no framework, no build step, no runtime
-dependencies. It is served as static files and stores everything in IndexedDB on the device.
-Optional sync pushes one JSON blob to a secret GitHub Gist.
+A single-page PWA. Around 13,500 lines of plain ES modules, no framework, no build step, no runtime
+dependencies. Served as static files; everything is stored in IndexedDB on the device. Optional sync
+pushes one JSON blob to a secret GitHub Gist.
 
 ```
 index.html          app shell: header, #viewRoot, #restBar, #tabBar, #modalRoot, #toast, datalist
@@ -64,23 +122,34 @@ Dependency direction is one-way and enforced by a test:
 ```
 js/app.js  (composition root — may import anything)
    ↓
-js/views/*  →  store, queries, format, cardio, ui, util, timer, sync
+js/views/*  →  store + its peers, queries, format, cardio, catalog, exercise, ui, util, timer, sync
    ↓
-store, sync, exportimport, format, queries  →  model, cardio, db, util
+peer stores (planstore, cardiostore, clockstore, backupstore, exercisestore, exercisemerge)
+   →  store (for `state` and the save primitives), and the pure modules below
    ↓
-model  →  cardio, measure, util     cardio  →  util     measure  →  util
-plan  →  util     trends  →  measure, util     chart  →  util
-queries, planstore  →  store (for `state`), and the pure modules above
+store, sync, exportimport, format, queries  →  model, cardio, measure, exercise, db, util
+   ↓
+model  →  cardio, measure, exercise, util        catalog  →  catalogdata, catalogconditioning, exercise, util
+exercise  →  measure, util     plan  →  util     trends  →  measure, util     chart  →  util
 ```
 
 **Nothing outside `js/views/` may import a view**, `js/app.js` excepted. `js/format.js` exists for
 exactly this reason: the exporter needs the same wording as the screen, so the summary builders live
-in a core module that both can import. `js/queries.js` was split out of `store.js` when the
-1000-line cap fired: the seam is **mutations (store) versus read-only derived queries (queries)**.
-`js/model.js` was split out for the same reason a release later: the seam there is **what is stored
-and when (store) versus what the stored thing looks like (model)**. The shape helpers are
-re-exported from `store.js`, so the store stays the single front door for callers. (This rule was
-broken once — `exportimport.js` imported `views/entry.js` — which is why there is now a test for it.)
+in a core module that both can import. (This rule was broken once — `exportimport.js` imported
+`views/entry.js` — which is why there is now a test for it.)
+
+**The peer-store pattern.** `store.js` owns `state` and the `touch`/`emit`/`saveRoutine`/
+`persistSession` primitives. A peer store imports those and is **never imported by** `store.js`, so
+the dependency stays one-way and the cycle never closes. Each split names its seam:
+
+| Peer | Seam |
+|---|---|
+| `queries.js` | mutations vs read-only derived queries |
+| `model.js` | what is stored and when vs what the stored thing looks like |
+| `planstore.js`, `cardiostore.js` | one sub-domain's writes |
+| `clockstore.js` | the one part of state that is a timestamp, not a record |
+| `backupstore.js` | incremental state vs replacing everything at once |
+| `exercisestore.js`, `exercisemerge.js` | the exercise library's writes, and name surgery |
 
 Views never talk to `db.js` directly except `routines.js`, which uses `dbPut` for one
 caret-preserving write. `ui.js` imports `emit` from the store so closing a modal repaints the view
@@ -130,21 +199,37 @@ source has a handler and every handler is reachable.
 
 ## State
 
-`store.js` owns one mutable `state` object. Nothing else may mutate it.
+`store.js` owns one mutable `state` object. Only the store and its peers may mutate it.
 
 ```js
 state = {
   ready,            // false until init() finishes
   routines: [],     // sorted by name
   sessions: [],     // ALL sessions, newest first; includes the active one
+  exercises: [],    // the exercise LIBRARY, one record per name, sorted by name
   active,           // the in-progress session object, or null
   editSessionId,    // a FINISHED session opened for correction in History
-  settings,         // { unit, distanceUnit, defaultRest, beep }
-  timer,            // { kind:'rest'|'hold', startedAt, target, sessionId, entryId, setId, label, beeped }
-  tab,              // 'now' | 'session' | 'history' | 'routines'
-  nav,              // { sessionId?, routineId? } sub-navigation per tab
+  openRounds,       // Set of interval blocks with their rounds expanded. Transient
+  histFilter,       // { mode:'all'|'week'|'month'|'range', offset, from, to }. Transient
+  trendRange,       // '3m' | '1y' | 'all'. Transient
+  lastTab,          // where to return to when Settings is closed
+  plan,             // { 'YYYY-MM-DD': { routineId, rest, doneAt, note } }, a meta blob
+  settings,         // see DEFAULT_SETTINGS in store.js — 10 keys
+  timer,            // { kind:'rest'|'hold'|'drop', startedAt, target, sessionId,
+                    //   entryId, setId, label, beeped }
+  tab,              // 'now'|'session'|'plan'|'history'|'trends'|'setup'|'routines'|'library'|'settings'
+  nav,              // per-tab sub-navigation: { sessionId?, routineId?, trendName?,
+                    //   libMode?, libQuery?, libCat?, lastMerge? }
 }
 ```
+
+A test asserts every top-level key above is documented here, because this block went stale once and
+a wrong state doc is worse than none.
+
+The three `transient` fields are deliberately **not** persisted: they are disclosure triangles and
+filters, not data. `histFilter` and `trendRange` sit on `state` rather than in `state.nav` because
+`app.js` clears `nav` on every tab change, and a filter you lose by glancing at Now is worse than no
+filter.
 
 ### `working()` — the single most important function
 
@@ -161,16 +246,25 @@ ignored edits in History because one handler still checked `state.active`).
 
 ### Persistence
 
-IndexedDB `workout-tracker`, version 1, three stores:
+IndexedDB `workout-tracker`, **version 2**, four stores:
 
 | Store | Key | Contents |
 |---|---|---|
 | `routines` | `id` | routine objects |
 | `sessions` | `id` | session objects (index on `startedAt`) |
-| `meta` | `key` | `settings`, `activeSessionId`, `timer`, `sync` |
+| `exercises` | `key` | exercise library records, keyed on `normName(name)` |
+| `meta` | `key` | `settings`, `activeSessionId`, `timer`, `plan`, `sync`, `lastMerge` |
+
+Every store is created behind a `contains()` guard in `onupgradeneeded`, so a version bump on an
+existing device adds only what is missing and touches no existing data. A test asserts this table
+states the same version as `js/db.js`.
 
 The sync token lives under `meta.sync`, deliberately **not** in `settings`, so an exported backup
 can never contain it. A test asserts that.
+
+**Four places must know about a new store**, and missing one is how the exercise library nearly
+shipped without syncing: `init()` loads it, `restoreAll` replaces it, `backupObject` ships it to the
+gist, `dataFingerprint` counts it so a restore can be verified.
 
 ## Data model
 
@@ -951,6 +1045,27 @@ Each of these was a real bug. They are cheap to reintroduce.
    target, twice — once for `duration`, once for `pace`.
 11. **Modal submit didn't repaint.** A modal that changes the tab or data must repaint the view
    behind it; `closeModal()` calls `emit()` for this.
+12. **An interpolated `data-action` reads as a dead handler.** The action-registry test scans markup
+   as text, so `data-action="${action}"` from a helper, or `data-action="${x ? 'a' : 'b'}"`, is
+   invisible to it and reports the handler as unreachable. Write the literal name at the call site
+   and branch on the whole element instead. Caught three separate times.
+13. **A field helper that drops the words which distinguish two things.** The first exercise matcher
+   treated equipment words as noise, which made "DB Row" an *exact* match for "Barbell Row" — the
+   two words that tell them apart were the two it discarded — and "Leg Curl" a confident match for a
+   bicep curl, because it treated "leg" as filler. A matcher that is confidently wrong is worse than
+   one that admits it does not know: a wrong tag pollutes every per-muscle number and nothing ever
+   flags it. Both wrong answers are now pinned as wrong by tests.
+14. **`??` on a field that is never nullish.** `e.secondary ?? ex.secondary` never falls through,
+   because `normalizeEntry` always supplies `[]`. See [core invariant 3](#core-invariants): test
+   `.length`, not nullishness.
+15. **A live filter that re-renders the view.** Typing in a search box must repaint only the list
+   container, because a full `render()` replaces the input being typed into and takes the keyboard
+   with it. The Library search was wired to `change` instead of `input` and so never filtered at
+   all; it now repaints `#libList` alone.
+16. **A doc that states a number.** "Only `store.js` touches IndexedDB" stayed in AGENTS.md through
+   six new peer stores, and the state block, the DB version and the module line counts all drifted.
+   Tests now assert the state keys, the DB version and the IndexedDB-writer list against the code;
+   anything else numeric in the docs should say *how to measure it* rather than what it was.
 
 ## What the platform will not allow
 

@@ -61,18 +61,27 @@ Starting a workout **snapshots** the routine into a **session**. Anything you ch
 workout — reorder, add, remove, skip, retarget — affects only that session. If you decide a change
 should stick, the Session tab has *Save order to routine*.
 
-### The four tabs
+### The tab bar
+
+Five tabs on a rest day, six while a workout is running.
 
 - **Now** — just the exercise you're on, with its targets, what you did last time, and its set rows.
   Prev/Next step through the workout; a superset block (entries sharing a group letter) is shown
   together. When nothing is running, this tab is where you pick a routine and start.
 - **Session** — today's full picture: every exercise in order with done / in progress / pending
   status and its logged sets inline. Reorder, add, remove, skip, jump to any exercise, and record
-  session-level effort, bodyweight and notes. Finish or discard the workout here.
+  session-level effort, bodyweight and notes. Finish or discard the workout here. **Appears only
+  while a workout is running**, because that is the only time it does anything.
+- **Plan** — ten days ahead and seven behind: assign a routine to a day, mark rest days, log a
+  workout for a day you missed.
 - **History** — past sessions, newest first. Open one for the full log, correct it, or export it.
-- **Routines** — your routine library and editor, import/export, backup, and settings.
+- **Trends** — weekly volume and sets, per-muscle direct/indirect sets, and per-exercise progress
+  with estimated 1RMs, personal bests and running paces.
+- **Set up** — the hub for the three things you configure rather than do: **Routines** (the editor,
+  import/export, backup and sync), the **Exercise library**, and **Settings**. Each row shows live
+  counts, so you can see whether anything needs attention without opening it.
 
-The rest timer bar sits above the tab bar and stays live across all four tabs.
+The rest timer bar sits above the tab bar and stays live across every tab.
 
 ### Correcting a finished session
 
@@ -221,7 +230,7 @@ in the same exercise. There is no auto-progression.
 
 ## Importing a routine
 
-Routines tab → **Import**, then either pick a `.json` file or paste JSON. Only `name` is required
+**Set up → Routines** → **Import**, then either pick a `.json` file or paste JSON. Only `name` is required
 on each exercise.
 
 ```json
@@ -437,7 +446,7 @@ routine), or a **full backup file** (see below). Aliases `exercises`/`title`/`de
 `targetWeight`/`setTargets` are understood too, so hand-written or LLM-generated files usually just
 work. Bad input is rejected with a specific message rather than partially imported.
 
-### The exercise library
+### Reusing an exercise you already do
 
 Every exercise you have ever put in a routine or logged in a session is reusable. Tapping **+ Add
 exercise** — in the routine editor or mid-workout — offers two paths: *Create a new exercise*, or
@@ -456,13 +465,46 @@ Where an exercise appears in several routines, the definition comes from the mos
 one, then the most recently created. An exercise you only ever added ad-hoc during a workout is
 still offered, defined from that session.
 
-The library needs no setup and nothing to maintain: it is derived from your data on the fly, so
-renaming or deleting routines is reflected immediately. The name field also keeps its free-text
-autocomplete, so you can still just type.
+The library needs no setup for reuse: this part is derived from your data on the fly, so renaming or
+deleting routines is reflected immediately. The name field also keeps its free-text autocomplete, so
+you can still just type.
+
+### The Library tab: what an exercise *is*
+
+The reuse list above answers "have I done this before?". A separate, **stored** library answers
+"what is this exercise?" — and nothing else can, because no logged set records that a dumbbell row
+is one-arm-at-a-time or that it trains your lats.
+
+**Set up → Exercise library** holds one record per exercise name:
+
+| | |
+|---|---|
+| **Measured in** | reps, seconds (an isometric hold) or metres (a loaded carry) |
+| **Load** | your own bodyweight, or an external one — a separate question, since a plank is timed *and* unloaded |
+| **Unilateral** | one side at a time, which logs every planned set twice as `1L` / `1R` |
+| **Target muscles** | one or several — a bench press really is chest *and* triceps. Counted as **direct** sets in Trends |
+| **Other muscles** | counted as **indirect** sets, reported beside the direct ones and never blended |
+
+Because identity here is the exercise *name*, describing one applies **retroactively** to every set
+ever logged under it — tagging an exercise today fixes trends computed from a session a year ago.
+
+Three ways to fill it in:
+
+- **Browse all 751** — a built-in catalogue covering strength, power, Olympic lifting, plyometrics,
+  isometrics, carries, core, running, other cardio, mobility and prehab. Filter by kind, or search
+  by name, muscle or equipment. One tap adopts an entry into your library.
+- **Fix N** — for anything untagged, exact matches from the catalogue apply in one tap ("RDL",
+  "Pull Ups", "DB Row"), ambiguous names offer a pick-one, and the rest are listed for you.
+- **+ New exercise** — your own movements. These are marked **yours** with a dashed edge, because a
+  catalogue entry is a shared definition you adopted and one you invented is unchecked.
+
+If the same exercise ended up under two names, **Library → Mine** surfaces the spellings and
+**Merge…** rewrites the name across your routines *and* your logged history, so the two become one
+history. It can be undone once.
 
 ## Generating a routine with an AI tool
 
-The Routines tab has a **Generate a routine with an AI tool** card with a *Copy the AI prompt*
+**Set up → Routines** has a **Generate a routine with an AI tool** card with a *Copy the AI prompt*
 button. The prompt is self-contained — it specifies every field, both set-target shapes, what
 `group` does, how to write an interval `pattern`, which cardio metrics are targetable, and the duration
 formats — and embeds both worked examples below. Paste it into any AI chat tool, fill in the
@@ -501,11 +543,11 @@ The full backup is a complete, loss-free copy, and **Replace** mode restores it 
 routines, same sessions, same internal ids (so every session keeps its link to its routine), the
 same settings, and even a workout that was still in progress with its rest timer still running.
 
-1. **Old device** → Routines tab → note the four numbers in **Backup & transfer**
+1. **Old device** → **Set up → Routines** → note the counts in **Backup & transfer**
    (routines / sessions / logged sets / date range).
 2. Tap **Export full backup (JSON)** and put the file somewhere the new device can reach it
    (AirDrop, Files, iCloud Drive, email to yourself — your choice; nothing is uploaded by the app).
-3. **New device** → install the app → Routines tab → **Import / restore from backup**.
+3. **New device** → install the app → **Set up → Routines** → **Import / restore from backup**.
 4. Choose the file, set the mode to **Replace — wipe this device and restore exactly**, and confirm.
 5. The app reports what it imported and then self-verifies: it compares the counts recorded inside
    the backup against what actually landed, and warns you if they differ.
@@ -531,7 +573,7 @@ Two things to keep in mind:
 Optional. The app stays local-first — this only adds a copy in a private gist on your GitHub
 account, so a second device can load the same data and you have an off-device backup.
 
-**Set up on the first device:** Routines tab → *Set up Gist sync*. Paste a GitHub token, leave the
+**Set up on the first device:** **Set up → Routines** → *Set up Gist sync*. Paste a GitHub token, leave the
 gist id blank, and tap **Push ↑** — that creates a secret gist and uploads the backup.
 
 For the token, use **Personal access tokens (classic)** with the single **`gist`** scope ticked and

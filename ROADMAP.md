@@ -1,5 +1,10 @@
 # Roadmap
 
+**Where this is now:** build 40, live at https://pprakarsh.github.io/workout-tracker/.
+Run `cd test && npm test` for the suite; `grep APP_VERSION js/util.js` for the build.
+See [AGENTS.md](AGENTS.md) for the rules and [ARCHITECTURE.md](ARCHITECTURE.md) for how it works
+— start with its **Core invariants** section.
+
 Candidate features, roughly in the order I'd build them. Effort is S (hours), M (a day or two),
 L (longer). "Depends on" means it will be built wrong or need redoing without that first.
 
@@ -77,7 +82,6 @@ plate calculator is offered, and whether your history becomes more than a list.
 
 | Feature | Why | Effort | Notes |
 |---|---|---|---|
-| **Progress charts** — bodyweight, weekly volume, e1RM per lift | Makes trends visible | M | Needs one small inline SVG helper; no dependency |
 | **Repeat a past session** as a new workout | Covers ad-hoc days with no routine | S | — |
 | **Calendar / streak view** in History | Training pattern at a glance | M | — |
 | **Search History by exercise or note** | Date filtering is done; text search is the other half | S | — |
