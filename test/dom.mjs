@@ -116,8 +116,11 @@ ok($(`#tabBar .tab[data-tab="${store.state.tab}"]`) !== null,
 ok(/Nothing set up yet/.test(view()), 'with an empty state that admits it is empty');
 ok($('[data-action="routine-new"]') !== null, 'and offers to create a routine');
 ok($('[data-action="import-open"]') !== null, 'or import one');
-ok(/routine<\/b> is the plan|routine<\/b>/.test(view()),
+ok(/is the plan/.test(view()) && /log of what you actually did/.test(view()),
   'and explains routine-vs-session, which is the one model you must have to use this app');
+ok($('[data-action="term-open"][data-term="routine"]') !== null
+  && $('[data-action="term-open"][data-term="session"]') !== null,
+  'with both words tappable right there, rather than defined on a page nobody opens');
 
 section('seed a routine, then start it from the Now tab');
 await xi.importFromText(routinesView.SAMPLE);
@@ -2488,7 +2491,11 @@ await sleep(60);
 ok($('[data-action="routines-go"]') !== null, 'Routines is reachable from it');
 ok($('[data-action="library-go"]') !== null, 'so is the exercise library');
 ok($('[data-action="settings-go"]') !== null, 'and settings');
-ok($$('.setup-row').length === 3, `three rows, not three more tabs (${$$('.setup-row').length})`);
+// The invariant is that depth lives in rows rather than in tabs, not that
+// there are exactly three of them -- "How this works" is a legitimate fourth.
+ok($$('.setup-row').length >= 3, `rows, not more tabs (${$$('.setup-row').length})`);
+ok($$('#tabBar .tab').length === 6, 'the bar stays at six tabs however many rows the hub grows');
+ok($('[data-action="how-open"]') !== null, 'and "How this works" is one of the rows');
 ok(/routine/.test($('[data-action="routines-go"]').textContent),
   'each row carries live counts, so the hub answers "is there anything to do in there?" unopened');
 ok(/build /.test(view()), 'and the build number is here rather than hidden in Settings');
@@ -2697,6 +2704,65 @@ if (sdAttn.length) {
 await gotoTab('setup');
 ok(sdAttn.length === 0 || $('#viewRoot .card.attn') !== null,
   'the hub itself lists what the dot was about');
+
+section('How this works covers the model, the numbers, and the refusals');
+await gotoTab('setup');
+await click('[data-action="how-open"]', 'How this works');
+const hwModal = $('#modalRoot .modal');
+ok(hwModal !== null, 'the sheet opens');
+const hwText = hwModal.textContent.replace(/\s+/g, ' ');
+for (const [what, needle] of [
+  ['routine vs session', 'A routine is the plan'],
+  ['that logging is confirming', 'Logging is confirming, not typing'],
+  ['that the clock is never gated', 'never in your way'],
+  ['the set shapes', 'more shapes than one'],
+  ['that Trends numbers are not blended', 'not blended'],
+  ['what the app will not do', 'What this app will not do'],
+  ['where the data lives', 'Your data'],
+]) {
+  ok(hwText.includes(needle), `it explains ${what}`);
+}
+
+section('and it says the refusals are choices, in the words a user would search for');
+for (const [what, needle] of [
+  ['no auto-progression, in the phrase they will look for', 'add 2.5 kg'],
+  ['why that is deliberate', 'while you are ill or deloading'],
+  ['that direct and indirect stay apart', 'not add direct and indirect'],
+  ['that nothing is estimated', 'not estimate what you did not log'],
+  ['that there is no account', 'no account, and no server'],
+  ['the iOS limits, as platform limits', 'background GPS'],
+]) {
+  ok(hwText.includes(needle), `it states ${what}`);
+}
+ok(/choices, not gaps/.test(hwText),
+  'and labels them as choices, which is the whole point of the section');
+
+section('a concept can be gone and looked at instead of read about');
+ok($$('#modalRoot [data-action="how-show"]').length >= 4, 'most sections offer a "show me"');
+const hwTo = $('#modalRoot [data-action="how-show"]').dataset.to;
+await click('#modalRoot [data-action="how-show"]', `show me ${hwTo}`);
+ok($('#modalRoot .modal') === null, 'which closes the sheet rather than leaving it over the screen');
+ok(store.state.tab === hwTo, `and lands on the real thing (${store.state.tab})`);
+
+section('jargon is tappable at the point of use, not on a page you must find');
+await gotoTab('trends');
+const hwTerm = $('#viewRoot [data-action="term-open"]');
+ok(hwTerm !== null, 'Trends marks a term inline');
+await click('#viewRoot [data-action="term-open"]', `tap "${hwTerm?.textContent}"`);
+ok($('#modalRoot .modal') !== null, 'the definition opens where you were standing');
+ok(/counted and shown separately|main target/.test($('#modalRoot .modal').textContent),
+  'and says what it means in this app, not in the literature');
+await click('#modalRoot [data-mclose]', 'Got it');
+
+section('a term tapped inside the sheet can get back to the sheet');
+await gotoTab('setup');
+await click('[data-action="how-open"]', 'How this works');
+await click('#modalRoot [data-action="term-open"]', 'tap a term inside it');
+ok($('#modalRoot .modal') !== null, 'the definition replaces the sheet');
+ok($('#modalRoot [data-action="how-open"]') !== null, 'but offers the way back');
+await click('#modalRoot [data-action="how-open"]', 'Back to How this works');
+ok(/What this app will not do/.test($('#modalRoot .modal').textContent), 'which returns to it');
+await click('#modalRoot [data-mclose]', 'Done');
 
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

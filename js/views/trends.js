@@ -19,6 +19,7 @@ import {
 import { linePlot, barPlot } from '../chart.js';
 import { fmtPace } from '../cardio.js';
 import { measureOf, MEASURES } from '../measure.js';
+import { termHtml } from '../glossary.js';
 import { esc, fmtNum, fmtDate, fmtClock, fmtDur, relDay } from '../util.js';
 import { groupTotals } from '../exercise.js';
 import { exerciseFor } from '../store.js';
@@ -198,8 +199,8 @@ function groupSection() {
           <div class="grp-n dim">${r.indirect}</div>
         </div>`).join('')}
       <div class="small dim center" style="margin-top:8px">
-        <b>direct</b> = sets of an exercise whose volume group is that muscle &middot;
-        <b>indirect</b> = sets where it is listed under "other muscles".
+        ${termHtml('direct', 'direct')} = sets of an exercise whose volume group is that muscle
+        &middot; <b>indirect</b> = sets where it is listed under "other muscles".
         Counted separately, never added together.
       </div>
       ${idle.length ? `<div class="small" style="margin-top:8px;color:var(--warn)">
@@ -381,7 +382,7 @@ function liftDetail(t) {
 
     <h2>Session log</h2>
     <div class="trend-table">
-      <div class="tr hd"><div>Date</div><div>Sets</div><div>${esc(metric.estimate ? 'e1RM' : metric.axis)}</div></div>
+      <div class="tr hd"><div>Date</div><div>Sets</div><div>${metric.estimate ? termHtml('e1rm', 'e1RM') : esc(metric.axis)}</div></div>
       ${[...rows].reverse().map((r) => `
         <div class="tr">
           <div>${esc(shortDate(r.at))}</div>

@@ -17,6 +17,7 @@ For the rules and checklists you must follow while editing, see [AGENTS.md](AGEN
   - Exercises: [the library](#the-exercise-library) · [the catalogue](#the-built-in-catalogue) · [several target muscles](#one-exercise-several-target-muscles) · [bulk tagging](#filling-in-tags-in-bulk) · [the group picker](#picking-muscle-groups) · [merging names](#merging-two-names-that-are-one-exercise)
   - [Getting a routine in: the chooser and the AI prompt](#getting-a-routine-in-the-chooser-and-the-ai-prompt-that-carries-your-names)
   - [Per-muscle trends](#per-muscle-trends-direct-and-indirect-never-blended)
+  - [Education: in place, earned, tappable](#education-in-place-earned-and-tappable)
   - [Navigation](#navigation-what-earns-a-tab) · [editing a finished session](#editing-a-finished-session) · [sync](#sync-blob-last-write-wins-guarded)
 - [Known gotchas](#known-gotchas) — every one of these was a real bug
 - [What the platform will not allow](#what-the-platform-will-not-allow)
@@ -116,6 +117,8 @@ js/views/history.js "History" tab (read-only detail + edit mode)
 js/views/routines.js "Routines" tab: library, editor, data, settings, samples, AI prompt
 js/views/newroutine.js how a routine gets made: the chooser, the sample, the AI prompt
 js/nudges.js        data-triggered nudges: the rules, and the one card that shows them
+js/glossary.js      the words this app uses, defined once, rendered tappable in place
+js/views/howitworks.js the four-minute read, including what the app refuses to do
 test/               four dev-only Node suites (jsdom + fake-indexeddb)
 deploy.sh           publish to GitHub Pages
 ```
@@ -966,6 +969,50 @@ Which is why the prompt tells the AI to **invent a name when nothing in the list
 substituting a worse exercise to match one. An unknown name is recoverable in a tap; a routine that
 quietly dropped the movement you needed is not. It is also asked to list what it invented under
 `"//newExercises"` — a `//` key, so the importer ignores it and you can still read it.
+
+### Education: in place, earned, and tappable
+
+Three different problems, deliberately solved three different ways, because one mechanism for all
+three is what produces carousels nobody reads.
+
+| Problem | Window | Mechanism | Lives in |
+|---|---|---|---|
+| Orientation — what is this? | first 60 seconds | one logged set, fast | the sample routine, `views/newroutine.js` |
+| Discovery — what else is here? | first weeks | the user's own data triggers it | `js/nudges.js` |
+| Comprehension — what does that word mean? | ongoing | the term itself, tappable in place | `js/glossary.js` |
+| Absence — why won't it do X? | once | stated as a choice | `views/howitworks.js` |
+
+**The sample routine** exists because nothing teaches "logging is confirming, not typing" like
+confirming one set. Two taps from the empty state to a logged set. Its four exercises are chosen to
+be representative rather than impressive — a per-set ramp, a superset pair, and a plank so the
+amount column is visibly seconds — and every name is a catalogue name, so nothing arrives untagged.
+
+**Nudges** are the highest-leverage piece and the easiest to get wrong. Every rule reads only stored
+data, fires at a threshold that means a habit rather than an accident, shows once, and is dismissed
+forever into `meta.dismissed`. Three restraints hold: one at a time (`activeNudge()` returns a
+single nudge, never a list), never mid-workout (the only surface is Now with nothing running), and
+never against a stated choice — a library record saying `reps` is a decision, so the two shape rules
+check `unstated()` before firing. A nudge that fires on a guess teaches the user that this app's
+advice is noise, which costs more than the feature it was advertising.
+
+Dismissals deliberately do **not** travel in the backup: a nudge is not data, and a genuinely new
+device has genuinely not seen them.
+
+**The glossary** is data plus two pure functions, not a page. A page requires knowing a word is
+defined somewhere in order to go and look for it. Each definition says what the term means *in this
+app* and is capped at three sentences by a test, because the second sentence is usually the one that
+prevents a wrong assumption about the stored data ("RIR is stored separately from RPE and never
+converted").
+
+**How this works** carries the refusals, and that section is why the card exists. Several of this
+app's strongest opinions read as missing features: someone looks for "add 2.5 kg next time", does
+not find it, and concludes the app is unfinished. A perceived bug costs trust; a stated choice does
+not, even when the reader disagrees. A test pins the actual search phrases.
+
+**The attention dot** on the Set up tab closes the hole the hub opened. Folding three screens behind
+one button means nothing in there can ask for attention, so `setupView.needsAttention()` drives a dot,
+and the hub lists exactly what the dot was about. Only things with a next action and a real
+consequence count — a dot that is always on is a dot that is never read.
 
 ### Navigation: what earns a tab
 

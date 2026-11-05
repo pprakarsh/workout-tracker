@@ -21,6 +21,7 @@ import {
   loadKind, asLibraryRecord, certainMatch, suggestFor,
 } from '../catalog.js';
 import { MEASURES } from '../measure.js';
+import { termHtml } from '../glossary.js';
 import { groupPickerHtml, wireGroupPicker } from './exform.js';
 import { findDuplicates, mergePreview, mergeExercises, undoLastMerge, namesInUse } from '../exercisemerge.js';
 import { esc, normName, relDay, download } from '../util.js';
@@ -399,7 +400,7 @@ export function render() {
       <details style="margin-top:10px">
         <summary class="tiny">What the file looks like</summary>
         <pre class="code">${esc(SAMPLE_LIBRARY)}</pre>
-        <p class="hint"><b>measure</b> is <code>reps</code>, <code>time</code> (an isometric hold) or
+        <p class="hint">${termHtml('measure', 'measure')} is <code>reps</code>, <code>time</code> (an ${termHtml('isometric')} hold) or
           <code>distance</code> (a loaded carry) &mdash; <code>isometric</code> is accepted and means
           <code>time</code>. <b>bodyweight</b> and <b>measure</b> are separate questions on purpose: a
           plank is timed <em>and</em> unloaded, and a weighted plank is timed and loaded, so neither

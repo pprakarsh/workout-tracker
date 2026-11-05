@@ -87,6 +87,10 @@ export function render() {
     `${esc(s.unit)} · ${esc(s.distanceUnit)} · rest ${fmtNum(Math.round(s.defaultRest / 60))} min`
     + ` · ${s.firstSide === 'R' ? 'right' : 'left'} side first`)}
     </div>
+    <div class="setup-row" data-action="how-open" role="button" tabindex="0">
+      ${rowBody('❔', 'How this works',
+    'Four minutes — routines vs sessions, what the numbers mean, and what this app deliberately won\'t do')}
+    </div>
 
     <h2>This device</h2>
     <div class="card">

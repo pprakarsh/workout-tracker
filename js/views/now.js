@@ -7,6 +7,7 @@ import { esc, fmtDur, relDay } from '../util.js';
 import { renderEntry } from './entry.js';
 import { toast } from '../ui.js';
 import { nudgeHtml, dismissNudge } from '../nudges.js';
+import { termHtml } from '../glossary.js';
 
 function noSession() {
   const rs = state.routines;
@@ -33,9 +34,9 @@ function noSession() {
       </div>`;
   }).join('')
     : `<div class="empty">Nothing set up yet.</div>
-       <p class="hint">A <b>routine</b> is the plan &mdash; which exercises, how many sets. Starting
-         one makes a <b>session</b>, which is the log of what you actually did. Nothing you do in a
-         session changes the routine unless you ask it to.</p>
+       <p class="hint">A ${termHtml('routine')} is the plan &mdash; which exercises, how many sets.
+         Starting one makes a ${termHtml('session')}, which is the log of what you actually did.
+         Nothing you do in a session changes the routine unless you ask it to.</p>
        <button type="button" class="btn block primary" data-action="sample-start">Try a sample workout</button>
        <p class="hint center" style="margin:6px 0 14px">Four exercises with the numbers already in.
          One tap on a ✓ and you have seen how all of this works.</p>

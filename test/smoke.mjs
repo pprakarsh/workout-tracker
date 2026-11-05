@@ -3325,5 +3325,56 @@ ok(ndNorm.entries[0].setTargets?.length === 3 && ndNorm.entries[0].setTargets[2]
 ndSet({ routines: ndSaved.r, sessions: ndSaved.s, exercises: ndSaved.x, dismissed: ndSaved.d || [] });
 ok(Array.isArray(state.dismissed), 'the fixture dataset is restored');
 
+/* ------------------------------------------------------------------ */
+/* the glossary: every word the app uses, defined where it is read     */
+/* ------------------------------------------------------------------ */
+
+const gl = await import(`${APP}/js/glossary.js`);
+
+section('every piece of jargon the screens use has a definition');
+// The list is the audit: if a word appears in the UI and not here, a beginner
+// meets it with no way to find out what it means.
+const glJargon = ['rpe', 'rir', 'e1rm', 'unilateral', 'isometric', 'warmup', 'superset',
+  'dropset', 'direct', 'prefill', 'measure', 'leg', 'session', 'routine'];
+for (const k of glJargon) {
+  ok(!!gl.TERMS[k], `"${k}" is defined`);
+}
+ok(Object.keys(gl.TERMS).length === glJargon.length,
+  `and nothing else is hiding in there (${Object.keys(gl.TERMS).length})`);
+
+section('each definition is short, specific to this app, and self-contained');
+for (const [k, v] of Object.entries(gl.TERMS)) {
+  const sentences = v.body.split('. ').filter((x) => x.trim().length > 3);
+  ok(sentences.length >= 2 && sentences.length <= 4,
+    `${k}: ${sentences.length} sentences — enough to be useful, short enough to read in place`);
+  ok(v.body.length < 420, `${k}: ${v.body.length} chars`);
+  ok(!!v.term, `${k} carries the word as it is actually written on screen ("${v.term}")`);
+}
+ok(/stored separately/i.test(gl.TERMS.rpe.body) && /unconverted|never converted/i.test(gl.TERMS.rir.body),
+  'RPE and RIR both say they are stored separately — the fact that stops a wrong assumption about the data');
+ok(/no automatic progression|not change by itself|changes by itself/i.test(gl.TERMS.routine.body),
+  'and "routine" states the no-auto-progression choice, since that is what a reader will look for');
+ok(/records nothing|nothing at all/i.test(gl.TERMS.prefill.body),
+  'and "prefill" says an unconfirmed row records nothing, which is the costly misunderstanding');
+
+section('a term renders as the word, tappable, and never as raw markup');
+const glHtml = gl.termHtml('rpe');
+ok(/data-action="term-open"/.test(glHtml) && /data-term="rpe"/.test(glHtml), 'it carries its key');
+ok(/>RPE</.test(glHtml), 'and reads as the word itself');
+ok(/aria-label="What RPE means"/.test(glHtml), 'with a label, since an underlined word is not obviously a button');
+ok(gl.termHtml('rpe', 'effort').includes('>effort<'),
+  'a different label can be used where the sentence needs one');
+ok(gl.termHtml('nope') === 'nope', 'an unknown key degrades to plain text rather than a dead button');
+ok(!gl.termHtml('rpe', '<img src=x>').includes('<img'), 'and a label is escaped');
+ok(/data-back="how"/.test(gl.termHtml('rpe', null, { back: 'how' })),
+  'and it can carry a way back, for a term tapped from inside a sheet');
+ok(!gl.termHtml('rpe').includes('data-back'), 'which is absent when there is nowhere to go back to');
+
+section('the definition body renders for the sheet');
+ok(/Rate of Perceived Exertion/.test(gl.termBodyHtml('rpe')), 'the expansion is shown for an acronym');
+ok(!/<div class="tiny">/.test(gl.termBodyHtml('unilateral')), 'and omitted for a word that is not one');
+ok(gl.termTitle('e1rm') === 'e1RM', 'the sheet title is the term as written');
+ok(/No definition/.test(gl.termBodyHtml('nope')), 'an unknown key says so rather than rendering blank');
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

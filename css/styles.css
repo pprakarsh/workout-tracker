@@ -595,3 +595,15 @@ details pre.code{max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch}
 .card.attn .tiny{color:var(--warn);text-transform:uppercase;letter-spacing:.04em}
 .attn-list{margin:6px 0 0;padding-left:18px;color:var(--fg2);font-size:13px}
 .attn-list li{margin:2px 0}
+
+/* ---------- glossary terms ---------- */
+/* A term is a button so it is reachable by keyboard and announced as one, but
+   it has to read as a word inside a sentence, not as a control. Dotted
+   underline rather than a link colour: it is an aside, not a navigation. */
+.term{
+  background:none;border:0;padding:0;margin:0;font:inherit;color:var(--fg);
+  border-bottom:1px dotted var(--accent);cursor:pointer;
+  touch-action:manipulation;
+}
+.term:active{color:var(--accent)}
+.term-eg{border-bottom:1px dotted var(--accent)}
