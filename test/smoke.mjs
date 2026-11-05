@@ -3072,5 +3072,101 @@ await store.deleteRoutine(mcR.id);
 await store.deleteRoutine(mcPlankR.id);
 await xs.importLibrary({ exercises: [] }, { mode: 'replace' });
 
+/* ------------------------------------------------------------------ */
+/* the AI prompt carries this device's exercise names                  */
+/* ------------------------------------------------------------------ */
+
+const npView = await import(`${APP}/js/views/newroutine.js`);
+
+// Swap the whole dataset out, because what the prompt says depends entirely on
+// what is in it and the fixtures above have accumulated plenty.
+const npSaved = { r: state.routines, s: state.sessions, x: state.exercises };
+const npRestore = () => {
+  state.routines = npSaved.r; state.sessions = npSaved.s; state.exercises = npSaved.x;
+};
+
+section('with nothing logged, the prompt says so rather than inventing a list');
+state.routines = []; state.sessions = []; state.exercises = [];
+const npEmpty = npView.aiPrompt();
+ok(npView.promptNames().length === 0, 'there are no names to offer');
+ok(npEmpty.includes('NONE YET'), 'the prompt states the library is empty');
+ok(npEmpty.includes('"//newExercises"'),
+  'and still asks for the names it invents to be listed back');
+ok(npEmpty.includes(routinesView.SAMPLE_RUN) && npEmpty.includes(routinesView.SAMPLE),
+  'the schema and both worked examples survive the splice');
+
+const npActive = state.active;
+state.active = null;
+const npNow = nowView.render();
+state.active = npActive;
+ok(npNow.includes('data-action="routine-how"'),
+  'and a first-time user is offered the explanation first, from the Now tab');
+ok(npNow.indexOf('data-action="routine-how"') < npNow.indexOf('data-action="routine-new"'),
+  'ahead of the blank-routine button, since not knowing which to pick is the common case');
+
+section('the names actually in use are pasted in, most-used first');
+state.exercises = [{ name: 'NP Unused Lift', primary: ['Quads'] }];
+state.routines = [{ id: 'np-r', name: 'NP day', entries: [{ name: 'NP Squat' }] }];
+state.sessions = [{
+  id: 'np-s',
+  entries: [
+    { name: 'NP Bench', sets: [{ done: true }, { done: true }, { done: true }] },
+    { name: 'NP Squat', sets: [{ done: true }] },
+  ],
+}];
+const npNames = npView.promptNames();
+const npFull = npView.aiPrompt();
+ok(npNames.includes('NP Squat') && npNames.includes('NP Bench') && npNames.includes('NP Unused Lift'),
+  `names come from the library, routines and sessions alike (${npNames.join(', ')})`);
+ok(npNames[0] === 'NP Bench', 'ordered by logged sets, so the longest history is never cut by the cap');
+ok(npNames.indexOf('NP Squat') < npNames.indexOf('NP Unused Lift'),
+  'and a logged name outranks one that is only described');
+ok(npNames.every((n) => npFull.includes(n)), 'every offered name appears in the prompt text');
+ok(/CHARACTER FOR CHARACTER/.test(npFull),
+  'with the instruction to copy the spelling exactly');
+ok(/two different exercises with two separate histories/.test(npFull),
+  'and the reason: the name is the identity');
+ok(/NOT in my list, use it anyway/.test(npFull),
+  'an exercise it cannot match is named by the AI, not substituted away');
+
+section('the names land before the output rules, not after the examples');
+const npMark = '================ OUTPUT RULES ================';
+ok(routinesView.AI_PROMPT.split(npMark).length === 2,
+  'the splice point occurs exactly once in the static prompt');
+ok(npFull.indexOf('USE MY EXERCISE NAMES') < npFull.indexOf(npMark),
+  'so the name rules are read with the other rules, not buried at the end');
+ok(!routinesView.AI_PROMPT.includes('USE MY EXERCISE NAMES'),
+  'and AI_PROMPT itself is untouched — it stays the documented schema');
+
+section('the built-in catalogue is offered as a link, since it has a real URL');
+ok(npFull.includes('https://example.test/js/catalogdata.js')
+  && npFull.includes('https://example.test/js/catalogconditioning.js'),
+  'both catalogue files are linked, derived from where the app is served');
+ok(/only if your tool can browse/.test(npFull),
+  'marked optional, because most tools cannot fetch it');
+ok(/do not guess at/.test(npFull), 'and told not to invent its contents if it cannot');
+ok(npFull.includes(String(cat.CATALOG.length)),
+  `the count comes from the parsed catalogue (${cat.CATALOG.length}), not a hardcoded number`);
+
+section('the list is capped, so a long history cannot drown the instructions');
+state.sessions = [{
+  id: 'np-s2',
+  entries: Array.from({ length: 300 }, (_, i) => ({ name: `NP Lift ${i}`, sets: [{ done: true }] })),
+}];
+ok(npView.promptNames().length === 150, 'the default cap is 150 names');
+ok(npView.promptNames({ cap: 4 }).length === 4, 'and the cap is a parameter');
+const npBig = npView.aiPrompt();
+ok(/my 150 most-used of 30[12]/.test(npBig),
+  'the prompt admits it is a subset and says how big the whole set is');
+ok(npBig.length < routinesView.AI_PROMPT.length + 6000,
+  `so the whole thing stays sane (${Math.round(npBig.length / 1024)} KB)`);
+
+section('the names block is rendered, not just copied');
+ok(npView.namesBlock().length > 400 && !npView.namesBlock().includes('${'),
+  'namesBlock() is shown in the UI verbatim, so it must be substituted and non-trivial');
+
+npRestore();
+ok(npView.promptNames().length >= 0, 'the fixture dataset is restored');
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -146,6 +146,7 @@ export function render() {
     <div class="btn-row" style="margin-top:4px">
       <button type="button" class="btn primary" data-action="routine-new">+ New routine</button>
       <button type="button" class="btn" data-action="import-open">Import</button>
+      <button type="button" class="btn ghost" data-action="routine-how">How?</button>
     </div>
 
     <h2>Exercise library</h2>
@@ -195,15 +196,23 @@ export function render() {
 
     <h2>Generate a routine with an AI tool</h2>
     <div class="card">
-      <p class="hint" style="margin-top:0">Copy the prompt below, paste it into any AI chat tool,
-        fill in the <b>WHAT I WANT</b> block at the top, and paste the JSON it returns into
-        <b>Import</b>. The prompt carries the whole schema — every field, both set-target shapes,
-        how <code>group</code> works, how to express intervals — plus two worked examples, so the
+      <p class="hint" style="margin-top:0">Copy a prompt, paste it into any AI chat tool, fill in
+        the <b>WHAT I WANT</b> block at the top, and paste the JSON it returns into <b>Import</b>.
+        The prompt carries the whole schema — every field, both set-target shapes, how
+        <code>group</code> works, how to express intervals — plus three worked examples, so the
         tool has everything it needs without you explaining the format.</p>
-      <button type="button" class="btn block primary" data-action="sample-copy" data-which="prompt">
+      <button type="button" class="btn block primary" data-action="ai-routine">Walk me through it</button>
+      <p class="hint center" style="margin:6px 0 0">Four steps, and the prompt it copies also carries
+        <b>your own exercise names</b>, so the routine reuses the history you already have instead of
+        starting a second one under a different spelling.</p>
+
+      <div class="divider"></div>
+      <div class="tiny" style="margin-bottom:5px">Or just take the schema prompt, without your names</div>
+      <button type="button" class="btn sm ghost" data-action="sample-copy" data-which="prompt">
         Copy the full prompt</button>
-      <p class="hint center" style="margin:6px 0 0">Copies all ${AI_PROMPT.split('\n').length} lines:
-        the instructions, the complete schema, and both JSON examples.</p>
+      <p class="hint" style="margin:6px 0 0">All ${AI_PROMPT.split('\n').length} lines of it: the
+        instructions, the complete schema and the JSON examples — but nothing about which exercises
+        you already do.</p>
       <details style="margin-top:10px">
         <summary>Show exactly what gets copied</summary>
         <pre class="code">${esc(AI_PROMPT)}</pre>

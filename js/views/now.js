@@ -34,8 +34,9 @@ function noSession() {
        <p class="hint">A <b>routine</b> is the plan &mdash; which exercises, how many sets. Starting
          one makes a <b>session</b>, which is the log of what you actually did. Nothing you do in a
          session changes the routine unless you ask it to.</p>
-       <button type="button" class="btn block primary" data-action="routine-new">+ Create a routine</button>
-       <button type="button" class="btn block" data-action="import-open">Import one from JSON</button>`}
+       <button type="button" class="btn block primary" data-action="routine-how">How do I make one?</button>
+       <button type="button" class="btn block" data-action="routine-new">+ Create a routine</button>
+       <button type="button" class="btn block ghost" data-action="import-open">Import one from JSON</button>`}
     <div class="divider"></div>
     <button type="button" class="btn block ghost" data-action="start-empty">Start an empty workout</button>
     ${state.routines.length ? '' : `<p class="hint">Or just start an empty one and add exercises as

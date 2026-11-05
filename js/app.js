@@ -12,6 +12,7 @@ import * as nowView from './views/now.js';
 import * as sessionView from './views/session.js';
 import * as historyView from './views/history.js';
 import * as routinesView from './views/routines.js';
+import * as newRoutineView from './views/newroutine.js';
 import { entryActions, handleFieldInput, handleTimeField } from './views/entry.js';
 import { wireTimeFields } from './timefield.js';
 import { cardioActions } from './views/cardio.js';
@@ -57,6 +58,7 @@ const ACTIONS = {
   ...setupView.setupActions,
   ...historyView.historyActions,
   ...routinesView.routineActions,
+  ...newRoutineView.newRoutineActions,
   ...timerActions,
   tab: ({ to }) => { state.tab = to; },
 };

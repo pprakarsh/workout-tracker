@@ -15,6 +15,7 @@ For the rules and checklists you must follow while editing, see [AGENTS.md](AGEN
   - The clock: [never gated](#the-rest-clock-is-never-gated) · [the rest timer](#the-rest-timer) · [holds](#timing-a-hold-on-the-same-clock)
   - Set shapes: [drop sets](#drop-sets-one-set-several-loads-no-rest-between) · [unilateral](#unilateral-exercises-left-and-right-kept-apart) · [Either/Or](#either--or-one-slot-several-exercises)
   - Exercises: [the library](#the-exercise-library) · [the catalogue](#the-built-in-catalogue) · [several target muscles](#one-exercise-several-target-muscles) · [bulk tagging](#filling-in-tags-in-bulk) · [the group picker](#picking-muscle-groups) · [merging names](#merging-two-names-that-are-one-exercise)
+  - [Getting a routine in: the chooser and the AI prompt](#getting-a-routine-in-the-chooser-and-the-ai-prompt-that-carries-your-names)
   - [Per-muscle trends](#per-muscle-trends-direct-and-indirect-never-blended)
   - [Navigation](#navigation-what-earns-a-tab) · [editing a finished session](#editing-a-finished-session) · [sync](#sync-blob-last-write-wins-guarded)
 - [Known gotchas](#known-gotchas) — every one of these was a real bug
@@ -113,6 +114,7 @@ js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
 js/views/routines.js "Routines" tab: library, editor, data, settings, samples, AI prompt
+js/views/newroutine.js how a routine gets made: the chooser, and the AI prompt with your names
 test/               four dev-only Node suites (jsdom + fake-indexeddb)
 deploy.sh           publish to GitHub Pages
 ```
@@ -922,6 +924,46 @@ muscle groups across instead of discarding them.
 is best-effort and says so: an entry deleted since the merge is reported as `missing` rather than
 recreated, because restoring a name onto something that no longer exists is not possible and
 inventing one would be worse than reporting the gap.
+
+### Getting a routine in: the chooser, and the AI prompt that carries your names
+
+`js/views/newroutine.js`. Three doors, surfaced from the Now empty state (`routine-how`) and from
+beside *+ New routine*: write it yourself, have an AI write it, or import JSON. Split out of
+`views/routines.js` because that file is at the 1000-line cap and already serves two audiences.
+
+The substance is `aiPrompt()`. Because **identity is the exercise name** (invariant 1), an AI that
+writes `DB Row` where your history says `Dumbbell Row` silently starts a second history for one
+movement — exactly the damage [merging](#merging-two-names-that-are-one-exercise) exists to repair.
+
+A reference link cannot prevent it. **Your library has no URL**: it lives in IndexedDB on one
+device, and the whole app is static files with no server. So the only reliable channel to the AI
+tool is the prompt text, and `aiPrompt()` pastes the names in rather than pointing at them —
+`namesInUse()` sorted by logged sets, capped at 150, spliced in ahead of `OUTPUT RULES` so the name
+rules are read alongside the other rules instead of buried after three worked examples. Sorting by
+sets rather than alphabetically matters because the cap has to bite somewhere, and the exercise with
+200 logged sets is the one whose history must not be split.
+
+The built-in catalogue *does* have a URL, because it ships as a static file, so
+`catalogUrls()` offers `js/catalogdata.js` and `js/catalogconditioning.js` as an optional extra for
+tools that can browse — derived from `document.baseURI`, and omitted entirely when the app is served
+over `file://`, where the link would be a lie. It is never the mechanism.
+
+`AI_PROMPT` in `views/routines.js` stays static and exported: it is the documented schema, the test
+suite asserts against it directly, and the Routines screen still offers it unmodified. `aiPrompt()`
+composes rather than mutates.
+
+Injection is a nudge, not a guarantee, so there are three layers:
+
+| | |
+|---|---|
+| prevent | the names block in the prompt |
+| detect | Library's *Not in the library yet* list flags any name with no record |
+| repair | **Fix** maps one to the catalogue in a tap; **Merge…** folds it into a name you use |
+
+Which is why the prompt tells the AI to **invent a name when nothing in the list fits**, rather than
+substituting a worse exercise to match one. An unknown name is recoverable in a tap; a routine that
+quietly dropped the movement you needed is not. It is also asked to list what it invented under
+`"//newExercises"` — a `//` key, so the importer ignores it and you can still read it.
 
 ### Navigation: what earns a tab
 

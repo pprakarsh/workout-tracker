@@ -90,6 +90,7 @@ const planLib = await import(`${APP}/js/plan.js`);
 const planStore = await import(`${APP}/js/planstore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
 const routinesView = await import(`${APP}/js/views/routines.js`);
+const nrView = await import(`${APP}/js/views/newroutine.js`);
 await import(`${APP}/js/app.js`);   // boots itself
 await sleep(150);
 // The sections below predate the require-an-effort-answer rule and assert the
@@ -2565,6 +2566,52 @@ ok(store.state.routines.find((r) => r.name === 'Gap Day').entries[0].name === 'M
   'the original name is back');
 ok(!store.state.exercises.some((x) => x.key === 'single-arm dumbbell row'),
   'and the record the merge created is gone — undo does not leave behind an exercise you never asked for');
+
+section('the routine chooser explains the three ways in, from the Routines tab');
+await gotoTab('routines');
+ok($('[data-action="routine-how"]') !== null, 'a "How?" button sits next to + New routine');
+await click('[data-action="routine-how"]', 'How?');
+const nrModal = $('#modalRoot .modal');
+ok(nrModal !== null && /Three ways/.test(nrModal.textContent), 'the chooser opens');
+ok($('#modalRoot [data-action="routine-new"]') !== null, 'option 1 creates an empty routine');
+ok($('#modalRoot [data-action="ai-routine"]') !== null, 'option 2 is the AI walkthrough');
+ok($('#modalRoot [data-action="import-open"]') !== null, 'option 3 is import');
+ok(/routine.*is the plan|is the plan/i.test(nrModal.textContent),
+  'and it still says what a routine is before asking you to pick');
+
+section('the AI walkthrough is four steps, ending at import');
+await click('#modalRoot [data-action="ai-routine"]', 'Show me how');
+const aiModal = $('#modalRoot .modal');
+ok(aiModal !== null && /Step 1/.test(aiModal.textContent), 'the walkthrough replaces the chooser');
+for (const step of ['Step 1', 'Step 2', 'Step 3', 'Step 4']) {
+  ok(aiModal.textContent.includes(step), `${step} is there`);
+}
+ok($('#modalRoot [data-action="ai-prompt-copy"]') !== null, 'step 1 has the copy button');
+ok($('#modalRoot [data-action="import-open"]') !== null, 'step 3 hands off to import');
+ok(/WHAT I WANT/.test(aiModal.textContent), 'step 2 names the block you have to fill in');
+ok(/Not in the library yet/.test(aiModal.textContent) && /Merge/.test(aiModal.textContent),
+  'step 4 says where an invented exercise name turns up and how to fix it');
+
+section('the copied prompt carries the exercise names on this device');
+const nrNames = nrView.promptNames();
+ok(nrNames.length > 0, `this fixture has ${nrNames.length} exercise names in use`);
+copied = null;
+await click('#modalRoot [data-action="ai-prompt-copy"]', 'Copy the prompt');
+ok(typeof copied === 'string' && copied.length > routinesView.AI_PROMPT.length,
+  `the clipboard got more than the static prompt (${copied?.length} vs ${routinesView.AI_PROMPT.length} chars)`);
+ok(copied.includes(routinesView.AI_PROMPT.slice(0, 200)), 'the static prompt is still in there');
+ok(nrNames.every((n) => copied.includes(n)), 'and every name in use with it');
+ok(/USE MY EXERCISE NAMES/.test(copied), 'under a heading telling the tool what to do with them');
+ok(/exercise-name part that gets added/i.test(aiModal.textContent),
+  'with a collapsible block so you can read exactly what was added');
+await click('#modalRoot [data-mclose]', 'Close');
+
+section('the schema-only prompt is still reachable, and still schema-only');
+copied = null;
+await click('[data-action="sample-copy"][data-which="prompt"]', 'Copy the full prompt');
+ok(copied === routinesView.AI_PROMPT, 'it copies AI_PROMPT unchanged');
+ok(!/USE MY EXERCISE NAMES/.test(copied),
+  'with no names block spliced into it — the two buttons really do copy different things');
 
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
