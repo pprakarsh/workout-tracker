@@ -1,12 +1,18 @@
-// Minimal promise wrapper around IndexedDB. Four stores:
-//   routines  : { id, ... }
-//   sessions  : { id, startedAt, ... }
-//   exercises : { key, name, ... }   -- the exercise library, keyed on normName
-//   meta      : { key, value }       -- settings, activeSessionId, rest timer
+// Minimal promise wrapper around IndexedDB. Six stores:
+//   routines   : { id, ... }
+//   sessions   : { id, startedAt, ... }
+//   exercises  : { key, name, ... }  -- the exercise library, keyed on normName
+//   plan       : { key, ... }        -- one record per planned DAY, keyed 'YYYY-MM-DD'
+//   tombstones : { key, store, id, deletedAt, replacedBy }  -- see js/tombstones.js
+//   meta       : { key, value }      -- settings, activeSessionId, rest timer
 const DB_NAME = 'workout-tracker';
-// v2 added `exercises`. Every store is created behind a contains() guard, so an
-// upgrade on an existing device adds only what is missing and touches no data.
-const DB_VERSION = 2;
+// v2 added `exercises`. v3 added `plan` (promoted out of a single `meta` blob,
+// so two devices can each schedule a different day without one losing) and
+// `tombstones`. Every store is created behind a contains() guard, so an upgrade
+// on an existing device adds only what is missing and touches no data -- and
+// the v2 plan blob is migrated by store.init(), not here, because an
+// onupgradeneeded transaction is the wrong place to normalise domain data.
+const DB_VERSION = 3;
 
 let _dbp = null;
 
@@ -25,6 +31,13 @@ export function openDb() {
       }
       if (!db.objectStoreNames.contains('exercises')) {
         db.createObjectStore('exercises', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('plan')) {
+        db.createObjectStore('plan', { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains('tombstones')) {
+        const t = db.createObjectStore('tombstones', { keyPath: 'key' });
+        t.createIndex('deletedAt', 'deletedAt');
       }
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' });

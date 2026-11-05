@@ -64,7 +64,79 @@ const renderAll = (label) => {
   }
 };
 
-section('init on an empty database');
+/* ------------------------------------------------------------------ */
+/* the DB v2 -> v3 upgrade, on a database that already has data         */
+/* ------------------------------------------------------------------ */
+
+// This has to run BEFORE anything opens the database, because every other test
+// in this file creates v3 from scratch and so never exercises the upgrade --
+// which is the one path that can lose a real user's data. Seeded by hand at
+// version 2 with the v2 schema, then handed to the app to upgrade.
+section('a v2 database is seeded by hand, with the plan in the old meta blob');
+const upToday = new Date().toISOString().slice(0, 10);
+const upSeed = await new Promise((resolve, reject) => {
+  const req = indexedDB.open('workout-tracker', 2);
+  req.onupgradeneeded = () => {
+    const db = req.result;
+    db.createObjectStore('routines', { keyPath: 'id' });
+    db.createObjectStore('sessions', { keyPath: 'id' }).createIndex('startedAt', 'startedAt');
+    db.createObjectStore('exercises', { keyPath: 'key' });
+    db.createObjectStore('meta', { keyPath: 'key' });
+  };
+  req.onsuccess = () => {
+    const db = req.result;
+    const tx = db.transaction(['routines', 'sessions', 'exercises', 'meta'], 'readwrite');
+    tx.objectStore('routines').put({
+      id: 'upg_r', name: 'UPG Legacy Routine', description: '', entries: [],
+      createdAt: 1, updatedAt: 1,
+    });
+    tx.objectStore('sessions').put({
+      id: 'upg_s', routineId: 'upg_r', routineName: 'UPG Legacy Routine',
+      startedAt: 1000, finishedAt: 2000, entries: [], updatedAt: 2000,
+    });
+    tx.objectStore('exercises').put({
+      key: 'upg legacy lift', name: 'UPG Legacy Lift', primary: ['Chest'], secondary: [],
+      measure: 'reps', unilateral: false, createdAt: 1, updatedAt: 1,
+    });
+    // the v2 shape: the entire plan as ONE blob under meta.plan
+    tx.objectStore('meta').put({
+      key: 'plan',
+      value: { [upToday]: { routineId: 'upg_r', rest: false, doneAt: null, note: 'from v2' } },
+    });
+    tx.objectStore('meta').put({ key: 'settings', value: { unit: 'lb' } });
+    tx.oncomplete = () => { db.close(); resolve(true); };
+    tx.onerror = () => reject(tx.error);
+  };
+  req.onerror = () => reject(req.error);
+});
+ok(upSeed === true, 'a version-2 database exists with four stores and real records in it');
+
+section('opening it with the app upgrades to v3 and loses nothing');
+await store.init();
+ok(state.routines.some((r) => r.id === 'upg_r'), 'the v2 routine survived the upgrade');
+ok(state.sessions.some((x) => x.id === 'upg_s'), 'so did the v2 session');
+ok(xs.exerciseFor('upg legacy lift') !== null, 'and the v2 library record');
+ok(state.settings.unit === 'lb', 'and the v2 settings, which are still a meta blob');
+
+section('and the plan blob is migrated into the new per-record store');
+ok(state.plan[upToday]?.note === 'from v2', 'the v2 plan day is in memory');
+const upRows = await (await import(`${APP}/js/db.js`)).dbGetAll('plan');
+ok(upRows.some((r) => r.key === upToday && r.note === 'from v2'),
+  'and now exists as its own record, rather than inside one blob');
+ok(upRows.every((r) => Number.isFinite(r.updatedAt)), 'with an updatedAt the blob never had');
+ok((await (await import(`${APP}/js/db.js`)).dbGetAll('tombstones')).length === 0,
+  'and an upgrade leaves no tombstones — nobody deleted anything');
+
+// Clear the seeded data so the 2,000 assertions below start from a clean
+// database, as they were written to.
+await store.deleteRoutine('upg_r');
+await store.deleteSession('upg_s');
+await xs.deleteExercise('upg legacy lift');
+await (await import(`${APP}/js/planstore.js`)).clearPlanDay(upToday);
+await (await import(`${APP}/js/tombstones.js`)).clearAllTombstones();
+await store.updateSettings({ unit: 'kg' });
+
+section('init on the upgraded database');
 await store.init();
 // Most sections below predate the require-an-effort-answer rule and assert the
 // load/amount rules on their own, so the gate is off by default here and has
@@ -3375,6 +3447,223 @@ ok(/Rate of Perceived Exertion/.test(gl.termBodyHtml('rpe')), 'the expansion is 
 ok(!/<div class="tiny">/.test(gl.termBodyHtml('unilateral')), 'and omitted for a word that is not one');
 ok(gl.termTitle('e1rm') === 'e1RM', 'the sheet title is the term as written');
 ok(/No definition/.test(gl.termBodyHtml('nope')), 'an unknown key says so rather than rendering blank');
+
+/* ------------------------------------------------------------------ */
+/* the backend contract: document ids                                 */
+/* ------------------------------------------------------------------ */
+
+const sch = await import(`${APP}/js/syncschema.js`);
+
+section('a local key encodes to a usable document id, and back');
+const scRound = (k) => sch.localKey(sch.docId(k)) === k;
+for (const k of ['back squat', 'r_ltx9f2abc', '90/90 hip stretch', 'a.b', '.', '..',
+  '__proto__', 'push/pull/legs', '100% effort', 'a#b$c[d]e*f', 'ümlaut känguru']) {
+  ok(scRound(k), `"${k}" survives the round trip as "${sch.docId(k)}"`);
+  ok(sch.isValidDocId(sch.docId(k)), `and "${sch.docId(k)}" is a legal document id`);
+}
+
+section('the characters that actually break a path are gone');
+ok(!sch.docId('90/90 hip stretch').includes('/'),
+  'the slash from the shipped catalogue entry is encoded');
+ok(sch.docId('.') !== '.' && sch.docId('..') !== '..',
+  'a lone dot and double dot are not left as themselves');
+ok(!/^__.*__$/.test(sch.docId('__proto__')),
+  'and the reserved __double underscore__ pattern cannot form');
+ok(sch.docId('r_ltx9f2abc') === 'r_ltx9f2abc',
+  'while an ordinary generated id is left completely alone — escaping every underscore would mangle every id this app makes');
+ok(sch.docId('back squat') === 'back squat', 'as is an ordinary exercise key');
+
+section('every key the shipped catalogue can produce is encodable');
+// This is the test that matters: it is how "90/90 Hip Stretch" was found, and
+// it is what stops the next punctuated name shipping broken.
+const scBad = cat.CATALOG.filter((x) => {
+  try { return !sch.isValidDocId(sch.docId(x.key)) || sch.localKey(sch.docId(x.key)) !== x.key; }
+  catch { return true; }
+});
+ok(scBad.length === 0,
+  `all ${cat.CATALOG.length} catalogue keys encode and round-trip${scBad.length ? ` — broken: ${scBad.slice(0, 3).map((x) => x.name).join(', ')}` : ''}`);
+const scNeedy = cat.CATALOG.filter((x) => sch.docId(x.key) !== x.key);
+ok(scNeedy.length >= 1,
+  `and ${scNeedy.length} of them genuinely need encoding (${scNeedy.map((x) => x.name).join(', ')}) — so this is not a no-op test`);
+
+section('an over-long or empty key is an error, never a silent collision');
+let scThrew = 0;
+for (const k of ['', null, undefined]) {
+  try { sch.docId(k); } catch { scThrew++; }
+}
+ok(scThrew === 3, 'an empty key throws rather than producing a shared document id');
+try { sch.docId('x'.repeat(sch.MAX_DOC_ID + 1)); ok(false, 'over-long key should throw'); }
+catch (e) { ok(/over the/.test(e.message), `over-long throws with the limit named: "${e.message}"`); }
+
+section('the meta scope says who each key belongs to');
+ok(sch.metaSyncs('settings') === true, 'settings follow the user');
+for (const k of ['timer', 'activeSessionId', 'dismissed', 'sync', 'lastMerge']) {
+  ok(sch.metaSyncs(k) === false, `${k} never leaves the device`);
+}
+ok(sch.userMetaKeys().every((k) => sch.META_SCOPE[k] === 'user'), 'userMetaKeys returns only user keys');
+ok(!sch.userMetaKeys().includes('sync'), 'and never the sync credential');
+
+/* ------------------------------------------------------------------ */
+/* tombstones                                                         */
+/* ------------------------------------------------------------------ */
+
+const tsm = await import(`${APP}/js/tombstones.js`);
+
+section('deleting a routine leaves a record that it was deleted');
+const tsR = await store.createRoutine({ name: 'TS Routine', entries: [{ name: 'Back Squat' }] });
+ok(tsm.isTombstoned('routines', tsR.id) === false, 'nothing is tombstoned while the routine exists');
+await store.deleteRoutine(tsR.id);
+ok(tsm.isTombstoned('routines', tsR.id) === true, 'and it is after the delete');
+const tsRec = tsm.tombstoneFor('routines', tsR.id);
+ok(tsRec.store === 'routines' && tsRec.id === tsR.id, 'the tombstone names the store and the id');
+ok(tsRec.deletedAt > 0 && tsRec.key === `routines/${tsR.id}`,
+  'keyed by store and id together, so two stores cannot collide on one id');
+
+section('a record and its tombstone never both exist');
+await store.saveRoutine({ ...tsR, name: 'TS Routine back' });
+ok(tsm.isTombstoned('routines', tsR.id) === false,
+  'writing the record clears the tombstone — held in the save primitive, so no caller has to know');
+await store.deleteRoutine(tsR.id);
+ok(tsm.isTombstoned('routines', tsR.id) === true, 'and deleting it again re-records it');
+
+section('sessions are tombstoned whether discarded or deleted from History');
+const tsR2 = await store.createRoutine({ name: 'TS R2', entries: [{ name: 'Back Squat', sets: 1, reps: 5 }] });
+await store.startSession(tsR2.id);
+const tsDiscardId = state.active.id;
+await store.discardSession();
+ok(tsm.isTombstoned('sessions', tsDiscardId), 'a discarded workout leaves a tombstone');
+await store.startSession(tsR2.id);
+const tsFinishId = state.active.id;
+await store.finishSession();
+await store.deleteSession(tsFinishId);
+ok(tsm.isTombstoned('sessions', tsFinishId), 'and so does one deleted from History');
+
+section('a rename records what the name became, not just that it went');
+await xs.saveExercise({ name: 'TS Old Name', primary: ['Chest'] });
+await xs.renameExercise('ts old name', 'TS New Name');
+const tsRen = tsm.tombstoneFor('exercises', 'ts old name');
+ok(tsRen !== null, 'the old key is tombstoned, because the library is keyed on the NAME');
+ok(tsRen.replacedBy === 'ts new name',
+  `and the tombstone carries the successor (${tsRen.replacedBy}) — the only moment that is knowable`);
+ok(xs.exerciseFor('ts new name') !== null, 'while the renamed record exists under the new key');
+
+section('and so does a merge, which is the other place both names are known');
+await xs.saveExercise({ name: 'TS DB Row', primary: ['Back'] });
+const tsMr = await store.createRoutine({ name: 'TS M', entries: [{ name: 'TS DB Row' }] });
+await mg.mergeExercises('TS DB Row', 'Barbell Row', { force: true });
+const tsMerged = tsm.tombstoneFor('exercises', 'ts db row');
+ok(tsMerged?.replacedBy === 'barbell row',
+  `a merged-away name points at the name that replaced it (${tsMerged?.replacedBy})`);
+
+section('undoing that merge resurrects the record without leaving a contradiction');
+await mg.undoLastMerge();
+ok(xs.exerciseFor('ts db row') !== null, 'the record is back');
+ok(tsm.isTombstoned('exercises', 'ts db row') === false,
+  'and its tombstone is gone — correct by construction, because undo writes through saveExercise');
+
+section('tombstones are queryable for the delta push that does not exist yet');
+ok(tsm.tombstoneCount() > 0, `${tsm.tombstoneCount()} tombstones held`);
+ok(tsm.tombstonesLoaded() === true, 'the cache is loaded, so empty can be told from unread');
+const tsAll = tsm.allTombstones();
+ok(tsAll.every((t, i) => i === 0 || tsAll[i - 1].deletedAt >= t.deletedAt),
+  'ordered newest deletion first');
+ok(tsm.tombstonesSince(Date.now() + 1000).length === 0, 'nothing is newer than the future');
+ok(tsm.tombstonesSince(0).length === tsm.tombstoneCount(), 'and everything is newer than zero');
+let tsThrew = false;
+try { await tsm.tombstone('meta', 'settings'); } catch { tsThrew = true; }
+ok(tsThrew, 'a store that holds configuration rather than records cannot be tombstoned');
+
+section('cleanup');
+await store.deleteRoutine(tsR2.id);
+await store.deleteRoutine(tsMr.id);
+await xs.deleteExercise('ts new name');
+await xs.deleteExercise('ts db row');
+ok(true, 'fixtures removed');
+
+/* ------------------------------------------------------------------ */
+/* the plan: one record per day, migrated out of the v2 blob           */
+/* ------------------------------------------------------------------ */
+
+const pdStore = await import(`${APP}/js/planstore.js`);
+const pdLib = await import(`${APP}/js/plan.js`);
+const pdDb = await import(`${APP}/js/db.js`);
+const pdKey = (offset = 0) => pdLib.dayKey(Date.now() + offset * 86400000);
+
+section('a day is stored as its own record, not inside one blob');
+const pdR = await store.createRoutine({ name: 'PD Routine', entries: [{ name: 'Back Squat' }] });
+const pdToday = pdKey(0);
+await pdStore.setPlanDay(pdToday, { routineId: pdR.id });
+const pdRows = await pdDb.dbGetAll('plan');
+const pdRow = pdRows.find((r) => r.key === pdToday);
+ok(pdRow !== undefined, 'the day has its own row in the plan store');
+ok(pdRow.routineId === pdR.id, 'carrying its routine');
+ok(Number.isFinite(pdRow.updatedAt), 'and an updatedAt, so a delta sync can find it');
+ok(state.plan[pdToday]?.routineId === pdR.id,
+  'while state.plan is still the same date-keyed map in memory — which is why no view changed');
+
+section('editing one day does not rewrite the others');
+const pdTom = pdKey(1);
+await pdStore.setPlanDay(pdTom, { rest: true });
+const pdBefore = (await pdDb.dbGetAll('plan')).find((r) => r.key === pdToday).updatedAt;
+await pdStore.setPlanDay(pdTom, { note: 'easy' });
+const pdAfter = (await pdDb.dbGetAll('plan')).find((r) => r.key === pdToday).updatedAt;
+ok(pdBefore === pdAfter,
+  "an untouched day's updatedAt is unchanged — otherwise a delta sync would push the whole plan every edit");
+
+section('clearing a day is intent, so it is tombstoned');
+await pdStore.clearPlanDay(pdTom);
+ok(state.plan[pdTom] === undefined, 'the day is gone from state');
+ok((await pdDb.dbGetAll('plan')).find((r) => r.key === pdTom) === undefined, 'and from the store');
+ok(tsm.isTombstoned('plan', pdTom) === true,
+  'with a tombstone, so it stays cleared when a backend eventually merges');
+
+section('emptying a day field by field is the same intent');
+const pdEmpty = pdKey(2);
+await pdStore.setPlanDay(pdEmpty, { routineId: pdR.id });
+await pdStore.setPlanDay(pdEmpty, { routineId: null });
+ok(state.plan[pdEmpty] === undefined, 'a day with nothing left on it is removed');
+ok(tsm.isTombstoned('plan', pdEmpty) === true, 'and tombstoned like an explicit clear');
+
+section('but pruning is housekeeping and must leave no tombstone');
+// This is the distinction the whole redesign turns on. Pruning runs on a rule
+// every device computes identically, so a tombstone would let this device's
+// tidying delete a day another device is still showing.
+const pdOld = pdLib.dayKey(Date.now() - 400 * 86400000);
+state.plan[pdOld] = { routineId: pdR.id, rest: false, doneAt: null, note: '' };
+await pdDb.dbPut('plan', { key: pdOld, ...state.plan[pdOld], updatedAt: Date.now() });
+const pdDropped = await pdStore.prunePlanStore();
+ok(pdDropped >= 1, `${pdDropped} long-past day(s) pruned`);
+ok(state.plan[pdOld] === undefined, 'the stale day is gone');
+ok((await pdDb.dbGetAll('plan')).find((r) => r.key === pdOld) === undefined, 'from the store too');
+ok(tsm.isTombstoned('plan', pdOld) === false,
+  'and NOT tombstoned — nobody deleted it, so no other device should be told it was');
+ok(pdLib.isEmptyDay({ routineId: null, rest: false, doneAt: null, note: '' }) === true
+  && pdLib.isEmptyDay({ routineId: 'x' }) === false,
+  'the emptiness rule is shared by prune and by the write path, rather than written twice');
+
+section('a v2 meta.plan blob migrates into records, idempotently');
+await pdDb.dbClear('plan');
+state.plan = {};
+const pdBlobKey = pdKey(3);
+const pdBlob = { [pdBlobKey]: { routineId: pdR.id, rest: false, doneAt: null, note: 'from the blob' } };
+const pdMigrated = await pdStore.loadPlan(pdBlob, pdLib.normalizePlan);
+ok(pdMigrated === 1, 'the blob day is migrated');
+ok(state.plan[pdBlobKey]?.note === 'from the blob', 'and is in memory');
+ok((await pdDb.dbGetAll('plan')).some((r) => r.key === pdBlobKey), 'and written as a record');
+const pdAgain = await pdStore.loadPlan(pdBlob, pdLib.normalizePlan);
+ok(pdAgain === 0, 'running it again migrates nothing — so a half-finished migration just completes');
+
+section('and a record always wins over the blob it came from');
+await pdStore.setPlanDay(pdBlobKey, { note: 'edited since' });
+await pdStore.loadPlan(pdBlob, pdLib.normalizePlan);
+ok(state.plan[pdBlobKey].note === 'edited since',
+  'an edit made after the migration is not overwritten by the stale blob');
+
+section('plan cleanup');
+await pdStore.clearPlanDay(pdToday);
+await pdStore.clearPlanDay(pdBlobKey);
+await store.deleteRoutine(pdR.id);
+ok(true, 'plan fixtures removed');
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -137,12 +137,26 @@ export function pastSummary(window = []) {
   return { trained, missed, rest, days: window.length };
 }
 
-/** Drop days that are neither planned nor rest, and days long past. */
+/**
+ * A day that says nothing. Not the same as a day that was deleted: this one was
+ * emptied field by field until nothing was left, which is how a user clears a
+ * day without using Clear.
+ */
+export const isEmptyDay = (e) => !e || (!e.routineId && !e.rest && !e.doneAt && !e.note);
+
+/**
+ * Drop days that are neither planned nor rest, and days long past.
+ *
+ * Pure housekeeping on a deterministic rule -- emptiness, and an age measured
+ * from today -- so every device computes the same answer from the same data
+ * without coordinating. That is precisely why a pruned day must NOT leave a
+ * tombstone: it was not deleted by anyone, and a tombstone would let one
+ * device's tidying delete a day another device is still showing.
+ */
 export function prunePlan(plan = {}, now = Date.now(), keepPastDays = 60) {
   const out = {};
   Object.entries(plan).forEach(([key, e]) => {
-    if (!e) return;
-    if (!e.routineId && !e.rest && !e.doneAt && !e.note) return;
+    if (isEmptyDay(e)) return;
     if (daysFromToday(key, now) < -keepPastDays) return;
     out[key] = e;
   });

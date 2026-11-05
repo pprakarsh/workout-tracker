@@ -50,6 +50,7 @@ Then read, in this order:
    | `js/exercisestore.js` | the exercise library: CRUD, seeding, JSON import | its own db calls |
    | `js/exercisemerge.js` | merging two names into one, across routines and history | the store's save primitives |
    | `js/nudges.js` | `meta.dismissed` — which earned nudges this device has waved off | `metaSet` |
+   | `js/tombstones.js` | the `tombstones` store — deletions, so a future sync cannot undo them | its own db calls |
 
    Two documented exceptions: `js/sync.js` writes its own `meta.sync` record, and
    `js/views/routines.js` uses `dbPut` for one caret-preserving write. **If you add a peer store,

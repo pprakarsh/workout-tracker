@@ -11,6 +11,7 @@
 // unless it is stored once, by name, and read by everything that shares the name.
 import { state, emit, exerciseFor } from './store.js';
 import { dbPut, dbDel, dbClear } from './db.js';
+import { tombstone, clearTombstone } from './tombstones.js';
 import { normalizeExercise, exerciseDefaults, parseGroups } from './exercise.js';
 import { normName } from './util.js';
 
@@ -41,16 +42,27 @@ export async function saveExercise(raw) {
   }
   sortLibrary();
   await dbPut('exercises', ex);
+  await clearTombstone('exercises', ex.key);
   emit();
   return ex;
 }
 
-export async function deleteExercise(key) {
+/**
+ * `replacedBy` names the key taking this one's place.
+ *
+ * Because the library is keyed on the NAME, a rename is a delete plus a save,
+ * and so is a merge -- so a deletion here is often not "this exercise is gone"
+ * but "this exercise is now called something else". Only the caller doing the
+ * renaming knows that, and only while it is happening: afterwards the old key
+ * exists nowhere. Recording it costs one field and cannot be recovered later.
+ */
+export async function deleteExercise(key, { replacedBy = null } = {}) {
   const k = normName(key);
   const at = state.exercises.findIndex((x) => x.key === k);
   if (at < 0) return false;
   state.exercises.splice(at, 1);
   await dbDel('exercises', k);
+  await tombstone('exercises', k, { replacedBy: replacedBy ? normName(replacedBy) : null });
   emit();
   return true;
 }
@@ -68,7 +80,7 @@ export async function renameExercise(key, name) {
   const to = String(name || '').trim();
   if (!ex || !to) return null;
   if (normName(to) === ex.key) return saveExercise({ ...ex, name: to });
-  await deleteExercise(ex.key);
+  await deleteExercise(ex.key, { replacedBy: normName(to) });
   return saveExercise({ ...ex, name: to });
 }
 

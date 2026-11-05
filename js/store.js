@@ -1,5 +1,6 @@
 // Application state + persistence. Everything lives on this device: IndexedDB only.
 import { dbGetAll, dbPut, dbDel, metaGet, metaSet } from './db.js';
+import { initTombstones, tombstone, clearTombstone } from './tombstones.js';
 import { uid, num, parseReps, parseDur, normName } from './util.js';
 import { resolveRun, isIntervals, plannedLegs, reconcileLegs } from './cardio.js';
 import { setIsLoggableFor, countsTowardsVolume, effortAnswered } from './measure.js';
@@ -121,7 +122,13 @@ export async function init() {
     .filter((x) => x.key)
     .sort((a, b) => a.name.localeCompare(b.name));
   state.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
-  state.plan = normalizePlan(plan);
+  // Tombstones first: loadPlan needs them to tell a day never migrated from a
+  // day migrated and then deleted.
+  await initTombstones();
+  // DB v3 moved the plan out of `meta.plan`. Lazy import: planstore is a peer.
+  const { loadPlan, prunePlanStore } = await import('./planstore.js');
+  await loadPlan(plan, normalizePlan);
+  await prunePlanStore();
   state.active = activeId ? state.sessions.find((s) => s.id === activeId && !s.finishedAt) || null : null;
   state.dismissed = Array.isArray(dismissed) ? dismissed : [];
   state.timer = timer && timer.startedAt ? timer : null;
@@ -161,6 +168,8 @@ export async function saveRoutine(routine) {
   if (i >= 0) state.routines[i] = routine; else state.routines.push(routine);
   sortRoutines();
   await dbPut('routines', routine);
+  // The invariant, held here so no caller needs to know it exists. See js/tombstones.js.
+  await clearTombstone('routines', routine.id);
   emit();
   return routine;
 }
@@ -172,6 +181,7 @@ export async function createRoutine({ name, description = '', entries = [] }) {
 export async function deleteRoutine(id) {
   state.routines = state.routines.filter((r) => r.id !== id);
   await dbDel('routines', id);
+  await tombstone('routines', id);
   emit();
 }
 
@@ -197,6 +207,7 @@ export async function persistSession(session) {
   if (i >= 0) state.sessions[i] = session;
   else state.sessions.unshift(session);
   await dbPut('sessions', session);
+  await clearTombstone('sessions', session.id);
 }
 
 /** Persist whatever session is being edited, optionally without re-rendering. */
@@ -292,6 +303,7 @@ export async function discardSession() {
   if (!s) return;
   state.sessions = state.sessions.filter((x) => x.id !== s.id);
   await dbDel('sessions', s.id);
+  await tombstone('sessions', s.id);
   state.active = null;
   state.timer = null;
   await metaSet('activeSessionId', null);
@@ -304,6 +316,7 @@ export async function deleteSession(id) {
   if (state.editSessionId === id) state.editSessionId = null;
   state.sessions = state.sessions.filter((x) => x.id !== id);
   await dbDel('sessions', id);
+  await tombstone('sessions', id);
   emit();
 }
 

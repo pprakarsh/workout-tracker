@@ -280,7 +280,7 @@ export async function mergeExercises(fromName, intoName, { force = false } = {})
     undo.replaced = intoRec ? { ...intoRec } : null;
     undo.created = !intoRec;
     await saveExercise(merged);
-    if (fromRec) await deleteExercise(fromKey);
+    if (fromRec) await deleteExercise(fromKey, { replacedBy: intoKey });
   }
 
   await metaSet('lastMerge', undo);

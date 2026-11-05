@@ -18,6 +18,7 @@ For the rules and checklists you must follow while editing, see [AGENTS.md](AGEN
   - [Getting a routine in: the chooser and the AI prompt](#getting-a-routine-in-the-chooser-and-the-ai-prompt-that-carries-your-names)
   - [Per-muscle trends](#per-muscle-trends-direct-and-indirect-never-blended)
   - [Education: in place, earned, tappable](#education-in-place-earned-and-tappable)
+  - [Backend groundwork](#backend-groundwork-tombstones-document-ids-and-what-travels)
   - [Navigation](#navigation-what-earns-a-tab) · [editing a finished session](#editing-a-finished-session) · [sync](#sync-blob-last-write-wins-guarded)
 - [Known gotchas](#known-gotchas) — every one of these was a real bug
 - [What the platform will not allow](#what-the-platform-will-not-allow)
@@ -118,6 +119,8 @@ js/views/routines.js "Routines" tab: library, editor, data, settings, samples, A
 js/views/newroutine.js how a routine gets made: the chooser, the sample, the AI prompt
 js/nudges.js        data-triggered nudges: the rules, and the one card that shows them
 js/glossary.js      the words this app uses, defined once, rendered tappable in place
+js/syncschema.js    the backend contract: safe document ids, and which meta keys travel
+js/tombstones.js    deletions, remembered -- the one sync groundwork that cannot be added later
 js/views/howitworks.js the four-minute read, including what the app refuses to do
 test/               four dev-only Node suites (jsdom + fake-indexeddb)
 deploy.sh           publish to GitHub Pages
@@ -253,14 +256,24 @@ ignored edits in History because one handler still checked `state.active`).
 
 ### Persistence
 
-IndexedDB `workout-tracker`, **version 2**, four stores:
+IndexedDB `workout-tracker`, **version 3**, six stores:
 
 | Store | Key | Contents |
 |---|---|---|
 | `routines` | `id` | routine objects |
 | `sessions` | `id` | session objects (index on `startedAt`) |
 | `exercises` | `key` | exercise library records, keyed on `normName(name)` |
-| `meta` | `key` | `settings`, `activeSessionId`, `timer`, `plan`, `sync`, `lastMerge` |
+| `plan` | `key` | one record per planned **day**, keyed `YYYY-MM-DD` |
+| `tombstones` | `key` | `"<store>/<id>"` — deletions, so they survive a future sync |
+| `meta` | `key` | `settings`, `activeSessionId`, `timer`, `sync`, `lastMerge`, `dismissed` |
+
+v3 promoted the plan out of a single `meta.plan` blob. One blob is fine on one device and silently
+lossy on two: both hold the whole map, so whichever writes last replaces the other's days wholesale
+and the day you scheduled on the laptop disappears. A date is a naturally collision-free key, so one
+record per day makes a merge correct by construction. `meta.plan` is still read once, by
+`loadPlan()`, to migrate an upgrading device; records win over the blob, so it is idempotent and a
+half-finished migration completes on the next launch. **`state.plan` is still the same date-keyed
+map in memory**, which is why no view changed.
 
 Every store is created behind a `contains()` guard in `onupgradeneeded`, so a version bump on an
 existing device adds only what is missing and touches no existing data. A test asserts this table
@@ -1013,6 +1026,58 @@ not, even when the reader disagrees. A test pins the actual search phrases.
 one button means nothing in there can ask for attention, so `setupView.needsAttention()` drives a dot,
 and the hub lists exactly what the dot was about. Only things with a next action and a real
 consequence count — a dot that is always on is a dot that is never read.
+
+### Backend groundwork: tombstones, document ids, and what travels
+
+There is no backend. These three exist now because each becomes a **data migration** if discovered
+later, and one of them was already broken in shipped data.
+
+**Tombstones** (`js/tombstones.js`) are the only piece that genuinely cannot be added afterwards.
+Every record already carries `updatedAt`, so a future sync can find what changed. A deletion leaves
+nothing at all, so a device that deleted a routine last month is indistinguishable from one that
+never had it — and the naive first sync sends it back. Every deletion the user ever made, undone
+once, permanently.
+
+A dedicated store rather than a flag on the record, because a soft delete means every read path has
+to filter and the first one that forgets shows the user something they deleted. There are many read
+paths here; there is one tombstone writer.
+
+**The invariant: a record and its tombstone never both exist.** Writing a record clears its
+tombstone, held inside `saveRoutine` / `persistSession` / `saveExercise` rather than in the callers,
+which is what makes merge-undo (it resurrects the exercise it deleted) and a merge-import (it may
+restore a record you deleted) correct without either knowing tombstones exist. The cache is loaded
+at boot so the check is a `Map` miss, not a database read — it sits on the hot path of every ✓.
+
+`replacedBy` is written by the two callers that know a deletion is really a rename: `renameExercise`
+and `mergeExercises`. Because the library is keyed on the **name**, both are a delete plus a save,
+and only they know the successor — only while it is happening. Afterwards the old key exists nowhere.
+
+**`docId()`** (`js/syncschema.js`) is why this was urgent. The library is keyed on `normName(name)`,
+a natural key, which is what makes tagging retroactive — but `normName` only trims, lowercases and
+collapses whitespace, so the key keeps every punctuation character the user typed. The shipped
+catalogue contains **`90/90 Hip Stretch`**, and `/` cannot appear in a path-addressed document id;
+it *is* the separator. `users/u1/exercises/90/90 hip stretch` is not a document, it is a malformed
+path. One in 751 today, and users can type anything.
+
+The encoder percent-escapes a fixed reserved set unconditionally — a conditional encode is where the
+bugs live — and escapes only the *first* character when an id would form the reserved
+`__double underscore__` pattern, so ordinary generated ids like `r_ltx9f2` are left alone. It is
+reversible by design, so a document can be read back without a second field and the backend stays
+readable to a human debugging it. It **throws** on an empty or over-long key rather than truncating,
+because two exercises silently sharing one document is worse than an error.
+
+**`META_SCOPE`** settles which of the `meta` keys belong to the **user** and which to the **device**.
+Nothing said before, so the first sync would have guessed — and pushing `timer` lands a running rest
+clock on a phone in a drawer. A test asserts the table covers every key the code actually uses *and*
+names none it doesn't, so adding a meta key forces the decision.
+
+Note that **sync scope is not backup scope.** A backup deliberately carries device state (the live
+session, the running clock) so a restore is byte-for-byte. They are different questions, which is
+why they are written down separately.
+
+Clock skew is a known, accepted gap: every `updatedAt` is this device's clock, so last-write-wins
+between two phones resolves by whichever is further ahead. The fix is a server timestamp, which
+needs a server.
 
 ### Navigation: what earns a tab
 

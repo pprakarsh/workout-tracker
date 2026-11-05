@@ -10,6 +10,7 @@
 // from the store and the store never imports it back.
 import { state, emit, DEFAULT_SETTINGS } from './store.js';
 import { dbClear, dbPut, metaSet } from './db.js';
+import { clearAllTombstones } from './tombstones.js';
 import { normalizeRoutine } from './model.js';
 import { normalizePlan, prunePlan } from './plan.js';
 import { cardioLogged } from './cardio.js';
@@ -24,7 +25,14 @@ export async function restoreAll({
   routines = [], sessions = [], exercises = null, settings = null,
   activeSessionId = null, timer = null, plan = null,
 }) {
-  await Promise.all([dbClear('routines'), dbClear('sessions')]);
+  // A replace makes this device an exact copy of the backup, so the record of
+  // what WAS deleted here has to go with everything else. Keeping tombstones
+  // would re-delete records the backup contains, which is the opposite of a
+  // restore. The plan store is cleared for the same reason: the backup carries
+  // the whole plan, so anything left behind is a day the backup does not have.
+  await Promise.all([
+    dbClear('routines'), dbClear('sessions'), dbClear('plan'), clearAllTombstones(),
+  ]);
 
   state.routines = routines.map(normalizeRoutine);
   state.routines.sort((a, b) => a.name.localeCompare(b.name));
@@ -48,7 +56,10 @@ export async function restoreAll({
   // a backup without a plan predates the Plan tab; leave what is here alone
   if (plan) {
     state.plan = prunePlan(normalizePlan(plan));
-    await metaSet('plan', state.plan);
+    // One record per day since DB v3. The backup FORMAT is still a blob -- it
+    // is a document, not a storage layout, and old backups must keep importing.
+    await Promise.all(Object.entries(state.plan)
+      .map(([key, v]) => dbPut('plan', { key, ...v, updatedAt: Date.now() })));
   }
 
   state.active = activeSessionId

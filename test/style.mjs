@@ -201,7 +201,7 @@ ok(new RegExp(`${countWord} stores`, 'i').test(archDoc),
 // 3. every module that writes to IndexedDB is named in the AGENTS.md ownership
 //    table. "Only store.js touches IndexedDB" survived six new peer stores.
 const writers = ['js/store.js', 'js/planstore.js', 'js/cardiostore.js', 'js/clockstore.js',
-  'js/backupstore.js', 'js/exercisestore.js', 'js/exercisemerge.js', 'js/sync.js',
+  'js/backupstore.js', 'js/exercisestore.js', 'js/exercisemerge.js', 'js/sync.js', 'js/tombstones.js',
   'js/views/routines.js']
   .filter((f) => existsSync(`${APP}/${f}`));
 const actualWriters = [...walk(`${APP}/js`).map((f) => `js/${f}`)]
@@ -224,6 +224,35 @@ const stale = [...agentsDoc.matchAll(/`(js\/[\w]+store\.js|js\/exercisemerge\.js
   });
 ok(stale.length === 0,
   `and every store it lists still persists something${stale.length ? ` — stale: ${stale.join(', ')}` : ''}`);
+
+console.log('\n== the backend contract covers what the code actually stores');
+// A meta key with no declared scope is the bug this prevents: the first sync
+// implementation would have had to guess, and guessing `timer` wrong lands a
+// running rest clock on a device sitting in a drawer.
+const schemaSrc = readFileSync(`${APP}/js/syncschema.js`, 'utf8');
+const scopeBlock = (schemaSrc.match(/export const META_SCOPE = \{([\s\S]*?)\n\};/) || [])[1] || '';
+const scoped = new Set([...scopeBlock.matchAll(/^\s*(\w+):\s*'(user|device)'/gm)].map((m) => m[1]));
+const metaWritten = new Set();
+for (const f of walk(`${APP}/js`)) {
+  const src = readFileSync(`${APP}/js/${f}`, 'utf8');
+  for (const m of src.matchAll(/meta(?:Set|Get)\('(\w+)'/g)) metaWritten.add(m[1]);
+}
+ok(metaWritten.size >= 6, `${metaWritten.size} meta keys are used by the code`);
+const unscoped = [...metaWritten].filter((k) => !scoped.has(k));
+ok(unscoped.length === 0,
+  `every meta key has a declared sync scope${unscoped.length ? ` — undeclared: ${unscoped.join(', ')}` : ''}`);
+const phantom = [...scoped].filter((k) => !metaWritten.has(k));
+ok(phantom.length === 0,
+  `and META_SCOPE names no key the code does not use${phantom.length ? ` — stale: ${phantom.join(', ')}` : ''}`);
+
+// Every record store named in the contract must be a store db.js actually makes.
+const storeNames = [...dbSrc.matchAll(/createObjectStore\('(\w+)'/g)].map((m) => m[1]);
+const recordBlock = (schemaSrc.match(/export const RECORD_STORES = \[([^\]]*)\]/) || [])[1] || '';
+const recordStores = [...recordBlock.matchAll(/'(\w+)'/g)].map((m) => m[1]);
+const notAStore = recordStores.filter((n) => !storeNames.includes(n));
+ok(recordStores.length > 0 && notAStore.length === 0,
+  `RECORD_STORES names only real object stores${notAStore.length ? ` — missing: ${notAStore.join(', ')}` : ''}`);
+ok(!recordStores.includes('meta'), 'and does not include meta, which is configuration rather than records');
 
 console.log('\n== maintainability invariants');
 const modules = [...walk(`${APP}/js`).map((f) => `js/${f}`)];
