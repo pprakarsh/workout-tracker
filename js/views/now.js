@@ -30,9 +30,16 @@ function noSession() {
         </div>
       </div>`;
   }).join('')
-    : '<div class="empty">No routines yet. Go to the Routines tab to create or import one.</div>'}
+    : `<div class="empty">Nothing set up yet.</div>
+       <p class="hint">A <b>routine</b> is the plan &mdash; which exercises, how many sets. Starting
+         one makes a <b>session</b>, which is the log of what you actually did. Nothing you do in a
+         session changes the routine unless you ask it to.</p>
+       <button type="button" class="btn block primary" data-action="routine-new">+ Create a routine</button>
+       <button type="button" class="btn block" data-action="import-open">Import one from JSON</button>`}
     <div class="divider"></div>
-    <button type="button" class="btn block ghost" data-action="start-empty">Start an empty workout</button>`;
+    <button type="button" class="btn block ghost" data-action="start-empty">Start an empty workout</button>
+    ${state.routines.length ? '' : `<p class="hint">Or just start an empty one and add exercises as
+      you go &mdash; a session does not need a routine.</p>`}`;
 }
 
 export function render() {

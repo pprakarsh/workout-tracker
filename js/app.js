@@ -305,8 +305,11 @@ function syncNotice(res) {
     await initSync();
     setSyncNotifier(syncNotice);
     watchRoutines();
-    // Land on the workout if one is running, otherwise on the routine library.
-    state.tab = state.active ? 'now' : (state.routines.length ? 'now' : 'routines');
+    // Land on the workout if one is running, otherwise on Now -- which is the
+    // start screen when nothing is in progress. Never land on `routines`: it
+    // has no tab button since the Set up hub, so a first-run user would arrive
+    // on a screen with nothing highlighted in the bar and no way back to it.
+    state.tab = 'now';
     render();
 
     // Pull a newer copy from the gist in the background. Deliberately after the
@@ -316,7 +319,7 @@ function syncNotice(res) {
       if (res.error) toast(`Gist sync: ${res.error}`, 5000);
       else if (res.conflict) toast('This device has unpushed changes — sync from Routines', 5000);
       else if (res.ok && res.firstRun) {
-        state.tab = state.routines.length ? 'now' : 'routines';
+        state.tab = 'now';
         render();
         toast(`Loaded ${res.actual.sessions} sessions and ${res.actual.routines} routines from your gist`, 5000);
       } else if (res.ok) {

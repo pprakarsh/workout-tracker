@@ -104,6 +104,20 @@ ok($$('#tabBar .tab').length === 6, `six tabs on the bar (${[...$$('#tabBar .tab
 ok($('#tabBar .tab[data-tab="session"]').hidden === true,
   'and the Session tab is hidden with no workout running — a tab you cannot use is a tab in the way');
 
+section('the first-run landing is a tab that exists, with somewhere to go');
+// Regression guard: boot used to land on `routines`, which lost its tab button
+// when the Set up hub arrived -- a new user arrived on a screen with nothing
+// highlighted in the bar and prose pointing at a tab that was not there.
+ok(['now', 'session'].includes(store.state.tab),
+  `boot lands on a tab that is on the bar (${store.state.tab})`);
+ok($(`#tabBar .tab[data-tab="${store.state.tab}"]`) !== null,
+  'and that tab really has a button');
+ok(/Nothing set up yet/.test(view()), 'with an empty state that admits it is empty');
+ok($('[data-action="routine-new"]') !== null, 'and offers to create a routine');
+ok($('[data-action="import-open"]') !== null, 'or import one');
+ok(/routine<\/b> is the plan|routine<\/b>/.test(view()),
+  'and explains routine-vs-session, which is the one model you must have to use this app');
+
 section('seed a routine, then start it from the Now tab');
 await xi.importFromText(routinesView.SAMPLE);
 await sleep(60);
