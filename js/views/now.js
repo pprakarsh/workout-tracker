@@ -6,10 +6,12 @@ import { lastSessionForRoutine } from '../queries.js';
 import { esc, fmtDur, relDay } from '../util.js';
 import { renderEntry } from './entry.js';
 import { toast } from '../ui.js';
+import { nudgeHtml, dismissNudge } from '../nudges.js';
 
 function noSession() {
   const rs = state.routines;
   return `
+    ${nudgeHtml()}
     <div class="card">
       <div class="strong" style="font-size:17px">No workout in progress</div>
       <p class="hint">Pick a routine to start today's session. Your routine is copied into the
@@ -34,8 +36,11 @@ function noSession() {
        <p class="hint">A <b>routine</b> is the plan &mdash; which exercises, how many sets. Starting
          one makes a <b>session</b>, which is the log of what you actually did. Nothing you do in a
          session changes the routine unless you ask it to.</p>
-       <button type="button" class="btn block primary" data-action="routine-how">How do I make one?</button>
-       <button type="button" class="btn block" data-action="routine-new">+ Create a routine</button>
+       <button type="button" class="btn block primary" data-action="sample-start">Try a sample workout</button>
+       <p class="hint center" style="margin:6px 0 14px">Four exercises with the numbers already in.
+         One tap on a ✓ and you have seen how all of this works.</p>
+       <button type="button" class="btn block" data-action="routine-how">How do I make my own?</button>
+       <button type="button" class="btn block ghost" data-action="routine-new">+ Create a routine</button>
        <button type="button" class="btn block ghost" data-action="import-open">Import one from JSON</button>`}
     <div class="divider"></div>
     <button type="button" class="btn block ghost" data-action="start-empty">Start an empty workout</button>
@@ -105,6 +110,8 @@ export const nowActions = {
     if (state.active) { toast('Finish or discard the current workout first'); return; }
     await startSession(id);
   },
+  'nudge-dismiss': async ({ id }) => { await dismissNudge(id); },
+
   'start-empty': async () => {
     if (state.active) { toast('Finish or discard the current workout first'); return; }
     await startSession(null);

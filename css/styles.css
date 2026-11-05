@@ -65,6 +65,14 @@ body{
 .tab-ico{font-size:17px;line-height:1}
 .tab.active{color:var(--accent)}
 .tab .badge{position:absolute}
+/* Depth behind the Set up hub asking for attention. On the icon rather than the
+   label, because the label is already ellipsised at 375px. */
+.tab.attn{position:relative}
+.tab.attn .tab-ico::after{
+  content:"";position:absolute;top:-1px;right:-5px;
+  width:7px;height:7px;border-radius:50%;background:var(--warn);
+}
+.tab.attn .tab-ico{position:relative}
 
 /* ---------- generic bits ---------- */
 h2{font-size:15px;margin:22px 0 8px;color:var(--fg2);font-weight:650;letter-spacing:.02em;text-transform:uppercase}
@@ -577,3 +585,13 @@ details pre.code{max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch}
 
 .restbar-edit{display:flex;align-items:center;gap:6px;flex-wrap:wrap;
   padding-top:7px;border-top:1px solid var(--line)}
+
+/* ---------- nudges and the attention list ---------- */
+/* A nudge is advice the user's own log earned, so it reads as a note, not an
+   alert: no colour shouting, one dismiss, at most one on screen. */
+.card.nudge{border-color:rgba(255,176,32,.32);background:linear-gradient(180deg,rgba(255,176,32,.05),transparent)}
+.card.nudge .tiny{color:var(--warn);text-transform:uppercase;letter-spacing:.04em}
+.card.attn{border-color:rgba(255,176,32,.32)}
+.card.attn .tiny{color:var(--warn);text-transform:uppercase;letter-spacing:.04em}
+.attn-list{margin:6px 0 0;padding-left:18px;color:var(--fg2);font-size:13px}
+.attn-list li{margin:2px 0}

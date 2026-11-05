@@ -36,6 +36,7 @@ const backupStore = await import(`${APP}/js/backupstore.js`);
 const ex = await import(`${APP}/js/exercise.js`);
 const xs = await import(`${APP}/js/exercisestore.js`);
 const cat = await import(`${APP}/js/catalog.js`);
+const model = await import(`${APP}/js/model.js`);
 const mg = await import(`${APP}/js/exercisemerge.js`);
 const cardioStore = await import(`${APP}/js/cardiostore.js`);
 const xi = await import(`${APP}/js/exportimport.js`);
@@ -3167,6 +3168,162 @@ ok(npView.namesBlock().length > 400 && !npView.namesBlock().includes('${'),
 
 npRestore();
 ok(npView.promptNames().length >= 0, 'the fixture dataset is restored');
+
+/* ------------------------------------------------------------------ */
+/* nudges: earned by the data, one at a time, dismissible forever      */
+/* ------------------------------------------------------------------ */
+
+const ndg = await import(`${APP}/js/nudges.js`);
+
+const ndSaved = { r: state.routines, s: state.sessions, x: state.exercises, d: state.dismissed };
+const ndSet = ({ routines = [], sessions = [], exercises = [], dismissed = [] }) => {
+  state.routines = routines; state.sessions = sessions;
+  state.exercises = exercises; state.dismissed = dismissed;
+};
+/** n finished sessions, each logging one done set of `name`. */
+const ndSessions = (n, entry = {}) => Array.from({ length: n }, (_, i) => ({
+  id: `nd-s${i}`, startedAt: 1000 + i, finishedAt: 2000 + i, routineId: entry.routineId || null,
+  entries: [{
+    name: entry.name || 'Back Squat', type: 'lift',
+    measure: entry.measure || 'reps', unilateral: !!entry.unilateral,
+    sets: [{ done: true, weight: 50, reps: 5, rest: entry.rest ?? null }],
+  }],
+}));
+
+section('a nudge stays silent until the data earns it');
+ndSet({ sessions: ndSessions(9) });
+ok(ndg.activeNudge()?.id !== 'backup', '9 sessions with no backup is not yet the backup nudge');
+ndSet({ sessions: ndSessions(10) });
+const ndBackup = ndg.activeNudge();
+ok(ndBackup?.id === 'backup', 'the 10th session earns it');
+ok(/10 sessions of work/.test(ndBackup.body), `and it states the real count: "${ndBackup.body.slice(0, 54)}..."`);
+ok(ndBackup.cta?.action === 'routines-go', 'with a button that goes where the fix is');
+
+section('one at a time, highest consequence first');
+ndSet({ sessions: ndSessions(10) });
+ok(ndg.RULES.findIndex((r) => r.id === 'backup') === 0,
+  'backup is rule 0 — the only one whose absence loses data');
+ok(ndg.activeNudge({ ...ndg.nudgeContext() }) !== null, 'something fires');
+ok(typeof ndg.activeNudge().id === 'string' && !Array.isArray(ndg.activeNudge()),
+  'activeNudge returns one nudge, never a list — a stack of advice is a help page in disguise');
+const ndCtx = ndg.nudgeContext();
+ok(ndCtx.sessions.length === 10 && ndCtx.restsLogged === 0,
+  'the shared context is computed once and carries what every rule needs');
+
+section('dismissing one is permanent, and lets the next through');
+await ndg.dismissNudge('backup');
+ok(state.dismissed.includes('backup'), 'the id is remembered');
+const ndNext = ndg.activeNudge();
+ok(ndNext?.id === 'rest-timer', `the next earned rule takes its place (${ndNext?.id})`);
+await ndg.dismissNudge('rest-timer');
+ok(ndg.activeNudge() === null, 'and with both waved off, the screen stays quiet');
+ok(ndg.nudgeHtml() === '', 'which renders as nothing at all, not an empty card');
+
+section('the rest-timer rule reads actual logged rest, not the target');
+ndSet({ sessions: ndSessions(6, { rest: 90 }) });
+ok(ndg.nudgeContext().restsLogged === 6, 'a recorded rest counts');
+ok(ndg.activeNudge()?.id !== 'rest-timer', 'so someone who uses the clock is never told about it');
+ndSet({ sessions: ndSessions(6) });
+ok(ndg.activeNudge()?.id === 'rest-timer', 'and someone who never has, is — once');
+
+section('the shape rules fire on a real disagreement with the catalogue');
+ndSet({ sessions: ndSessions(4, { name: 'Front Plank', rest: 60 }) });
+const ndHold = ndg.activeNudge();
+ok(ndHold?.id === 'hold-measure',
+  'a catalogue hold logged in reps four times is worth mentioning');
+ok(/Front Plank/.test(ndHold.body) && /4 times/.test(ndHold.body), 'naming it and saying how often');
+ndSet({ sessions: ndSessions(4, { name: 'Front Plank', measure: 'time', rest: 60 }) });
+ok(ndg.activeNudge()?.id !== 'hold-measure', 'logged as time, there is nothing to say');
+
+section('but never against a choice the user has already stated');
+ndSet({
+  sessions: ndSessions(4, { name: 'Front Plank', rest: 60 }),
+  exercises: [{ key: 'front plank', name: 'Front Plank', measure: 'reps', primary: ['Core'], unilateral: false }],
+});
+ok(ndg.activeNudge()?.id !== 'hold-measure',
+  'a library record saying "reps" is a decision, and a decision is respected');
+
+section('the unilateral rule needs five bilateral logs of a one-sided lift');
+ndSet({ sessions: ndSessions(4, { name: 'Single-arm Dumbbell Row', rest: 60 }) });
+ok(ndg.activeNudge()?.id !== 'unilateral', 'four is not yet a habit');
+ndSet({ sessions: ndSessions(5, { name: 'Single-arm Dumbbell Row', rest: 60 }) });
+const ndUni = ndg.activeNudge();
+ok(ndUni?.id === 'unilateral', 'five is');
+ok(/Single-arm Dumbbell Row/.test(ndUni.body) && /L and R/.test(ndUni.body),
+  'and it says what marking it unilateral actually changes');
+ndSet({ sessions: ndSessions(5, { name: 'Single-arm Dumbbell Row', unilateral: true, rest: 60 }) });
+ok(ndg.activeNudge()?.id !== 'unilateral', 'already marked, nothing to say');
+
+section('the stale-targets rule needs a routine run 8 times and never edited');
+const ndR = { id: 'nd-r', name: 'ND Push day', entries: [], createdAt: 5000, updatedAt: 5000 };
+ndSet({ routines: [ndR], sessions: ndSessions(7, { routineId: 'nd-r', rest: 60 }) });
+ok(ndg.activeNudge()?.id !== 'stale-targets', 'seven runs is not enough');
+ndSet({ routines: [ndR], sessions: ndSessions(8, { routineId: 'nd-r', rest: 60 }) });
+const ndStale = ndg.activeNudge();
+ok(ndStale?.id === 'stale-targets', 'eight is');
+ok(/ND Push day/.test(ndStale.body) && /8 times/.test(ndStale.body), 'naming the routine and the count');
+ok(/progresses by itself, deliberately/.test(ndStale.body),
+  'and it states the no-auto-progression choice rather than implying a missing feature');
+ndSet({
+  routines: [{ ...ndR, updatedAt: 5000 + 600000 }],
+  sessions: ndSessions(8, { routineId: 'nd-r', rest: 60 }),
+});
+ok(ndg.activeNudge()?.id !== 'stale-targets', 'a routine that HAS been edited is left alone');
+
+section('a rule that throws is swallowed, not allowed to blank the screen');
+const ndBad = { id: 'nd-bad', title: 'x', body: 'y', when: () => { throw new Error('boom'); } };
+ndg.RULES.unshift(ndBad);
+ndSet({ sessions: ndSessions(10) });
+ok(ndg.activeNudge()?.id === 'backup', 'evaluation continues past the broken rule');
+ndg.RULES.shift();
+
+section('the nudge card says where it came from, and offers one way out');
+ndSet({ sessions: ndSessions(10) });
+const ndHtml = ndg.nudgeHtml();
+ok(/Noticed in your log/.test(ndHtml), 'it is labelled as coming from their own data');
+ok(/data-action="nudge-dismiss"/.test(ndHtml) && /data-id="backup"/.test(ndHtml),
+  'with a dismiss carrying the id');
+ok(!ndHtml.includes('${'), 'and nothing unsubstituted');
+
+section('a name the user typed is escaped on the way into the card');
+// The rule text is ours and carries deliberate <b> tags, so the card cannot be
+// escaped wholesale. The VALUES spliced into it are user input and must be.
+ndSet({
+  routines: [{ id: 'nd-x', name: 'Push <img src=x onerror=alert(1)> day', entries: [], createdAt: 1, updatedAt: 1 }],
+  sessions: ndSessions(8, { routineId: 'nd-x', rest: 60 }),
+});
+const ndXss = ndg.activeNudge();
+ok(ndXss?.id === 'stale-targets', 'the rule fires on the routine with the nasty name');
+ok(!/<img/.test(ndXss.body) && /&lt;img/.test(ndXss.body),
+  'and the name arrives escaped, not as markup');
+ok(/<b>/.test(ndXss.body), 'while the rule\'s own emphasis survives — values escaped, text not');
+ok(!/<img/.test(ndg.nudgeHtml(ndXss)), 'so nothing raw reaches the rendered card');
+
+/* the sample workout */
+section('the sample routine is four exercises that each demonstrate something');
+const ndSample = npView.sampleRoutine('kg');
+ok(/sample/i.test(ndSample.name), `it says it is a sample in the name: "${ndSample.name}"`);
+ok(ndSample.entries.length === 4, 'four exercises');
+ok(Array.isArray(ndSample.entries[0].sets) && ndSample.entries[0].sets.length === 3,
+  'the first has a per-set ramp, so the two target shapes are both visible');
+ok(ndSample.entries[1].group === ndSample.entries[2].group && ndSample.entries[1].group,
+  'two share a group label, so a superset reads as one block');
+ok(ndSample.entries[3].measure === 'time', 'and one is measured in seconds, not reps');
+ok(ndSample.entries.every((e) => cat.catalogFor(e.name) !== null),
+  'every name is a catalogue name, so nothing arrives untagged');
+ok(/Delete it whenever/.test(ndSample.description), 'and it says how to get rid of it');
+const ndLb = npView.sampleRoutine('lb');
+ok(ndLb.entries[0].sets[0].weight > ndSample.entries[0].sets[0].weight,
+  'the loads follow the unit, rather than handing a lb user a kg number');
+const ndNorm = model.normalizeRoutine(npView.sampleRoutine('kg'));
+ok(ndNorm.entries[3].measure === 'time' && ndNorm.entries[3].targetSets === 3
+  && ndNorm.entries[3].repsMin === 45,
+  'and it survives normalisation with its shape intact — 3 sets of 45 seconds, not 45 reps');
+ok(ndNorm.entries[0].setTargets?.length === 3 && ndNorm.entries[0].setTargets[2].weight > ndNorm.entries[0].setTargets[0].weight,
+  'with the ramp on the first exercise read as three different per-set targets');
+
+ndSet({ routines: ndSaved.r, sessions: ndSaved.s, exercises: ndSaved.x, dismissed: ndSaved.d || [] });
+ok(Array.isArray(state.dismissed), 'the fixture dataset is restored');
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

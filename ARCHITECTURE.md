@@ -114,7 +114,8 @@ js/views/now.js     "Now" tab
 js/views/session.js "Session" tab
 js/views/history.js "History" tab (read-only detail + edit mode)
 js/views/routines.js "Routines" tab: library, editor, data, settings, samples, AI prompt
-js/views/newroutine.js how a routine gets made: the chooser, and the AI prompt with your names
+js/views/newroutine.js how a routine gets made: the chooser, the sample, the AI prompt
+js/nudges.js        data-triggered nudges: the rules, and the one card that shows them
 test/               four dev-only Node suites (jsdom + fake-indexeddb)
 deploy.sh           publish to GitHub Pages
 ```
@@ -222,6 +223,7 @@ state = {
   tab,              // 'now'|'session'|'plan'|'history'|'trends'|'setup'|'routines'|'library'|'settings'
   nav,              // per-tab sub-navigation: { sessionId?, routineId?, trendName?,
                     //   libMode?, libQuery?, libCat?, lastMerge? }
+  dismissed: [],    // ids of nudges (js/nudges.js) dismissed on this device, a meta blob
 }
 ```
 

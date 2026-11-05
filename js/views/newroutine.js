@@ -29,6 +29,8 @@
 // tells it to go ahead and invent one when nothing in the list fits. Picking a
 // worse exercise to match an existing name would be the real damage.
 import { namesInUse } from '../exercisemerge.js';
+import { state, createRoutine, startSession } from '../store.js';
+import { normalizeRoutine } from '../model.js';
 import { CATALOG } from '../catalog.js';
 import { esc } from '../util.js';
 import { openModal, toast, copyText } from '../ui.js';
@@ -150,6 +152,52 @@ export function aiPrompt() {
 }
 
 /* ------------------------------------------------------------------ */
+/* the sample workout                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Four exercises, pre-filled, startable in one tap.
+ *
+ * This exists because nothing explains "logging is confirming, not typing" like
+ * confirming one set. The two sentences in the Now empty state are the whole
+ * explanation budget for a first launch; everything else is better learned by
+ * tapping one tick and seeing what happens.
+ *
+ * Chosen so the first screen is representative rather than impressive: a
+ * barbell lift with a per-set ramp, a superset pair showing how a group reads,
+ * and a plank so the amount column is visibly seconds rather than reps. Named
+ * with "sample" in the title because it ends up in History like any other
+ * session, and a name is the only honest way to say what it was.
+ */
+export function sampleRoutine(unit = 'kg') {
+  const light = unit === 'lb' ? [65, 85, 95] : [30, 40, 45];
+  return {
+    name: 'Full body — sample',
+    description: 'A sample routine, so you can see what logging feels like. '
+      + 'Delete it whenever you like — Routines, then Delete.',
+    entries: [
+      {
+        name: 'Back Squat',
+        rest: '2:30',
+        sets: light.map((w, i) => ({ weight: w, reps: [8, 6, 6][i] })),
+        notes: 'Tap a ✓ to log a set. The numbers are already filled in — you are confirming them, not typing them.',
+      },
+      {
+        name: 'Barbell Bench Press', group: 'A', rest: '1:30', sets: 3, reps: '8-10', weight: light[0],
+        notes: 'This and the next exercise share the label A, so they are a superset and show up together.',
+      },
+      {
+        name: 'Barbell Row', group: 'A', rest: '1:30', sets: 3, reps: '8-10', weight: light[0],
+      },
+      {
+        name: 'Front Plank', measure: 'time', sets: 3, reps: '45', rest: '1:00',
+        notes: 'Measured in seconds, not reps. The ⏱ times the hold for you.',
+      },
+    ],
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* screens                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -230,6 +278,15 @@ function aiHtml() {
 }
 
 export const newRoutineActions = {
+  'sample-start': async () => {
+    if (state.active) { toast('Finish or discard the current workout first'); return; }
+    const existing = state.routines.find((r) => r.name === sampleRoutine().name);
+    const r = existing || await createRoutine(normalizeRoutine(sampleRoutine(state.settings.unit)));
+    await startSession(r.id);
+    state.tab = 'now';
+    toast('Four exercises, numbers already filled in. Tap a ✓ to log a set.', 5000);
+  },
+
   'routine-how': () => {
     openModal({ title: 'Three ways to get a routine', bodyHtml: chooserHtml(), cancelText: 'Close', wide: true });
   },

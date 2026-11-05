@@ -2613,5 +2613,90 @@ ok(copied === routinesView.AI_PROMPT, 'it copies AI_PROMPT unchanged');
 ok(!/USE MY EXERCISE NAMES/.test(copied),
   'with no names block spliced into it — the two buttons really do copy different things');
 
+section('a brand-new user can log a set from the empty state in two taps');
+// Everything this app teaches about logging is "the numbers are already there,
+// you are confirming them". That is one tap to find out and a paragraph to say.
+const sdRoutines = store.state.routines;
+const sdActive = store.state.active;
+if (store.state.active) {
+  store.state.active = null;
+}
+store.state.routines = [];
+await gotoTab('now');
+ok($('[data-action="sample-start"]') !== null, 'the empty state offers a sample workout');
+const sdBtns = $$('#viewRoot button[data-action]').map((b) => b.dataset.action);
+ok(sdBtns.indexOf('sample-start') < sdBtns.indexOf('routine-new'),
+  'ahead of creating one from nothing, which is the harder first step');
+ok(/numbers already in/i.test(view()), 'and says what makes it worth tapping');
+
+await click('[data-action="sample-start"]', 'Try a sample workout');
+const sdSess = store.state.active;
+ok(sdSess !== null && /sample/i.test(sdSess.routineName),
+  `one tap and a workout is running: "${sdSess?.routineName}"`);
+ok(sdSess.entries.length === 4, 'with the four sample exercises in it');
+ok($('[data-action="set-confirm"]') !== null,
+  'and the first screen is a confirm button, not an empty form');
+const sdConfirm = $('.confirm .big')?.textContent.replace(/\s+/g, ' ').trim();
+ok(/\d/.test(sdConfirm || ''), `stating the numbers it will log: "${sdConfirm}"`);
+await click('[data-action="set-confirm"]', 'confirm the first set');
+const sdLogged = store.state.active.entries[0].sets.filter((x) => x.done);
+ok(sdLogged.length === 1, 'the second tap logs a set — two taps from nothing to logged');
+ok(sdLogged[0].weight != null && sdLogged[0].reps != null,
+  `with the prefilled numbers recorded (${sdLogged[0].weight} x ${sdLogged[0].reps}), not blanks`);
+ok(store.state.active.entries[3].measure === 'time',
+  'and the plank in the same session is measured in seconds, so the amount column teaches itself');
+
+await click('[data-action="go-session"]', 'open the session');
+await click('[data-action="sess-discard"]', 'Discard');
+$('#modalForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+await sleep(90);
+ok(store.state.active === null, 'and a demo tap-through can be discarded, so Trends stays honest');
+const sdSampleR = store.state.routines.find((r) => /sample/i.test(r.name));
+if (sdSampleR) await store.deleteRoutine(sdSampleR.id);
+
+store.state.routines = sdRoutines;
+store.state.active = sdActive;
+
+section('the nudge card appears on Now, names its trigger, and dismisses for good');
+const ndDom = await import(`${APP}/js/nudges.js`);
+const sdSessions = store.state.sessions;
+const sdDismissed = store.state.dismissed;
+store.state.active = null;
+store.state.dismissed = [];
+store.state.sessions = Array.from({ length: 11 }, (_, i) => ({
+  id: `dn-${i}`, startedAt: 1000 + i, finishedAt: 2000 + i, routineId: null,
+  entries: [{ name: 'Back Squat', type: 'lift', measure: 'reps', sets: [{ done: true, reps: 5 }] }],
+}));
+await gotoTab('now');
+ok($('#viewRoot .card.nudge') !== null, 'the nudge is rendered on the Now screen');
+ok(/Noticed in your log/.test(view()), 'labelled as coming from their own data');
+ok(/only on this phone/.test(view()), 'and it is the backup one, which is the only one that loses data');
+ok($$('#viewRoot .card.nudge').length === 1, 'exactly one, never a stack');
+await click('#viewRoot [data-action="nudge-dismiss"]', 'dismiss it');
+ok(store.state.dismissed.includes('backup'), 'the dismissal is recorded');
+ok($('#viewRoot .card.nudge') === null || !/only on this phone/.test(view()),
+  'and that nudge does not come back');
+store.state.sessions = sdSessions;
+store.state.dismissed = sdDismissed;
+store.state.active = sdActive;
+
+section('the Set up tab carries a dot only when something in there needs doing');
+const setupView2 = await import(`${APP}/js/views/setup.js`);
+const sdTab = $('#tabBar .tab[data-tab="setup"]');
+const sdAttn = setupView2.needsAttention();
+await gotoTab('now');
+ok(sdTab !== null, 'the Set up tab is on the bar');
+ok(sdTab.classList.contains('attn') === (sdAttn.length > 0),
+  `the dot matches needsAttention() (${sdAttn.length} item(s): ${sdAttn.join('; ') || 'none'})`);
+if (sdAttn.length) {
+  ok(sdTab.getAttribute('aria-description') === sdAttn.join('; '),
+    'and a screen reader is told what the dot means, since a dot alone says nothing');
+} else {
+  ok(sdTab.getAttribute('aria-description') === null, 'and no stale description is left behind');
+}
+await gotoTab('setup');
+ok(sdAttn.length === 0 || $('#viewRoot .card.attn') !== null,
+  'the hub itself lists what the dot was about');
+
 console.log(`\n${failures === 0 ? 'ALL DOM CHECKS PASSED' : `${failures} DOM CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);

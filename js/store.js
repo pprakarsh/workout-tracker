@@ -69,6 +69,10 @@ export const state = {
   timer: null,           // { kind:'rest'|'hold', startedAt, target, sessionId, entryId, setId, label, beeped }
   tab: 'now',
   nav: {},               // per-tab sub-navigation, e.g. { routineId, sessionId }
+  // ids of the data-triggered nudges (js/nudges.js) this device has been shown
+  // and had dismissed. A blob in `meta`, and deliberately NOT in the backup: a
+  // nudge is not data, and a genuinely new device has not seen them yet.
+  dismissed: [],
 };
 
 const listeners = new Set();
@@ -100,7 +104,7 @@ export async function setEditing(sessionId) {
 /* ------------------------------------------------------------------ */
 
 export async function init() {
-  const [routines, sessions, exercises, settings, activeId, timer, plan] = await Promise.all([
+  const [routines, sessions, exercises, settings, activeId, timer, plan, dismissed] = await Promise.all([
     dbGetAll('routines'),
     dbGetAll('sessions'),
     dbGetAll('exercises'),
@@ -108,6 +112,7 @@ export async function init() {
     metaGet('activeSessionId', null),
     metaGet('timer', null),
     metaGet('plan', null),
+    metaGet('dismissed', null),
   ]);
   state.routines = (routines || []).map(normalizeRoutine)
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -118,6 +123,7 @@ export async function init() {
   state.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
   state.plan = normalizePlan(plan);
   state.active = activeId ? state.sessions.find((s) => s.id === activeId && !s.finishedAt) || null : null;
+  state.dismissed = Array.isArray(dismissed) ? dismissed : [];
   state.timer = timer && timer.startedAt ? timer : null;
   // a timer belonging to a session that is gone or finished is stale
   if (state.timer && state.timer.sessionId && !state.active) state.timer = null;

@@ -98,6 +98,17 @@ export function render() {
       b.classList.toggle('active', b.dataset.tab === state.tab);
     });
 
+    // Folding three screens behind the Set up hub cost them the ability to ask
+    // for attention. The dot gives it back: it means setupView.needsAttention()
+    // found something with a next action, and it means nothing else.
+    const setupTab = document.querySelector('#tabBar .tab[data-tab="setup"]');
+    if (setupTab) {
+      const attn = setupView.needsAttention();
+      setupTab.classList.toggle('attn', attn.length > 0);
+      if (attn.length) setupTab.setAttribute('aria-description', attn.join('; '));
+      else setupTab.removeAttribute('aria-description');
+    }
+
     const dl = document.getElementById('exerciseNames');
     const names = exerciseNames();
     if (dl.dataset.count !== String(names.length)) {

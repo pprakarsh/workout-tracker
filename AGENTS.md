@@ -49,6 +49,7 @@ Then read, in this order:
    | `js/backupstore.js` | whole-database replace, and the confirmation counts | its own db calls |
    | `js/exercisestore.js` | the exercise library: CRUD, seeding, JSON import | its own db calls |
    | `js/exercisemerge.js` | merging two names into one, across routines and history | the store's save primitives |
+   | `js/nudges.js` | `meta.dismissed` — which earned nudges this device has waved off | `metaSet` |
 
    Two documented exceptions: `js/sync.js` writes its own `meta.sync` record, and
    `js/views/routines.js` uses `dbPut` for one caret-preserving write. **If you add a peer store,

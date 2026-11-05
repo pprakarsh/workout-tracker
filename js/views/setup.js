@@ -29,6 +29,28 @@ const rowBody = (icon, title, sub, badge = '') => `
     </div>
     <div class="dim">›</div>`;
 
+/**
+ * What in here is asking to be dealt with, if anything.
+ *
+ * Shared with the tab bar, which shows a dot when this is non-empty. Depth
+ * behind a hub tab is invisible otherwise: the whole cost of folding three
+ * screens behind one button is that nothing in there can ask for attention.
+ *
+ * Deliberately only things with a next action and a real consequence. A count
+ * that is merely low ("you have two routines") is not attention, it is noise,
+ * and a dot that is always on is a dot that is never read.
+ */
+export function needsAttention() {
+  const out = [];
+  const fp = dataFingerprint();
+  if (fp.sessions >= 3 && !syncState().configured) out.push('no backup yet');
+  const untagged = state.exercises.filter((x) => !x.primary.length).length;
+  if (untagged) out.push(`${untagged} exercise${untagged === 1 ? '' : 's'} need muscle tags`);
+  const dupes = findDuplicates().length;
+  if (dupes) out.push(`${dupes} duplicate name${dupes === 1 ? '' : 's'}`);
+  return out;
+}
+
 export function render() {
   const s = state.settings;
   const fp = dataFingerprint();
@@ -36,6 +58,7 @@ export function render() {
   const untagged = state.exercises.filter((x) => !x.primary.length).length;
   const unknown = exerciseLibrary().filter((x) => !exerciseFor(x.key)).length;
   const dupes = findDuplicates().length;
+  const attention = needsAttention();
 
   const libSub = state.exercises.length
     ? `${state.exercises.length} described${unknown ? ` · ${unknown} not yet in it` : ''}`
@@ -44,6 +67,13 @@ export function render() {
 
   return `
     <h2>Set up</h2>
+    ${attention.length ? `
+      <div class="card attn">
+        <div class="tiny">Worth dealing with</div>
+        <ul class="attn-list">${attention.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>
+        <p class="hint" style="margin:6px 0 0">None of these stops you training. They are here
+          because the dot on this tab means these, and nothing else.</p>
+      </div>` : ''}
     <div class="setup-row" data-action="routines-go" role="button" tabindex="0">
       ${rowBody('📋', 'Routines', state.routines.length
     ? `${state.routines.length} routine${state.routines.length === 1 ? '' : 's'} · ${fp.sessions} session${fp.sessions === 1 ? '' : 's'} logged`
