@@ -3173,9 +3173,31 @@ state.active = null;
 const npNow = nowView.render();
 state.active = npActive;
 ok(npNow.includes('data-action="routine-how"'),
-  'and a first-time user is offered the explanation first, from the Now tab');
-ok(npNow.indexOf('data-action="routine-how"') < npNow.indexOf('data-action="routine-new"'),
-  'ahead of the blank-routine button, since not knowing which to pick is the common case');
+  'and a first-time user is offered the explanation, from the Now tab');
+ok(npNow.indexOf('data-action="routine-how"') < npNow.indexOf('data-action="import-open"'),
+  'ahead of the import path, since not knowing which to pick is the commoner problem');
+
+// The two actions a new user needs most must not sit below a list that can be
+// any length. Both live in the header card, above the <h2> that introduces the
+// routines, so neither can be scrolled off by owning more routines.
+section('making a routine and starting an empty workout are both above the list');
+for (const [what, action] of [['creating a routine', 'routine-new'], ['starting empty', 'start-empty']]) {
+  ok(npNow.indexOf(`data-action="${action}"`) < npNow.indexOf('<h2>Start a workout</h2>'),
+    `${what} is reachable above the routine list, with no routines`);
+}
+const npSavedR = state.routines;
+state.routines = Array.from({ length: 8 }, (_, i) => ({
+  id: `np-many-${i}`, name: `NP Routine ${i}`, description: '', entries: [{ name: 'Back Squat' }],
+}));
+const npFullNow = nowView.render();
+state.routines = npSavedR;
+for (const [what, action] of [['+ New routine', 'routine-new'], ['Start empty', 'start-empty']]) {
+  ok(npFullNow.indexOf(`data-action="${action}"`) < npFullNow.indexOf('routine-card'),
+    `${what} still sits above the first routine card with eight routines`);
+}
+ok((npFullNow.match(/data-action="start-empty"/g) || []).length === 1
+  && (npFullNow.match(/data-action="routine-new"/g) || []).length === 1,
+  'and each appears exactly once — the old copy at the foot of the page is gone, not duplicated');
 
 section('the names actually in use are pasted in, most-used first');
 state.exercises = [{ name: 'NP Unused Lift', primary: ['Quads'] }];

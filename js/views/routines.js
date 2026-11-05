@@ -122,6 +122,11 @@ export function render() {
 
   return `
     <h2>Routines</h2>
+    <div class="btn-row" style="margin-bottom:10px">
+      <button type="button" class="btn primary" data-action="routine-new">+ New routine</button>
+      <button type="button" class="btn" data-action="import-open">Import</button>
+      <button type="button" class="btn ghost" data-action="routine-how">How?</button>
+    </div>
     ${state.routines.length ? state.routines.map((r) => {
     const last = lastSessionForRoutine(r.id);
     const names = r.entries.slice(0, 5).map((e) => e.name);
@@ -143,11 +148,6 @@ export function render() {
   }).join('')
     : '<div class="empty">No routines yet — create one, or import from JSON.</div>'}
 
-    <div class="btn-row" style="margin-top:4px">
-      <button type="button" class="btn primary" data-action="routine-new">+ New routine</button>
-      <button type="button" class="btn" data-action="import-open">Import</button>
-      <button type="button" class="btn ghost" data-action="routine-how">How?</button>
-    </div>
 
     <h2>Exercise library</h2>
     <div class="card" data-action="library-go" role="button" tabindex="0">

@@ -15,8 +15,13 @@ function noSession() {
     ${nudgeHtml()}
     <div class="card">
       <div class="strong" style="font-size:17px">No workout in progress</div>
-      <p class="hint">Pick a routine to start today's session. Your routine is copied into the
+      <p class="hint">Pick a routine below to start today's session. Your routine is copied into the
         session, so anything you change today stays in today.</p>
+      <div class="btn-row" style="margin-top:10px">
+        <button type="button" class="btn sm" data-action="routine-new">+ New routine</button>
+        <button type="button" class="btn sm ghost" data-action="start-empty"
+                aria-label="Start an empty workout with no routine">Start empty</button>
+      </div>
     </div>
     <h2>Start a workout</h2>
     ${rs.length ? rs.map((r) => {
@@ -36,17 +41,13 @@ function noSession() {
     : `<div class="empty">Nothing set up yet.</div>
        <p class="hint">A ${termHtml('routine')} is the plan &mdash; which exercises, how many sets.
          Starting one makes a ${termHtml('session')}, which is the log of what you actually did.
-         Nothing you do in a session changes the routine unless you ask it to.</p>
+         Nothing you do in a session changes the routine unless you ask it to. Or skip all of that
+         and tap <b>Start empty</b> above &mdash; a session does not need a routine.</p>
        <button type="button" class="btn block primary" data-action="sample-start">Try a sample workout</button>
        <p class="hint center" style="margin:6px 0 14px">Four exercises with the numbers already in.
          One tap on a ✓ and you have seen how all of this works.</p>
        <button type="button" class="btn block" data-action="routine-how">How do I make my own?</button>
-       <button type="button" class="btn block ghost" data-action="routine-new">+ Create a routine</button>
-       <button type="button" class="btn block ghost" data-action="import-open">Import one from JSON</button>`}
-    <div class="divider"></div>
-    <button type="button" class="btn block ghost" data-action="start-empty">Start an empty workout</button>
-    ${state.routines.length ? '' : `<p class="hint">Or just start an empty one and add exercises as
-      you go &mdash; a session does not need a routine.</p>`}`;
+       <button type="button" class="btn block ghost" data-action="import-open">Import one from JSON</button>`}`;
 }
 
 export function render() {

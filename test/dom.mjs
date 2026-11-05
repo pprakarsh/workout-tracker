@@ -2577,6 +2577,9 @@ ok(!store.state.exercises.some((x) => x.key === 'single-arm dumbbell row'),
 section('the routine chooser explains the three ways in, from the Routines tab');
 await gotoTab('routines');
 ok($('[data-action="routine-how"]') !== null, 'a "How?" button sits next to + New routine');
+const rvHtml = $('#viewRoot').innerHTML;
+ok(rvHtml.indexOf('data-action="routine-new"') < rvHtml.indexOf('routine-card'),
+  'and the whole row is above the routine list, so a long list cannot bury the only way to add to it');
 await click('[data-action="routine-how"]', 'How?');
 const nrModal = $('#modalRoot .modal');
 ok(nrModal !== null && /Three ways/.test(nrModal.textContent), 'the chooser opens');
@@ -2632,8 +2635,10 @@ store.state.routines = [];
 await gotoTab('now');
 ok($('[data-action="sample-start"]') !== null, 'the empty state offers a sample workout');
 const sdBtns = $$('#viewRoot button[data-action]').map((b) => b.dataset.action);
-ok(sdBtns.indexOf('sample-start') < sdBtns.indexOf('routine-new'),
-  'ahead of creating one from nothing, which is the harder first step');
+ok(sdBtns.indexOf('routine-new') < sdBtns.indexOf('sample-start'),
+  'the quick actions sit in the header card, above everything that can grow');
+ok(sdBtns.indexOf('sample-start') < sdBtns.indexOf('routine-how'),
+  'and the sample is the first thing offered in the body, being the cheapest way to understand this');
 ok(/numbers already in/i.test(view()), 'and says what makes it worth tapping');
 
 await click('[data-action="sample-start"]', 'Try a sample workout');
